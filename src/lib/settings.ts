@@ -6,7 +6,7 @@ import { storage } from 'wxt/utils/storage';
 import { DEFAULT_SETTINGS } from './settingsSchema';
 import type { Settings } from './types';
 
-export { DEFAULT_SETTINGS, databaseIdFor, missingSettings } from './settingsSchema';
+export { DEFAULT_SETTINGS, databaseIdFor, missingForSave, missingSettings } from './settingsSchema';
 
 export const settingsItem = storage.defineItem<Settings>('local:settings', {
   fallback: DEFAULT_SETTINGS,

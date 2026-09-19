@@ -50,7 +50,11 @@ export interface TimedWord {
   approx?: boolean;
 }
 
-export type PassOutcome = { ok: true } | { ok: false; error: string };
+/**
+ * `warning` marks a pass that succeeded with degraded output (e.g. a part came back
+ * 'incomplete'); the pipeline turns it into a transcript note.
+ */
+export type PassOutcome = { ok: true; warning?: string } | { ok: false; error: string };
 
 /**
  * Result of transcribing a whole recording. Two Gemini passes run: a timing pass
@@ -64,6 +68,11 @@ export interface TranscriptionResult {
   text: string;
   timingPass: PassOutcome;
   textPass: PassOutcome;
+  /**
+   * Time ranges (ms from recording start) that no successful part covered, e.g. one
+   * part failed while the others succeeded. The merge fills them from captions.
+   */
+  gaps?: { start: number; end: number }[];
 }
 
 export interface TranscribeOptions {
@@ -162,6 +171,7 @@ export interface MeetingPageInput {
  * `databaseId` is the id the user pasted into settings for the chosen route.
  */
 export interface MeetingStore {
+  /** Only complete pages carry the Key (it is written last), so partial saves never match. */
   findByKey(databaseId: string, key: string): Promise<ExistingMeeting | null>;
   createMeeting(databaseId: string, input: MeetingPageInput): Promise<{ pageId: string; url: string }>;
   /**
@@ -192,6 +202,8 @@ export type SessionStatus =
   | 'saved'
   /** Notion already had this meeting; see `notion.recordedBy`. */
   | 'duplicate'
+  /** Transcribed, but nothing was said or captured; not saved (would claim the dedupe key). */
+  | 'empty'
   | 'failed';
 
 export type JobStage =
@@ -228,8 +240,12 @@ export interface SessionMeta {
     error?: string;
     /** Set once retention removed the audio. */
     deletedAt?: number;
+    /** Last time a chunk was persisted. Captions don't update it; the recorder watchdog reads it. */
+    lastChunkAt?: number;
   };
   captionCount: number;
+  /** Why captions are not being captured (e.g. no content script in the tab). */
+  captionsError?: string;
   /** Last time a chunk or caption batch arrived. Used to date orphans. */
   lastHeartbeat?: number;
   /** True when this session was found orphaned at startup. */
@@ -239,6 +255,20 @@ export interface SessionMeta {
   savedAt?: number;
   /** Epoch ms after which audio is deleted (savedAt + retention). */
   purgeAudioAt?: number;
+  /**
+   * Job running in the offscreen document. Its outcome arrives as 'offscreen/job-done'
+   * with the same id, so any worker instance can record it.
+   */
+  job?: { id: string; kind: 'process' | 'save'; startedAt: number };
+  /** Transcription attempt number of the last process job (1 = first). */
+  attempt?: number;
+  /** When an automatic retry after a transient Gemini failure is scheduled, epoch ms. */
+  retryAt?: number;
+  /**
+   * The user chose "Transcribe/Save anyway": the jobs this session runs next (the save
+   * after processing, automatic retries, re-runs after a restart) skip the duplicate check.
+   */
+  forced?: boolean;
 }
 
 /** What the pipeline produced for a session; stored locally until saved. */
@@ -299,11 +329,20 @@ export interface ProcessJob {
   captions: CaptionSegment[];
   settings: Settings;
   route: Route;
+  /** Skip the Notion duplicate check: the user chose "Transcribe anyway". */
+  force?: boolean;
+  /** 1 on the first run. Below MAX_TRANSCRIBE_ATTEMPTS a transient Gemini failure returns 'retry-later'. */
+  attempt?: number;
 }
+
+/** Transient Gemini failures are retried later this many times in total before degrading. */
+export const MAX_TRANSCRIBE_ATTEMPTS = 3;
 
 export type ProcessOutcome =
   | { status: 'processed'; result: SessionResult }
   | { status: 'duplicate'; existing: ExistingMeeting }
+  /** Gemini was unreachable (network, 408/429/5xx after retries, timeout): try again later instead of degrading. */
+  | { status: 'retry-later'; error: string }
   | { status: 'error'; error: string };
 
 export interface SaveJob {
@@ -311,6 +350,8 @@ export interface SaveJob {
   result: SessionResult;
   settings: Settings;
   route: Route;
+  /** Create the page even if one with this key exists: the user chose "Save anyway". */
+  force?: boolean;
 }
 
 export type SaveOutcome =

@@ -19,6 +19,8 @@ export default defineConfig({
       'alarms',
       'notifications',
       'tabs',
+      // Injects the caption observer into Meet tabs opened before an install or update.
+      'scripting',
     ],
     host_permissions: [
       'https://meet.google.com/*',

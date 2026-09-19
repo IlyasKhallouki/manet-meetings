@@ -42,8 +42,10 @@ export interface BackgroundProtocol {
   'session/start': { req: { tabId: number }; res: StartResult };
   'session/stop': { req: { sessionId: string }; res: void };
   'session/route': { req: { sessionId: string; route: Route }; res: void };
-  'session/transcribe': { req: { sessionId: string }; res: void };
-  'session/save': { req: { sessionId: string }; res: void };
+  /** `force` skips the Notion duplicate check ("Transcribe anyway"). */
+  'session/transcribe': { req: { sessionId: string; force?: boolean }; res: void };
+  /** `force` saves even if a page with the key exists ("Save anyway"). */
+  'session/save': { req: { sessionId: string; force?: boolean }; res: void };
   'session/delete': { req: { sessionId: string }; res: void };
 
   /** Offscreen: chunk `index` was persisted (heartbeat). `bytes` is the session's running total. */
@@ -60,7 +62,19 @@ export interface BackgroundProtocol {
     res: void;
   };
   'offscreen/job-progress': { req: { sessionId: string; stage: JobStage }; res: void };
+  /**
+   * Offscreen: a job accepted earlier finished. Sent as its own message so a restarted
+   * worker still gets it. At-least-once: ignore a jobId that doesn't match meta.job.id.
+   */
+  'offscreen/job-done': { req: JobDone; res: void };
 }
+
+export type JobDone = { sessionId: string; jobId: string } & (
+  | { kind: 'process'; outcome: ProcessOutcome }
+  | { kind: 'save'; outcome: SaveOutcome }
+);
+
+export type JobAccepted = { accepted: true };
 
 export type RecorderStartResult =
   | { ok: true; startedAt: number; micIncluded: boolean; mimeType: string }
@@ -74,8 +88,17 @@ export interface OffscreenProtocol {
   };
   'offscreen/recorder-stop': { req: { sessionId: string }; res: { chunkCount: number; bytes: number } };
   'offscreen/recorder-status': { req: Record<string, never>; res: { recordingSessionIds: string[] } };
-  'offscreen/process': { req: ProcessJob; res: ProcessOutcome };
-  'offscreen/save': { req: SaveJob; res: SaveOutcome };
+  /** Fire and forget: replies once the job is queued; the outcome comes back as 'offscreen/job-done'. */
+  'offscreen/process': { req: ProcessJob & { jobId: string }; res: JobAccepted };
+  'offscreen/save': { req: SaveJob & { jobId: string }; res: JobAccepted };
+  /**
+   * Jobs still running, plus finished ones whose job-done wasn't delivered yet (they are
+   * re-sent right after this reply), so a restarted worker doesn't reset them.
+   */
+  'offscreen/job-status': {
+    req: Record<string, never>;
+    res: { jobs: { sessionId: string; jobId: string; kind: 'process' | 'save' }[] };
+  };
   'offscreen/audio-scan': { req: Record<string, never>; res: AudioSessionInfo[] };
   'offscreen/audio-delete': { req: { sessionId: string }; res: void };
 }
@@ -143,11 +166,31 @@ export async function sendToTab<K extends keyof ContentProtocol & string>(
   return unwrap(await browser.tabs.sendMessage(tabId, envelope), type) as ContentProtocol[K]['res'];
 }
 
+/** Messages the Meet content script may send; everything else needs an extension page or worker. */
+const CONTENT_SCRIPT_TYPES: ReadonlySet<string> = new Set(['meet/joined', 'meet/left', 'captions/batch']);
+const MEET_ORIGIN = 'https://meet.google.com/';
+
+/**
+ * Content scripts share the Meet renderer, so a compromised page could use them to
+ * reach our handlers. Content-script messages must come from a Meet tab; every other
+ * message must come from an extension context. (runtime.onMessage never delivers
+ * messages from other extensions or web pages.) A sender without a url is accepted:
+ * Chrome always sets it for content scripts and pages.
+ */
+export function senderAllowed(type: string, sender: MessageSender, extensionOrigin: string): boolean {
+  const url = sender.url;
+  if (CONTENT_SCRIPT_TYPES.has(type)) {
+    return sender.tab?.id !== undefined && (url === undefined || url.startsWith(MEET_ORIGIN));
+  }
+  return url === undefined || url.startsWith(extensionOrigin);
+}
+
 /**
  * Registers handlers for one target. Returns an unsubscribe function.
  * Uses the sendResponse + `return true` form, which every Chrome version supports.
  */
 export function handleMessages<P extends Protocol<P>>(target: Target, handlers: Handlers<P>): () => void {
+  const extensionOrigin = browser.runtime.getURL('/');
   const listener = (
     msg: unknown,
     sender: MessageSender,
@@ -156,6 +199,10 @@ export function handleMessages<P extends Protocol<P>>(target: Target, handlers: 
     if (!isEnvelope(msg) || msg.target !== target) return undefined;
     const handler = handlers[msg.type as keyof P];
     if (!handler) return undefined;
+    if (!senderAllowed(msg.type, sender, extensionOrigin)) {
+      sendResponse({ ok: false, error: `"${msg.type}" is not accepted from this sender` });
+      return undefined;
+    }
     Promise.resolve()
       .then(() => handler(msg.payload as never, sender))
       .then(

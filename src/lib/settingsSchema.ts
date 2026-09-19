@@ -22,10 +22,17 @@ export function databaseIdFor(settings: Settings, route: Route): string {
   return route === 'team' ? settings.notionTeamDbId : settings.notionPersonalDbId;
 }
 
-/** Problems that block transcription or saving, as user-facing strings. */
+/** Everything a full audio transcript needs, as user-facing strings. */
 export function missingSettings(settings: Settings, route: Route): string[] {
+  return [...(settings.geminiApiKey ? [] : ['Gemini API key']), ...missingForSave(settings, route)];
+}
+
+/**
+ * What blocks filing a meeting at all. Without a Gemini key the pipeline still saves a
+ * transcript built from captions.
+ */
+export function missingForSave(settings: Settings, route: Route): string[] {
   const missing: string[] = [];
-  if (!settings.geminiApiKey) missing.push('Gemini API key');
   if (!settings.notionToken) missing.push('Notion integration token');
   if (!databaseIdFor(settings, route)) missing.push(`Notion ${route} database id`);
   if (!settings.displayName) missing.push('Your name');
