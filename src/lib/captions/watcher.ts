@@ -6,6 +6,7 @@
  * calls sync() about once a second so the observer follows a recreated region; the
  * tracker's continuation rule keeps segment ids stable across such re-renders.
  */
+import { splitWords } from '../align/sequence';
 import {
   captionBlockOf,
   findCaptionRegion,
@@ -13,7 +14,7 @@ import {
   readCaptionBlocks,
   type CaptionBlock,
 } from '../meet/captionAdapter';
-import type { CaptionTracker } from './tracker';
+import { continues, DEFAULT_RESET_DROP, type CaptionTracker } from './tracker';
 
 export interface CaptionWatcherOptions {
   doc: Document;
@@ -22,8 +23,9 @@ export interface CaptionWatcherOptions {
   now: () => number;
   /**
    * Blocks already on screen at the first sync() were spoken before recording started:
-   * skip each one until its text changes, and skip their re-rendered copies too. A
-   * region that only appears later holds post-start captions and is read in full.
+   * only words added to them later are fed (corrections of the old words are not new
+   * speech), and their re-rendered copies are treated the same. A region that only
+   * appears later holds post-start captions and is read in full.
    */
   skipExisting?: boolean;
   onError?: (err: unknown) => void;
@@ -31,14 +33,20 @@ export interface CaptionWatcherOptions {
 
 const OBSERVE: MutationObserverInit = { childList: true, subtree: true, characterData: true };
 
+/** What a block read when recording started. */
+interface Baseline {
+  speaker: string;
+  text: string;
+}
+
 export class CaptionWatcher {
   private readonly opts: CaptionWatcherOptions;
   private region: Element | null = null;
   private readonly observer: MutationObserver;
-  /** Pre-recording text per node, while unchanged. */
-  private readonly baseline = new WeakMap<Element, string>();
-  /** Pre-recording speaker+text pairs, to recognise their copies after a re-render. */
-  private readonly baselineTexts = new Set<string>();
+  /** Pre-recording reading per node, while the node still holds that speech. */
+  private readonly baseline = new WeakMap<Element, Baseline>();
+  /** Pre-recording readings still on screen, to recognise their copies after a re-render. */
+  private baselines: Baseline[] = [];
   private firstSync = true;
 
   constructor(opts: CaptionWatcherOptions) {
@@ -82,20 +90,27 @@ export class CaptionWatcher {
     this.region = region;
     this.observer.observe(region, OBSERVE);
     const t = this.opts.now();
+    const known = this.baselines;
+    this.baselines = [];
     for (const block of readCaptionBlocks(region)) {
-      const pair = JSON.stringify([block.speaker, block.text]);
-      if (baselineAll || this.baselineTexts.has(pair)) {
-        this.baseline.set(block.node, block.text);
-        this.baselineTexts.add(pair);
-      } else {
-        this.feed(block, t);
+      // At the first sync every block predates the recording; later, copies of those still on screen do.
+      const base = baselineAll
+        ? { speaker: block.speaker, text: block.text }
+        : known.find((b) => b.speaker === block.speaker && (b.text === block.text || continues(b.text, block.text)));
+      if (base) {
+        this.baseline.set(block.node, base);
+        if (!this.baselines.includes(base)) this.baselines.push(base);
       }
+      if (!baselineAll) this.feed(block, t);
     }
   }
 
   private detach(): void {
     if (!this.region) return;
     this.flush();
+    // A pre-recording block Meet already dropped cannot come back in a re-render.
+    const onScreen = new Set(readCaptionBlocks(this.region).map((b) => this.baseline.get(b.node)));
+    this.baselines = this.baselines.filter((b) => onScreen.has(b));
     this.observer.disconnect();
     this.region = null;
     this.opts.tracker.removeAll(this.opts.now());
@@ -156,8 +171,14 @@ export class CaptionWatcher {
 
   private feed(block: CaptionBlock, t: number): void {
     const base = this.baseline.get(block.node);
-    if (base !== undefined) {
-      if (base === block.text) return;
+    if (base) {
+      const added = base.speaker === block.speaker ? wordsAdded(base.text, block.text) : null;
+      if (added === '') return;
+      if (added !== null) {
+        this.opts.tracker.update(block.node, { ...block, text: added }, t);
+        return;
+      }
+      // Meet reused the node for other speech.
       this.baseline.delete(block.node);
     }
     this.opts.tracker.update(block.node, block, t);
@@ -170,6 +191,16 @@ export class CaptionWatcher {
       this.opts.onError?.(err);
     }
   }
+}
+
+/**
+ * The words of `text` past the pre-recording `base` it grew from ('' when a correction
+ * added none), or null when Meet restarted the block with other speech. Counted by
+ * position, so a word Meet corrects inside the old part is not fed as new speech.
+ */
+function wordsAdded(base: string, text: string): string | null {
+  if (base.length - text.length >= DEFAULT_RESET_DROP && !continues(base, text)) return null;
+  return splitWords(text).slice(splitWords(base).length).join(' ');
 }
 
 function byDocumentOrder(a: Element, b: Element): number {

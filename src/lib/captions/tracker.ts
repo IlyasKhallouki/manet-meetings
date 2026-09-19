@@ -7,7 +7,8 @@
  * grows. Meet also re-renders blocks as new nodes (region replaced after a CC
  * toggle or layout change, or a fresh copy of the active block); a new node whose
  * text continues a just-removed block, or the most recent block, keeps that
- * segment's id so consumers see one segment instead of duplicates.
+ * segment's id so consumers see one segment instead of duplicates. A block that
+ * another still-visible block started after is never taken over: that is a new turn.
  */
 import { normalizeToken, splitWords } from '../align/sequence';
 import type { CaptionSegment } from '../types';
@@ -42,9 +43,15 @@ interface Entry<K> {
 }
 
 const DEFAULT_WINDOW_MS = 3000;
-const DEFAULT_RESET_DROP = 250;
+/** Also used by the watcher for blocks that predate the recording. */
+export const DEFAULT_RESET_DROP = 250;
 /** Share of the old block's leading words a new text must repeat to count as its continuation. */
 const CONTINUATION_SHARE = 0.6;
+/**
+ * A finalized block shorter than this ("Oui.", "OK so") is only continued by an exact
+ * repeat: a new turn that merely starts with the same word is not a re-render of it.
+ */
+const MIN_PARTIAL_WORDS = 3;
 
 export class CaptionTracker<K = unknown> {
   private readonly prefix: string;
@@ -133,6 +140,21 @@ export class CaptionTracker<K = unknown> {
     this.retired.clear();
   }
 
+  /**
+   * Moves every segment by `deltaMs` (t = 0 was corrected) and bumps its rev, so
+   * consumers that already hold a revision replace it.
+   */
+  shiftTimes(deltaMs: number): void {
+    if (!Number.isFinite(deltaMs) || deltaMs === 0) return;
+    for (const entry of this.entries.values()) {
+      const tStart = clampTime(entry.seg.tStart + deltaMs);
+      const tEnd = Math.max(tStart, clampTime(entry.seg.tEnd + deltaMs));
+      entry.seg = { ...entry.seg, tStart, tEnd, rev: entry.seg.rev + 1 };
+      entry.lastActive = clampTime(entry.lastActive + deltaMs);
+      this.changed.add(entry.seg.id);
+    }
+  }
+
   /** Latest revision of every segment changed since the last drain, ordered by tStart. */
   drainChanges(): CaptionSegment[] {
     const out = [...this.changed]
@@ -181,11 +203,15 @@ export class CaptionTracker<K = unknown> {
   /**
    * Candidates are finalized blocks active within the window (re-rendered region)
    * and the most recently touched block even if still live (Meet swapped in a fresh
-   * copy before dropping the old one). An exact repeat of the text wins, earliest
+   * copy before dropping the old one). A block that a still-live block started after
+   * is not a candidate: someone spoke since, so the new node is a new turn. Finalized
+   * short blocks need an exact repeat. An exact repeat of the text wins, earliest
    * block first so a re-rendered region maps back in order; otherwise the most
    * recently active continuation.
    */
   private findContinuation(speaker: string, text: string, t: number): Entry<K> | null {
+    let newestLive = 0;
+    for (const id of this.byKey.values()) newestLive = Math.max(newestLive, this.entries.get(id)?.order ?? 0);
     let exact: Entry<K> | null = null;
     let partial: Entry<K> | null = null;
     const norm = normalizeWords(text).join(' ');
@@ -193,9 +219,11 @@ export class CaptionTracker<K = unknown> {
       if (entry.seg.speaker !== speaker) continue;
       if (t - entry.lastActive > this.windowMs) continue;
       if (entry.key !== null && entry.seg.id !== this.lastTouched) continue;
-      if (normalizeWords(entry.seg.text).join(' ') === norm) {
+      if (entry.order < newestLive) continue;
+      const words = normalizeWords(entry.seg.text);
+      if (words.join(' ') === norm) {
         if (!exact || entry.order < exact.order) exact = entry;
-      } else if (continues(entry.seg.text, text)) {
+      } else if ((entry.key !== null || words.length >= MIN_PARTIAL_WORDS) && continues(entry.seg.text, text)) {
         if (!partial || entry.lastActive > partial.lastActive) partial = entry;
       }
     }

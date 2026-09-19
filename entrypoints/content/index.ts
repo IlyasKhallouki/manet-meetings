@@ -14,6 +14,7 @@ export default defineContentScript({
     });
 
     const unlisten = handleMessages<ContentProtocol>('content', {
+      // Replies at once; the caption flush it starts must not hold up the background.
       'content/recording-state': (state) => controller.setRecording(state),
     });
     ctx.onInvalidated(() => {

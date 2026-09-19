@@ -48,6 +48,8 @@ Behaviour the tracker and watcher are built around:
 | CC toggle | `button[jsname="RrG0hf"]` (since the Feb 2026 redesign), `button[jsname="r8qRAd"]` (before), then a button outside the captions region with a `closed_caption(_off)` icon, then one labelled "caption" / "sous-titre" (not settings/language) | jsnames and icons from ChrisRegado; EN labels from attendee and notetaker |
 | CC state | icon `closed_caption_off` = off, `closed_caption` = on; then `aria-pressed`; then label `Turn on captions` / `Turn off captions`, `Activer les sous-titres` / `Désactiver les sous-titres` | icon and EN labels observed by others; FR labels inferred from Meet's French mic/camera labels ("Activer le micro") and MeetBot's word lists |
 | In call | `button[jsname="CQylAd"]`, label `Leave call` / `Quitter l'appel`, icon `call_end` | all three corroborated; TranscripTonic notes `call_end` also shows while waiting in the lobby |
+| Call ended | heading `You left the meeting` / `You've been removed from the meeting` / `Vous avez quitté la réunion`, or a `Return to home screen` / `Revenir à l'écran d'accueil` button | EN strings as in `call-ended.html`; FR inferred. Only speeds up leaving: without it the content script leaves after the leave button has been gone for 3 ticks |
+| CC toggle identity | a jsname match must also show a CC icon or a caption label, otherwise the icon and label strategies run; aria-pressed is only read on a control verified that way | guards against a jsname reused on another toggle |
 | Meeting title | `[jsname="NeC6gb"]`, `.u6vdEc`, then `document.title` minus `Meet - `; a bare meeting code means "no title" | chen-ye, TranscripTonic |
 
 Some projects (vincelamm/gMeetTranscriptCapture, the hermes-agent Meet bot) cite a

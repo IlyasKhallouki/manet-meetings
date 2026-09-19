@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   adapterHealth,
+  callEndedScreen,
   captionBlockOf,
   captionsEnabled,
   enableCaptions,
@@ -165,6 +166,24 @@ describe('isInCall', () => {
   });
 });
 
+describe('callEndedScreen', () => {
+  it("recognises Meet's post-call screen in English and French, and nothing else", () => {
+    expect(callEndedScreen(parse(callEnded))).toBe(true);
+    const french = parse(callEnded);
+    french.querySelector('h1')!.textContent = 'Vous avez quitté la réunion';
+    for (const b of french.querySelectorAll('button')) b.remove();
+    expect(callEndedScreen(french)).toBe(true);
+    const buttonOnly = parse(callEnded);
+    buttonOnly.querySelector('h1')!.remove();
+    buttonOnly.querySelector('button')!.textContent = 'Revenir à l’écran d’accueil';
+    buttonOnly.querySelectorAll('button')[1]!.remove();
+    expect(callEndedScreen(buttonOnly)).toBe(true);
+    for (const html of [inCallOff, inCallOn, frenchUi, rotated, preJoin, singleSpeaker]) {
+      expect(callEndedScreen(parse(html))).toBe(false);
+    }
+  });
+});
+
 describe('captionsEnabled', () => {
   it('reads the toggle state from the CC icon', () => {
     expect(captionsEnabled(parse(inCallOff))).toBe(false);
@@ -199,6 +218,25 @@ describe('captionsEnabled', () => {
     cc.querySelector('i')!.remove();
     expect(captionsEnabled(doc)).toBe(true);
     expect(adapterHealth(doc).captionsButton).toBe('label');
+  });
+
+  it('does not trust a jsname match that shows no caption icon or label', () => {
+    const doc = parse(inCallOff);
+    // A later build moves the old CC jsname onto the microphone toggle.
+    const mic = doc.querySelector('[jsname="hw0c9"]')!;
+    mic.setAttribute('jsname', 'r8qRAd');
+    mic.setAttribute('aria-pressed', 'false');
+    doc.querySelector('[jsname="RrG0hf"]')!.removeAttribute('jsname');
+    expect(captionsEnabled(doc)).toBe(false);
+    expect(adapterHealth(doc).captionsButton).toBe('icon');
+
+    const noCc = parse(inCallOff);
+    const mic2 = noCc.querySelector('[jsname="hw0c9"]')!;
+    mic2.setAttribute('jsname', 'RrG0hf');
+    mic2.setAttribute('aria-pressed', 'false');
+    noCc.querySelector('[aria-label="Turn on captions"]')!.remove();
+    expect(captionsEnabled(noCc)).toBeNull();
+    expect(adapterHealth(noCc).captionsButton).toBeNull();
   });
 
   it('finds the pre-2026 toggle by its old jsname', () => {
@@ -241,6 +279,27 @@ describe('enableCaptions', () => {
     const seen = clicks(unknown);
     expect(enableCaptions(unknown)).toBe(false);
     expect(seen).toEqual([]);
+  });
+
+  it('never clicks a toggle that only aria-pressed says is off', () => {
+    // The CC jsname landed on the microphone toggle (muted: aria-pressed="false").
+    const doc = parse(inCallOff);
+    const mic = doc.querySelector('[jsname="hw0c9"]')!;
+    mic.setAttribute('jsname', 'RrG0hf');
+    mic.setAttribute('aria-pressed', 'false');
+    doc.querySelector('[aria-label="Turn on captions"]')!.removeAttribute('jsname');
+    const seen = clicks(doc);
+    expect(enableCaptions(doc)).toBe(true);
+    expect(seen).toEqual(['Turn on captions']);
+
+    const noCc = parse(inCallOff);
+    const mic2 = noCc.querySelector('[jsname="hw0c9"]')!;
+    mic2.setAttribute('jsname', 'RrG0hf');
+    mic2.setAttribute('aria-pressed', 'false');
+    noCc.querySelector('[aria-label="Turn on captions"]')!.remove();
+    const seen2 = clicks(noCc);
+    expect(enableCaptions(noCc)).toBe(false);
+    expect(seen2).toEqual([]);
   });
 });
 

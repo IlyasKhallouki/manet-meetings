@@ -157,6 +157,46 @@ describe('CaptionTracker', () => {
     expect(tr.segments().map((s) => s.text)).toEqual(['So what I meant was the budget', 'So']);
   });
 
+  it('does not merge a new turn into an earlier short block Meet drops as the turn appears', () => {
+    const tr = tracker();
+    const [b1, b2, b3] = [{}, {}, {}];
+    tr.update(b1, A('Oui.'), 10_000);
+    tr.update(b2, B('Tu peux partager ton écran ?'), 12_000);
+    tr.remove(b1, 14_000);
+    tr.update(b3, A('Oui je partage mon écran.'), 14_000);
+    expect(tr.segments().map((s) => [s.speaker, s.text, s.tStart])).toEqual([
+      ['Camille Martin', 'Oui.', 10_000],
+      ['Hugo Bernard', 'Tu peux partager ton écran ?', 12_000],
+      ['Camille Martin', 'Oui je partage mon écran.', 14_000],
+    ]);
+  });
+
+  it('does not merge a new turn into an earlier short block Meet just corrected, and keeps its later edits', () => {
+    const tr = tracker();
+    const [b1, b2, b3] = [{}, {}, {}];
+    tr.update(b1, A('Oui'), 10_000);
+    tr.update(b2, B('Tu peux partager ton écran ?'), 12_000);
+    tr.update(b1, A('Oui.'), 13_900);
+    tr.update(b3, A('Oui je partage mon écran.'), 14_000);
+    tr.update(b1, A('Oui, oui.'), 14_200);
+    expect(tr.segments().map((s) => [s.text, s.tStart])).toEqual([
+      ['Oui, oui.', 10_000],
+      ['Tu peux partager ton écran ?', 12_000],
+      ['Oui je partage mon écran.', 14_000],
+    ]);
+  });
+
+  it('does not extend a dropped one- or two-word block with a new turn that starts the same way', () => {
+    const tr = tracker();
+    const [b1, b2, b3] = [{}, {}, {}];
+    tr.update(b1, A('OK.'), 10_000);
+    tr.update(b2, B('On passe à la suite ?'), 11_000);
+    tr.remove(b1, 12_000);
+    tr.remove(b2, 12_000);
+    tr.update(b3, A('OK, next topic then.'), 12_000);
+    expect(tr.segments().map((s) => s.text)).toEqual(['OK.', 'On passe à la suite ?', 'OK, next topic then.']);
+  });
+
   it('starts a new segment when Meet recycles a node for another speaker', () => {
     const tr = tracker();
     const node = {};
@@ -209,6 +249,22 @@ describe('CaptionTracker', () => {
     tr.remove(old, 400);
     tr.remove(fresh, 400);
     expect(tr.heldKeys()).toEqual([]);
+  });
+
+  it('shifts every segment to a corrected t = 0 and bumps its rev so consumers replace it', () => {
+    const tr = tracker();
+    const [n1, n2] = [{}, {}];
+    tr.update(n1, A('Before the fix'), 2000);
+    tr.update(n1, A('Before the fix, longer'), 2600);
+    tr.update(n2, B('Hi'), 1000);
+    tr.drainChanges();
+    tr.shiftTimes(-1500);
+    expect(tr.drainChanges().map((s) => [s.text, s.tStart, s.tEnd, s.rev])).toEqual([
+      ['Hi', 0, 0, 1],
+      ['Before the fix, longer', 500, 1100, 2],
+    ]);
+    tr.update(n1, A('Before the fix, longer still'), 1400);
+    expect(tr.drainChanges()).toEqual([expect.objectContaining({ tStart: 500, tEnd: 1400, rev: 3 })]);
   });
 
   it('clamps times: never negative, integer ms, tEnd never before tStart', () => {

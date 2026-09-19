@@ -14,6 +14,8 @@
  *  - ChrisRegado/streamdeck-googlemeet@3ab4e06: CC toggle jsname RrG0hf since the Feb 2026
  *    redesign (r8qRAd before), state shown by its closed_caption(_off) icon.
  *  - attendee-labs/attendee@11d70a1: "Turn on/off captions", Leave call jsname CQylAd.
+ * The post-call screen strings ("You left the meeting", "Return to home screen") match
+ * the reconstructed call-ended fixture; the French ones are inferred.
  */
 
 export interface CaptionBlock {
@@ -75,6 +77,11 @@ const CC_LABEL_WHEN_OFF =
 const LEAVE_JSNAMES = ['CQylAd'];
 const LEAVE_LABEL = /^(leave call|quitter l['’]appel)/i;
 const LEAVE_ICON = 'call_end';
+const ENDED_HEADINGS = 'h1, h2, [role="heading"]';
+const ENDED_HEADING =
+  /^(you left the meeting|you['’]ve been removed from the meeting|vous avez quitté la réunion)/i;
+const RETURN_HOME_LABEL =
+  /^(return to home screen|revenir à l['’]écran d['’]accueil|retour à l['’]écran d['’]accueil)$/i;
 
 // Meeting title.
 const TITLE_BY_JSNAME = '[jsname="NeC6gb"]';
@@ -133,6 +140,20 @@ export function isInCall(root: ParentNode): boolean {
   return safe(() => findLeaveButton(root) !== null, false);
 }
 
+/**
+ * True when Meet shows its post-call screen (left, removed, or the call ended). Its
+ * absence proves nothing: a missing leave button may just be a toolbar re-render.
+ */
+export function callEndedScreen(root: ParentNode): boolean {
+  return safe(() => {
+    const headings = root.querySelectorAll(ENDED_HEADINGS);
+    if ([...headings].some((el) => ENDED_HEADING.test(clean(el.textContent)))) return true;
+    return [...root.querySelectorAll(CLICKABLE)].some((el) =>
+      [el.textContent, el.getAttribute('aria-label')].some((l) => RETURN_HOME_LABEL.test(clean(l))),
+    );
+  }, false);
+}
+
 /** Whether the CC toggle shows captions on; null when there is no toggle or its state is unreadable. */
 export function captionsEnabled(root: ParentNode): boolean | null {
   return safe(() => {
@@ -141,7 +162,11 @@ export function captionsEnabled(root: ParentNode): boolean | null {
   }, null);
 }
 
-/** Clicks the CC toggle only when it definitely shows captions off. Returns whether it clicked. */
+/**
+ * Clicks the CC toggle only when it definitely shows captions off. Returns whether it
+ * clicked. The toggle always shows a caption icon or label (findCaptionsButton), so
+ * aria-pressed is never the only evidence behind a click.
+ */
 export function enableCaptions(root: ParentNode): boolean {
   return safe(() => {
     const button = findCaptionsButton(root);
@@ -254,21 +279,27 @@ function readBlock(block: Element): {
 }
 
 function findCaptionsButton(root: ParentNode): Found<ControlHook> {
+  // jsnames move between builds, and aria-pressed is on every toggle: a jsname match
+  // only counts if it also looks like the CC toggle.
   const byJsname = byJsnames(root, CC_JSNAMES);
-  if (byJsname) return { el: byJsname, via: 'jsname' };
+  if (byJsname && (hasCaptionIcon(byJsname) || hasCaptionLabel(byJsname))) return { el: byJsname, via: 'jsname' };
   // The captions region has its own "Jump to the most recent captions" button.
   const region = findRegion(root)?.el;
   const clickables = [...root.querySelectorAll(CLICKABLE)].filter((el) => !region?.contains(el));
   // Icon ligature names are the same in every UI language, so they go before labels.
-  const byIcon = clickables.find((el) =>
-    iconNames(el).some((n) => CC_ICONS_OFF.includes(n) || CC_ICONS_ON.includes(n)),
-  );
+  const byIcon = clickables.find(hasCaptionIcon);
   if (byIcon) return { el: byIcon, via: 'icon' };
-  const byLabel = clickables.find((el) => {
-    const label = labelOf(el);
-    return CC_LABEL.test(label) && !CC_LABEL_EXCLUDE.test(label);
-  });
+  const byLabel = clickables.find(hasCaptionLabel);
   return byLabel ? { el: byLabel, via: 'label' } : null;
+}
+
+function hasCaptionIcon(el: Element): boolean {
+  return iconNames(el).some((n) => CC_ICONS_OFF.includes(n) || CC_ICONS_ON.includes(n));
+}
+
+function hasCaptionLabel(el: Element): boolean {
+  const label = labelOf(el);
+  return CC_LABEL.test(label) && !CC_LABEL_EXCLUDE.test(label);
 }
 
 function readCaptionsState(button: Element): { on: boolean; via: 'icon' | 'aria-pressed' | 'label' } | null {

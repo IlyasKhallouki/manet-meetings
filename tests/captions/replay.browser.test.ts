@@ -216,17 +216,19 @@ describe('caption replay through CaptionWatcher + adapter + tracker', () => {
       expect(late.sync()).toBe(true);
       expect(tracker.drainChanges()).toEqual([]);
 
-      clock = 900;
+      // A correction of pre-recording speech is not new speech.
+      clock = 600;
       const text = host.querySelector('.ygicle')!;
-      (text.firstChild as Text).data = "Let's look at the onboarding numbers first, then the roadmap for Q3.";
+      (text.firstChild as Text).data = "Let's look at the onboarding figures first, then the roadmap.";
+      await tick();
+      expect(tracker.drainChanges()).toEqual([]);
+
+      // Words added after the start are, and only they are fed.
+      clock = 900;
+      (text.firstChild as Text).data = "Let's look at the onboarding figures first, then the roadmap for Q3.";
       await tick();
       expect(tracker.drainChanges()).toEqual([
-        expect.objectContaining({
-          speaker: 'Camille Martin',
-          text: "Let's look at the onboarding numbers first, then the roadmap for Q3.",
-          tStart: 900,
-          rev: 0,
-        }),
+        expect.objectContaining({ speaker: 'Camille Martin', text: 'for Q3.', tStart: 900, rev: 0 }),
       ]);
     } finally {
       late.stop();
@@ -261,6 +263,53 @@ describe('caption replay through CaptionWatcher + adapter + tracker', () => {
       await tick();
       expect(tracker.drainChanges()).toEqual([]);
       expect(tracker.segments()).toEqual([]);
+    } finally {
+      late.stop();
+    }
+  });
+
+  it('forgets pre-recording blocks once they scroll away, so later copies of new speech are not trimmed', async () => {
+    host.append(panelOf(singleSpeaker));
+    const region = host.querySelector('[role="region"]')!;
+    const first = region.querySelector('.nMcdL')!;
+    (first.querySelector('.ygicle')!.firstChild as Text).data = 'Oui.';
+    const late = new CaptionWatcher({ doc: document, tracker, now: () => clock, skipExisting: true });
+    try {
+      clock = 200;
+      late.sync();
+      // Meet drops the old block; the same speaker starts a new one after the start.
+      clock = 5000;
+      const next = first.cloneNode(true) as Element;
+      (next.querySelector('.ygicle')!.firstChild as Text).data = 'Oui, on commence.';
+      first.replaceWith(next);
+      await tick();
+      expect(tracker.drainChanges()).toEqual([expect.objectContaining({ text: 'Oui, on commence.', tStart: 5000 })]);
+
+      // Layout change: the region is re-rendered with a copy of that block.
+      clock = 6000;
+      host.replaceChildren(host.firstElementChild!.cloneNode(true));
+      expect(late.sync()).toBe(true);
+      await tick();
+      expect(tracker.drainChanges()).toEqual([]);
+      expect(tracker.segments().map((s) => s.text)).toEqual(['Oui, on commence.']);
+    } finally {
+      late.stop();
+    }
+  });
+
+  it('treats a pre-recording block that Meet reuses for another speaker as new speech', async () => {
+    host.append(panelOf(singleSpeaker));
+    const late = new CaptionWatcher({ doc: document, tracker, now: () => clock, skipExisting: true });
+    try {
+      clock = 200;
+      late.sync();
+      clock = 800;
+      host.querySelector('.NWpY1d')!.textContent = 'Hugo Bernard';
+      (host.querySelector('.ygicle')!.firstChild as Text).data = 'Oui.';
+      await tick();
+      expect(tracker.drainChanges()).toEqual([
+        expect.objectContaining({ speaker: 'Hugo Bernard', text: 'Oui.', tStart: 800 }),
+      ]);
     } finally {
       late.stop();
     }

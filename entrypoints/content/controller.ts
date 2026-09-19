@@ -5,12 +5,15 @@
  *
  * In a call it announces meet/joined; while the background reports a recording it keeps
  * captions on, feeds the caption tracker and ships deduped revisions in captions/batch;
- * when the call ends it flushes the last captions, then sends meet/left.
+ * when the call ends it flushes the last captions, then sends meet/left. The call ends
+ * on Meet's post-call screen, on leaving the call URL, or once the leave button has been
+ * gone for a few ticks (Meet re-renders its toolbar, so one miss proves nothing).
  */
 import { CaptionTracker } from '@lib/captions/tracker';
 import { CaptionWatcher } from '@lib/captions/watcher';
 import {
   adapterHealth,
+  callEndedScreen,
   captionsEnabled,
   enableCaptions,
   isInCall,
@@ -42,16 +45,21 @@ const CAPTIONS_RETRY_MS = 3000;
 /** Stop clicking after this many tries so we never fight a user who turned captions off. */
 const MAX_CAPTION_CLICKS = 3;
 const HEALTH_LOG_DELAY_MS = 15_000;
+/** Consecutive ticks without the leave button (and no post-call screen) that end the call. */
+const LEAVE_AFTER_MISSED_TICKS = 3;
 
 interface Call {
   meetCode: string;
   since: number;
   joinSent: boolean;
   healthLogged: boolean;
+  missedTicks: number;
 }
 
 interface Capture {
   sessionId: string;
+  /** Epoch ms of t = 0; the background may correct it once the recorder has started. */
+  startedAt: number;
   tracker: CaptionTracker<Element>;
   watcher: CaptionWatcher;
   captionClicks: number;
@@ -66,6 +74,8 @@ export class MeetController {
   /** Unsent segments per session, latest revision per id. */
   private readonly outbox = new Map<string, Map<string, CaptionSegment>>();
   private ticking: Promise<void> | null = null;
+  /** Counts recording-state pushes, so a meet/joined reply a push overtook is dropped. */
+  private pushes = 0;
 
   constructor(deps: MeetControllerDeps) {
     this.deps = deps;
@@ -79,16 +89,13 @@ export class MeetController {
     return this.ticking;
   }
 
-  /** Background pushed a recording state (or meet/joined returned one). */
-  async setRecording(state: RecordingState | null): Promise<void> {
-    try {
-      if (state && this.capture?.sessionId === state.sessionId) return;
-      this.stopCapture();
-      if (state) this.startCapture(state);
-    } catch (err) {
-      this.log('could not switch recording state', err);
-    }
-    await this.flushCaptions();
+  /**
+   * Background pushed a recording state. Returns without waiting for the caption flush:
+   * the background may be awaiting this reply before it answers captions/batch.
+   */
+  setRecording(state: RecordingState | null): void {
+    this.pushes++;
+    this.applyRecording(state);
   }
 
   /** Sends every unsent caption revision. Failed batches are kept for the next flush. */
@@ -116,15 +123,15 @@ export class MeetController {
   }
 
   /**
-   * The tab is going away: dispatch the last batch and meet/left right now, in that
-   * order, without waiting for replies the page will not live to receive.
+   * The page is being unloaded or cached: dispatch the last batch right now, without
+   * waiting for replies. No meet/left: a reload must not end the recording, and the
+   * background sees tab closes and navigations itself. If the page comes back, the next
+   * tick asks again with meet/joined.
    */
   pageHide(): void {
-    const call = this.call;
     this.call = null;
     this.stopCapture();
     void this.flushCaptions();
-    if (call) void this.sendLeft(call.meetCode);
   }
 
   dispose(): void {
@@ -137,9 +144,14 @@ export class MeetController {
       const doc = this.deps.doc;
       const code = meetCodeFromUrl(this.deps.url());
       const inCall = code !== null && isInCall(doc);
-      if (this.call && (!inCall || this.call.meetCode !== code)) await this.leave();
+      const call = this.call;
+      if (call) {
+        if (call.meetCode !== code) await this.leave();
+        else if (inCall) call.missedTicks = 0;
+        else if (callEndedScreen(doc) || ++call.missedTicks >= LEAVE_AFTER_MISSED_TICKS) await this.leave();
+      }
       if (inCall && code && !this.call) {
-        this.call = { meetCode: code, since: this.now(), joinSent: false, healthLogged: false };
+        this.call = { meetCode: code, since: this.now(), joinSent: false, healthLogged: false, missedTicks: 0 };
       }
       const join = this.call && !this.call.joinSent ? this.maybeJoin(this.call) : null;
       if (this.capture) {
@@ -157,13 +169,40 @@ export class MeetController {
     const title = meetingTitle(this.deps.doc);
     if (!title && this.now() - call.since < JOIN_TITLE_GRACE_MS) return;
     call.joinSent = true;
+    const pushes = this.pushes;
     try {
       const { meetCode } = call;
       const state = await this.deps.send('meet/joined', title ? { meetCode, title } : { meetCode });
-      if (state && this.call === call) await this.setRecording(state);
+      // A push that arrived meanwhile is newer (e.g. the recorder's real start time).
+      if (state && this.call === call && this.pushes === pushes) this.applyRecording(state);
     } catch (err) {
       this.log('meet/joined failed', err);
     }
+  }
+
+  private applyRecording(state: RecordingState | null): void {
+    try {
+      if (state && this.capture?.sessionId === state.sessionId) {
+        this.retime(this.capture, state.startedAt);
+      } else {
+        this.stopCapture();
+        if (state) this.startCapture(state);
+      }
+    } catch (err) {
+      this.log('could not switch recording state', err);
+    }
+    void this.flushCaptions();
+  }
+
+  /**
+   * Same session, new t = 0: meet/joined answered while the recorder was starting
+   * and returned the requested time. Everything captured so far moves by the
+   * difference; the tracker bumps revs, so batches already sent are superseded.
+   */
+  private retime(capture: Capture, startedAt: number): void {
+    if (!Number.isFinite(startedAt) || startedAt === capture.startedAt) return;
+    capture.tracker.shiftTimes(capture.startedAt - startedAt);
+    capture.startedAt = startedAt;
   }
 
   private async leave(): Promise<void> {
@@ -184,24 +223,24 @@ export class MeetController {
 
   private startCapture(state: RecordingState): void {
     const tracker = new CaptionTracker<Element>();
-    const watcher = new CaptionWatcher({
-      doc: this.deps.doc,
-      tracker,
-      now: () => this.now() - state.startedAt,
-      skipExisting: true,
-      onError: (err) => this.log('caption watcher error', err),
-    });
     const capture: Capture = {
       sessionId: state.sessionId,
+      startedAt: state.startedAt,
       tracker,
-      watcher,
+      watcher: new CaptionWatcher({
+        doc: this.deps.doc,
+        tracker,
+        now: () => this.now() - capture.startedAt,
+        skipExisting: true,
+        onError: (err) => this.log('caption watcher error', err),
+      }),
       captionClicks: 0,
       captionsConfirmed: false,
       nextCaptionTry: 0,
     };
     this.capture = capture;
     // Sync before touching the CC toggle: whatever is on screen now predates the recording.
-    watcher.sync();
+    capture.watcher.sync();
     this.ensureCaptions(capture);
   }
 

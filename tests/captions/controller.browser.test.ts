@@ -98,6 +98,16 @@ afterEach(() => {
   for (const f of frames.splice(0)) f.remove();
 });
 
+/** What the background keeps: the highest rev per id. */
+function fold(batches: { segments: CaptionSegment[] }[]): CaptionSegment[] {
+  const best = new Map<string, CaptionSegment>();
+  for (const seg of batches.flatMap((b) => b.segments)) {
+    const prev = best.get(seg.id);
+    if (!prev || seg.rev > prev.rev) best.set(seg.id, seg);
+  }
+  return [...best.values()].sort((a, b) => a.tStart - b.tStart);
+}
+
 describe('MeetController', () => {
   it('stays quiet outside a call', async () => {
     const { ctl, bg, url } = setup(preJoin);
@@ -136,7 +146,7 @@ describe('MeetController', () => {
     const toggle = wireCaptionsToggle(doc);
     await ctl.tick();
     const startedAt = clock.now;
-    await ctl.setRecording({ sessionId: 's1', startedAt });
+    ctl.setRecording({ sessionId: 's1', startedAt });
     expect(toggle.clicks()).toBe(1);
 
     clock.now += 1500;
@@ -176,7 +186,7 @@ describe('MeetController', () => {
     const parent = toolbar.parentNode!;
     toolbar.remove();
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     clock.now += 1000;
     await ctl.tick();
     parent.append(toolbar);
@@ -188,22 +198,34 @@ describe('MeetController', () => {
     expect(toggle.clicks()).toBe(1);
   });
 
-  it('ignores captions already on screen when recording starts, until they change', async () => {
+  it('ignores captions already on screen when recording starts, then ships only words added to them', async () => {
     const { ctl, bg, doc, clock } = setup(inCallOn);
     const toggle = wireCaptionsToggle(doc);
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     clock.now += 1000;
     await ctl.tick();
     await ctl.flushCaptions();
     expect(bg.batches()).toEqual([]);
     expect(toggle.clicks()).toBe(0);
 
+    // Meet corrects a finished pre-recording block: that speech predates t = 0.
     clock.now += 1000;
+    editCaption(doc, 'Camille Martin', 'Can anyone see my screen?');
+    await ctl.flushCaptions();
+    expect(bg.batches()).toEqual([]);
+
+    // The local user keeps talking in a block that started before the recording.
     editCaption(doc, 'You', 'Yes, looks good to me.');
     await ctl.flushCaptions();
     expect(bg.batches()).toEqual([
-      { sessionId: 's1', segments: [expect.objectContaining({ speaker: 'You', text: 'Yes, looks good to me.', tStart: 2000 })] },
+      { sessionId: 's1', segments: [expect.objectContaining({ speaker: 'You', text: 'to me.', tStart: 2000, rev: 0 })] },
+    ]);
+    clock.now += 500;
+    editCaption(doc, 'You', 'Yes, looks good to me. Ship it.');
+    await ctl.flushCaptions();
+    expect(bg.batches()[1]!.segments).toEqual([
+      expect.objectContaining({ text: 'to me. Ship it.', tStart: 2000, tEnd: 2500, rev: 1 }),
     ]);
   });
 
@@ -212,7 +234,7 @@ describe('MeetController', () => {
     const { ctl, doc, clock } = setup(inCallOff, bg);
     wireCaptionsToggle(doc);
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     clock.now += 1000;
     await ctl.tick();
     await ctl.flushCaptions();
@@ -232,7 +254,7 @@ describe('MeetController', () => {
     const { ctl, bg, doc, clock } = setup(inCallOff);
     wireCaptionsToggle(doc);
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     clock.now += 1000;
     await ctl.tick();
     editCaption(doc, 'You', 'Bye everyone!');
@@ -248,17 +270,128 @@ describe('MeetController', () => {
     expect(bg.sent).toHaveLength(3);
   });
 
-  it('on pagehide sends the last batch and meet/left immediately, in that order', async () => {
+  it('on pagehide sends the last batch immediately but not meet/left, so a reload keeps recording', async () => {
+    const bg = fakeBackground({ joined: { sessionId: 's1', startedAt: 1_789_000_000_000 } });
+    const { ctl, doc, clock } = setup(inCallOff, bg);
+    wireCaptionsToggle(doc);
+    await ctl.tick();
+    clock.now += 1000;
+    await ctl.tick();
+    editCaption(doc, 'You', 'Reloading, one second.');
+    ctl.pageHide();
+    // Closing the tab or navigating away is seen by the background (tabs.onRemoved / onUpdated).
+    expect(bg.types()).toEqual(['meet/joined', 'captions/batch']);
+    expect(bg.batches()[0]!.segments.map((s) => s.text)).toContain('Reloading, one second.');
+    editCaption(doc, 'You', 'Not captured after pagehide.');
+    await ctl.flushCaptions();
+    expect(bg.types()).toEqual(['meet/joined', 'captions/batch']);
+
+    // Restored from the back/forward cache: the page asks again and resumes capturing.
+    clock.now += 1000;
+    await ctl.tick();
+    editCaption(doc, 'You', 'Not captured after pagehide. Back again.');
+    await ctl.flushCaptions();
+    expect(bg.types()).toEqual(['meet/joined', 'captions/batch', 'meet/joined', 'captions/batch']);
+    expect(bg.batches()[1]!.segments.map((s) => s.text)).toEqual(['Back again.']);
+  });
+
+  it('keeps the call through a brief toolbar outage and leaves once it stays gone', async () => {
     const { ctl, bg, doc, clock } = setup(inCallOff);
     wireCaptionsToggle(doc);
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     clock.now += 1000;
     await ctl.tick();
-    editCaption(doc, 'You', 'Closing the tab now.');
-    ctl.pageHide();
-    expect(bg.types()).toEqual(['meet/joined', 'captions/batch', 'meet/left']);
-    expect(bg.batches()[0]!.segments.map((s) => s.text)).toContain('Closing the tab now.');
+    await ctl.flushCaptions();
+    const toolbar = doc.querySelector('[role="region"][aria-label="Call controls"]')!;
+    const parent = toolbar.parentNode!;
+
+    // Meet re-renders its toolbar: two ticks without a leave button.
+    toolbar.remove();
+    for (let i = 0; i < 2; i++) {
+      clock.now += 1000;
+      await ctl.tick();
+    }
+    editCaption(doc, 'You', 'Still talking during the re-render.');
+    parent.append(toolbar);
+    clock.now += 1000;
+    await ctl.tick();
+    await ctl.flushCaptions();
+    expect(bg.types()).toEqual(['meet/joined', 'captions/batch', 'captions/batch']);
+    expect(bg.batches()[1]!.segments.map((s) => s.text)).toEqual(['Still talking during the re-render.']);
+
+    // Gone for good (no call-ended screen recognised): leave after three missed ticks.
+    toolbar.remove();
+    for (let i = 0; i < 2; i++) {
+      clock.now += 1000;
+      await ctl.tick();
+    }
+    expect(bg.types()).not.toContain('meet/left');
+    clock.now += 1000;
+    await ctl.tick();
+    expect(bg.types().at(-1)).toBe('meet/left');
+  });
+
+  it('leaves at once when the call-ended screen shows or the tab leaves the call URL', async () => {
+    const ended = setup(inCallOff);
+    await ended.ctl.tick();
+    navigate(ended.doc, callEnded);
+    await ended.ctl.tick();
+    expect(ended.bg.types()).toEqual(['meet/joined', 'meet/left']);
+
+    const home = setup(inCallOff);
+    await home.ctl.tick();
+    home.url.href = 'https://meet.google.com/landing';
+    await home.ctl.tick();
+    expect(home.bg.types()).toEqual(['meet/joined', 'meet/left']);
+  });
+
+  it("adopts the recorder's t = 0 when the same session arrives with a corrected startedAt", async () => {
+    const requestedAt = 1_789_000_000_000;
+    const bg = fakeBackground({ joined: { sessionId: 's1', startedAt: requestedAt } });
+    const { ctl, doc, clock } = setup(inCallOff, bg);
+    wireCaptionsToggle(doc);
+    await ctl.tick();
+    clock.now += 2000;
+    await ctl.tick();
+    await ctl.flushCaptions();
+    expect(bg.batches()[0]!.segments.map((s) => s.tStart)).toEqual([2000, 2000]);
+
+    // The recorder really started 1.5 s after the request.
+    ctl.setRecording({ sessionId: 's1', startedAt: requestedAt + 1500 });
+    clock.now += 1000;
+    editCaption(doc, 'You', 'Yes, looks good. Thanks.');
+    await ctl.flushCaptions();
+    // Already-sent segments come back with a higher rev, so the background replaces them.
+    expect(fold(bg.batches()).map((s) => [s.speaker, s.tStart, s.tEnd])).toEqual([
+      ['Camille Martin', 500, 500],
+      ['You', 500, 1500],
+    ]);
+  });
+
+  it('ignores a meet/joined reply that a newer recording-state push overtook', async () => {
+    const requestedAt = 1_789_000_000_000;
+    const bg = fakeBackground();
+    let reply: (state: RecordingState | null) => void = () => {};
+    const send: SendToBackground = async (type, payload) => {
+      if (type !== 'meet/joined') return bg.send(type, payload);
+      await bg.send(type, payload);
+      return new Promise<RecordingState | null>((resolve) => (reply = resolve)) as never;
+    };
+    const { ctl, doc, clock } = setup(inCallOff, { ...bg, send });
+    const toggle = wireCaptionsToggle(doc);
+
+    // The recording stopped while meet/joined was in flight: the stale reply must not restart capture.
+    const joining = ctl.tick();
+    await Promise.resolve();
+    ctl.setRecording(null);
+    reply({ sessionId: 's1', startedAt: requestedAt });
+    await joining;
+    expect(toggle.clicks()).toBe(0);
+    clock.now += 1000;
+    await ctl.tick();
+    await ctl.flushCaptions();
+    expect(bg.batches()).toEqual([]);
   });
 
   it('treats an SPA navigation to another meeting code as leaving one call and joining the next', async () => {
@@ -281,8 +414,9 @@ describe('MeetController', () => {
     clock.now += 500;
     editCaption(doc, 'Camille Martin', 'Can everyone see my screen? Hello?');
     await ctl.flushCaptions();
+    // What was on screen when capture resumed is skipped, as at a fresh start.
     expect(bg.batches()).toEqual([
-      { sessionId: 's9', segments: [expect.objectContaining({ tStart: 60_500, text: 'Can everyone see my screen? Hello?' })] },
+      { sessionId: 's9', segments: [expect.objectContaining({ tStart: 60_500, text: 'Hello?' })] },
     ]);
   });
 
@@ -290,11 +424,11 @@ describe('MeetController', () => {
     const { ctl, bg, doc, clock } = setup(inCallOff);
     wireCaptionsToggle(doc);
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     clock.now += 1000;
     await ctl.tick();
     editCaption(doc, 'You', 'Stopping the recording.');
-    await ctl.setRecording(null);
+    ctl.setRecording(null);
     expect(bg.batches()).toHaveLength(1);
     expect(bg.batches()[0]!.segments.map((s) => s.text)).toContain('Stopping the recording.');
 
@@ -309,7 +443,7 @@ describe('MeetController', () => {
     const { ctl, doc, clock, logs } = setup(inCallOff);
     wireCaptionsToggle(doc);
     await ctl.tick();
-    await ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
+    ctl.setRecording({ sessionId: 's1', startedAt: clock.now });
     for (let i = 0; i < 4; i++) {
       clock.now += 1000;
       await ctl.tick();
@@ -330,7 +464,7 @@ describe('MeetController', () => {
       log: () => {},
     });
     await expect(empty.tick()).resolves.toBeUndefined();
-    await expect(empty.setRecording({ sessionId: 's', startedAt: Date.now() })).resolves.toBeUndefined();
+    expect(() => empty.setRecording({ sessionId: 's', startedAt: Date.now() })).not.toThrow();
     await expect(empty.flushCaptions()).resolves.toBeUndefined();
     empty.pageHide();
     empty.dispose();
@@ -338,11 +472,11 @@ describe('MeetController', () => {
     const doc = openPage(inCallOn);
     const ctl = new MeetController({ doc, url: () => CALL_URL, send: failing, log: () => {} });
     await expect(ctl.tick()).resolves.toBeUndefined();
-    await ctl.setRecording({ sessionId: 's', startedAt: Date.now() });
-    editCaption(doc, 'You', 'Is anyone there?');
+    ctl.setRecording({ sessionId: 's', startedAt: Date.now() });
+    editCaption(doc, 'You', 'Yes, looks good. Is anyone there?');
     await expect(ctl.flushCaptions()).resolves.toBeUndefined();
     ctl.pageHide();
     ctl.dispose();
-    expect(bg.types()).toEqual(['meet/joined', 'captions/batch', 'captions/batch', 'meet/left']);
+    expect(bg.types()).toEqual(['meet/joined', 'captions/batch', 'captions/batch']);
   });
 });
