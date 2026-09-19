@@ -23,6 +23,10 @@ export type PopupState =
       thisTab: boolean;
       /** Set when audio could not be captured: captions only. */
       audioError?: string;
+      /** Caption batches received so far: who said what. */
+      captionCount: number;
+      /** Why captions are not reaching the extension, when the background knows. */
+      captionsError?: string;
     };
 
 export interface PopupInput {
@@ -40,9 +44,11 @@ export function popupState({ tab, active, session }: PopupInput): PopupState {
       startedAt: session.startedAt,
       meetCode: session.meetCode,
       thisTab: tab?.id === active.tabId,
+      captionCount: session.captionCount,
     };
     if (session.meetingTitle) state.title = session.meetingTitle;
     if (session.audio.error) state.audioError = session.audio.error;
+    if (session.captionsError) state.captionsError = session.captionsError;
     return state;
   }
   const url = tab?.url ?? '';
@@ -56,6 +62,18 @@ export function popupState({ tab, active, session }: PopupInput): PopupState {
     onMeet = false;
   }
   return { kind: 'not-meet', onMeet };
+}
+
+/** Meet shows the first caption within seconds of speech; this long without one, CC is likely off. */
+export const NO_CAPTIONS_AFTER_MS = 20_000;
+
+/** Why the recording may end up without speaker names, if it might. */
+export function captionsNotice(state: Extract<PopupState, { kind: 'recording' }>, now: number): string | undefined {
+  if (state.captionsError) return state.captionsError;
+  if (state.captionCount === 0 && now - state.startedAt >= NO_CAPTIONS_AFTER_MS) {
+    return 'No captions yet — make sure captions are on (CC) so speakers are identified.';
+  }
+  return undefined;
 }
 
 export interface MicView {
@@ -101,8 +119,10 @@ export interface PopupModel {
   /** Null while loading. */
   state: PopupState | null;
   mic: MicView | null;
-  /** Settings that block transcription or saving. */
+  /** Settings that block saving to Notion. */
   missing: readonly string[];
+  /** No Gemini key: meetings are still saved, with a captions-only transcript. */
+  geminiKeyMissing: boolean;
 }
 
 export interface PopupHandlers {
@@ -124,9 +144,12 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers): Pop
   let busy = false;
   let error: string | undefined;
   let signature = '';
+  let captionsShown: string | undefined;
 
   const loading = () => h('p', { class: 'muted' }, 'Loading…');
   const stateSlot = h('section', { class: 'state', 'data-role': 'state', 'aria-live': 'polite' }, loading());
+  // Apart from the state section: it appears as time passes, and must not rebuild Stop.
+  const captionsSlot = h('div');
   const errorSlot = h('div');
   const noticeSlot = h('div', { class: 'notices' });
   const link = (key: string, label: string, onclick: () => void) =>
@@ -138,7 +161,7 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers): Pop
     link('settings', 'Settings', () => handlers.openSettings()),
   );
   const header = h('header', { class: 'popup-head' }, h('h1', null, 'Manet Meetings'));
-  mount(root, header, stateSlot, errorSlot, noticeSlot, footer);
+  mount(root, header, stateSlot, captionsSlot, errorSlot, noticeSlot, footer);
 
   function run(request: () => Promise<void>): void {
     busy = true;
@@ -223,6 +246,11 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers): Pop
   function render(force = false): void {
     const m = model;
     if (!m) return;
+    const captions = m.state?.kind === 'recording' ? captionsNotice(m.state, now) : undefined;
+    if (captions !== captionsShown) {
+      captionsShown = captions;
+      mount(captionsSlot, captions ? h('p', { class: 'notice warn', 'data-role': 'captions' }, captions) : null);
+    }
     const sig = JSON.stringify([m, busy, error]);
     if (!force && sig === signature) {
       // Only the clock moved.
@@ -240,8 +268,16 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers): Pop
           ? h(
               'div',
               { class: 'notice warn', 'data-role': 'missing' },
-              h('span', null, `Transcribing needs: ${m.missing.join(', ')}.`),
+              h('span', null, `Saving to Notion needs: ${m.missing.join(', ')}.`),
               link('missing-settings', 'Open settings', () => handlers.openSettings()),
+            )
+          : null,
+        m.geminiKeyMissing
+          ? h(
+              'div',
+              { class: 'notice muted', 'data-role': 'no-gemini' },
+              h('span', null, "No Gemini API key: transcripts come from Meet's captions only."),
+              link('no-gemini-settings', 'Open settings', () => handlers.openSettings()),
             )
           : null,
         m.mic

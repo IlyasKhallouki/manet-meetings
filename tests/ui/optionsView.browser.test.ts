@@ -148,6 +148,33 @@ describe('options view (real DOM)', () => {
     expect(field('retentionDays').getAttribute('aria-invalid')).toBeNull();
   });
 
+  it('saves language codes Gemini does not list, and warns next to the field', async () => {
+    const h = handlers();
+    const view = createOptionsView(root, h.handlers);
+    const warning = () => root.querySelector<HTMLElement>('[data-role="languageCodes-warning"]');
+    view.load(SETTINGS);
+    expect(warning()?.hidden ?? true).toBe(true);
+
+    type(field('languageCodes'), 'fr, cmn-Hans-CN');
+    // Shown while typing, not only after saving.
+    expect(warning()?.hidden).toBe(false);
+    expect(text(warning())).toContain('"fr" (try fr-FR)');
+    expect(field('languageCodes').getAttribute('aria-describedby')!.split(' ')).toContain(warning()!.id);
+    button('Save')!.click();
+    await until(() => h.saved.length === 1);
+    expect(h.saved[0]!.languageCodes).toEqual(['fr', 'cmn-Hans-CN']);
+    expect(field('languageCodes').getAttribute('aria-invalid')).toBeNull();
+    await until(() => text(root.querySelector('[data-role="save-status"]')) === 'Saved.');
+    expect(warning()?.hidden).toBe(false);
+
+    // Settings saved by an older version, which rewrote cmn-Hans-CN.
+    view.load({ ...SETTINGS, languageCodes: ['zh-Hans-CN'] });
+    expect(text(warning())).toContain('"zh-Hans-CN" (try cmn-Hans-CN or yue-Hant-HK)');
+    type(field('languageCodes'), 'cmn-Hans-CN');
+    expect(warning()?.hidden).toBe(true);
+    expect(field('languageCodes').getAttribute('aria-describedby')).toBe('languageCodes-hint');
+  });
+
   it('tests the Gemini key typed in the form against the real API', async () => {
     const view = createOptionsView(root, handlers().handlers);
     view.load({ ...SETTINGS, geminiApiKey: '' });

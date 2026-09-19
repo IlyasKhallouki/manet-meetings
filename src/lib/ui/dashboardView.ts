@@ -9,6 +9,7 @@
 import type { Route, SessionMeta } from '../types';
 import { h, keepFocus, mount, type Child } from './dom';
 import {
+  ANYWAY_NOTE,
   canChooseRoute,
   compareSessions,
   sessionActions,
@@ -28,17 +29,24 @@ export interface DashboardData {
   audioOnDisk: ReadonlyMap<string, number> | null;
   /** navigator.storage.estimate() for the extension origin. */
   estimate: { usage: number; quota: number } | null;
-  /** Settings that block transcription or saving. */
+  /** Settings that block saving to Notion. */
   missing: readonly string[];
+  /** No Gemini key: meetings are still saved, with a captions-only transcript. */
+  geminiKeyMissing: boolean;
+  /** The auto-transcribe setting. */
+  autoTranscribe: boolean;
   now: number;
 }
 
 export interface DashboardHandlers {
   stop(sessionId: string): Promise<void>;
-  transcribe(sessionId: string): Promise<void>;
-  save(sessionId: string): Promise<void>;
+  /** `force` skips the Notion duplicate check ("Transcribe anyway"). */
+  transcribe(sessionId: string, opts: { force?: boolean }): Promise<void>;
+  /** `force` saves despite an existing page ("Save anyway"). */
+  save(sessionId: string, opts: { force?: boolean }): Promise<void>;
   remove(sessionId: string): Promise<void>;
   route(sessionId: string, route: Route): Promise<void>;
+  setAutoTranscribe(on: boolean): Promise<void>;
   openSettings(): void;
 }
 
@@ -85,6 +93,27 @@ export function createDashboardView(
   let data: DashboardData | null = null;
   let focusNext: string | null = null;
   let noticeSig = '';
+  /** The auto-transcribe value asked for, shown until the next update after its request. */
+  let autoChoice: boolean | undefined;
+  let autoPending = false;
+
+  const autoSwitch = h('input', {
+    type: 'checkbox',
+    role: 'switch',
+    id: 'auto-transcribe',
+    'aria-describedby': 'auto-transcribe-mode',
+    'data-key': 'auto-transcribe',
+  });
+  const autoMode = h('span', { class: 'sub', id: 'auto-transcribe-mode', 'data-role': 'auto-mode' });
+  const autoError = h('p', { class: 'error', role: 'alert', hidden: true });
+  const autoBar = h(
+    'div',
+    { class: 'dashboard-bar', 'data-role': 'auto-transcribe' },
+    h('label', { class: 'switch', for: 'auto-transcribe' }, autoSwitch, 'Transcribe automatically'),
+    autoMode,
+    autoError,
+  );
+  autoSwitch.addEventListener('change', () => setAuto(autoSwitch.checked));
 
   const noticeSlot = h('div');
   const storage = h('p', { class: 'storage muted', 'data-role': 'storage' });
@@ -114,7 +143,42 @@ export function createDashboardView(
     { class: 'empty', 'data-role': 'empty', hidden: true },
     'No recordings yet. Join a Google Meet call and click Record in the extension popup.',
   );
-  mount(root, noticeSlot, storage, h('div', { class: 'table-wrap' }, table), empty);
+  mount(root, autoBar, noticeSlot, storage, h('div', { class: 'table-wrap' }, table), empty);
+
+  function setAuto(on: boolean): void {
+    autoChoice = on;
+    autoPending = true;
+    autoError.hidden = true;
+    let promise: Promise<void>;
+    try {
+      promise = handlers.setAutoTranscribe(on);
+    } catch (err) {
+      promise = Promise.reject(err);
+    }
+    renderAuto();
+    promise
+      .catch((err: unknown) => {
+        autoChoice = undefined;
+        autoError.textContent = errorText(err);
+        autoError.hidden = false;
+      })
+      .finally(() => {
+        autoPending = false;
+        if (data?.autoTranscribe === autoChoice) autoChoice = undefined;
+        renderAuto();
+      });
+  }
+
+  function renderAuto(): void {
+    const d = data;
+    if (!d) return;
+    const on = autoChoice ?? d.autoTranscribe;
+    autoSwitch.checked = on;
+    autoSwitch.disabled = autoPending;
+    autoMode.textContent = on
+      ? 'On: each meeting is transcribed and saved to Notion once its destination is chosen.'
+      : 'Off: nothing is sent until you click Transcribe on a meeting.';
+  }
 
   function run(id: string, request: () => Promise<void>): void {
     failures.delete(id);
@@ -154,12 +218,13 @@ export function createDashboardView(
     run(id, () => handlers.remove(id));
   }
 
-  function onAction(meta: SessionMeta, action: SessionAction): void {
+  function onAction(meta: SessionMeta, action: SessionAction, view: ActionView): void {
     const id = meta.id;
+    const opts = view.force ? { force: true } : {};
     if (action === 'delete') startDelete(id);
     else if (action === 'stop') run(id, () => handlers.stop(id));
-    else if (action === 'transcribe') run(id, () => handlers.transcribe(id));
-    else run(id, () => handlers.save(id));
+    else if (action === 'transcribe') run(id, () => handlers.transcribe(id, opts));
+    else run(id, () => handlers.save(id, opts));
   }
 
   function actionButton(meta: SessionMeta, title: string, action: SessionAction, view: ActionView): HTMLButtonElement {
@@ -172,7 +237,7 @@ export function createDashboardView(
         title: view.hint,
         'aria-label': `${view.label} ${title}`,
         'data-key': `${meta.id}:${action}`,
-        onclick: () => onAction(meta, action),
+        onclick: () => onAction(meta, action, view),
       },
       view.label,
     );
@@ -242,6 +307,10 @@ export function createDashboardView(
           : null,
       ),
       view.error ? h('p', { class: 'error' }, view.error) : null,
+      view.retry ? h('p', { class: 'sub', 'data-role': 'retry' }, view.retry) : null,
+      view.captionsNote
+        ? h('p', { class: 'sub warn-text', 'data-role': 'captions-warning' }, view.captionsNote)
+        : null,
       failure ? h('p', { class: 'error', role: 'alert' }, failure) : null,
       view.notion
         ? h('a', { href: view.notion.url, target: '_blank', rel: 'noopener noreferrer' }, view.notion.label)
@@ -293,12 +362,16 @@ export function createDashboardView(
       view.audioNote ? h('span', { class: 'sub warn-text' }, view.audioNote) : null,
       tabOnly ? h('span', { class: 'sub' }, 'without your mic') : null,
     ]);
-    patch(entry, 'status', JSON.stringify([view.status, view.recovered, view.error, view.notion, failure]), () =>
-      statusCell(view, failure),
+    patch(
+      entry,
+      'status',
+      JSON.stringify([view.status, view.recovered, view.error, view.retry, view.captionsNote, view.notion, failure]),
+      () => statusCell(view, failure),
     );
     patch(entry, 'route', JSON.stringify([routable, meta.route, choices.get(id), isPending, view.title]), () => [
       routable ? routePicker(meta, view.title) : view.route,
     ]);
+    const anyway = !isConfirming && (actions.transcribe.force || actions.save.force) === true;
     patch(entry, 'actions', JSON.stringify([actions, isConfirming, view.title, meta.status, !!meta.notion]), () => [
       isConfirming
         ? confirmBox(meta)
@@ -307,31 +380,41 @@ export function createDashboardView(
             { class: 'actions' },
             ACTION_ORDER.filter((a) => actions[a].visible).map((a) => actionButton(meta, view.title, a, actions[a])),
           ),
+      anyway ? h('p', { class: 'sub' }, ANYWAY_NOTE) : null,
     ]);
   }
 
   function renderNotice(d: DashboardData): void {
-    const sig = d.missing.join('\n');
+    const sig = JSON.stringify([d.missing, d.geminiKeyMissing]);
     if (sig === noticeSig) return;
     noticeSig = sig;
-    if (!d.missing.length) {
-      noticeSlot.replaceChildren();
-      return;
-    }
+    const open = () =>
+      h('button', { type: 'button', class: 'link', onclick: () => handlers.openSettings() }, 'Open settings');
     mount(
       noticeSlot,
-      h(
-        'div',
-        { class: 'notice warn', 'data-role': 'missing' },
-        h('span', null, `Transcribing and saving need: ${d.missing.join(', ')}.`),
-        h('button', { type: 'button', class: 'link', onclick: () => handlers.openSettings() }, 'Open settings'),
-      ),
+      d.missing.length
+        ? h(
+            'div',
+            { class: 'notice warn', 'data-role': 'missing' },
+            h('span', null, `Saving to Notion needs: ${d.missing.join(', ')}.`),
+            open(),
+          )
+        : null,
+      d.geminiKeyMissing
+        ? h(
+            'div',
+            { class: 'notice muted', 'data-role': 'no-gemini' },
+            h('span', null, "No Gemini API key: transcripts come from Meet's captions only."),
+            open(),
+          )
+        : null,
     );
   }
 
   function render(): void {
     const d = data;
     if (!d) return;
+    renderAuto();
     keepFocus(root, () => {
       renderNotice(d);
       const summary = storageSummary(d.sessions, d.audioOnDisk, d.estimate);
@@ -370,6 +453,8 @@ export function createDashboardView(
   return {
     update(next) {
       data = next;
+      // Settled: the stored setting is the truth again, whoever changed it last.
+      if (!autoPending) autoChoice = undefined;
       render();
     },
   };

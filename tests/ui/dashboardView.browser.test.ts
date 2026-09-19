@@ -47,6 +47,8 @@ function data(patch: Partial<DashboardData> = {}): DashboardData {
     audioOnDisk: new Map([['saved', 3 * MB]]),
     estimate: { usage: 20 * MB, quota: 1024 * MB },
     missing: [],
+    geminiKeyMissing: false,
+    autoTranscribe: true,
     now: T0 + 3_600_000 + 65_000,
     ...patch,
   };
@@ -56,6 +58,8 @@ interface Call {
   action: string;
   id: string;
   route?: Route;
+  force?: boolean;
+  on?: boolean;
 }
 
 /** Records calls; each call returns a promise the test settles. */
@@ -70,10 +74,11 @@ function recorder() {
   let settingsOpened = 0;
   const handlers: DashboardHandlers = {
     stop: (id) => pending({ action: 'stop', id }),
-    transcribe: (id) => pending({ action: 'transcribe', id }),
-    save: (id) => pending({ action: 'save', id }),
+    transcribe: (id, opts) => pending({ action: 'transcribe', id, ...(opts.force ? { force: true } : {}) }),
+    save: (id, opts) => pending({ action: 'save', id, ...(opts.force ? { force: true } : {}) }),
     remove: (id) => pending({ action: 'remove', id }),
     route: (id, route) => pending({ action: 'route', id, route }),
+    setAutoTranscribe: (on) => pending({ action: 'auto', id: '', on }),
     openSettings: () => {
       settingsOpened++;
     },
@@ -245,18 +250,131 @@ describe('dashboard view (real DOM)', () => {
   it('summarizes storage and warns about missing settings', () => {
     const r = recorder();
     const view = createDashboardView(root, r.handlers, FMT);
-    view.update(data({ missing: ['Gemini API key', 'Your name'] }));
+    view.update(data({ missing: ['Notion integration token', 'Your name'] }));
     const storage = text(root.querySelector('[data-role="storage"]'));
     // saved 3 MB (disk) + rec, proc, failed, route, dup 2 MB each.
     expect(storage).toContain('13.0 MB in 6 recordings');
     expect(storage).toContain('20.0 MB used of 1.0 GB available');
     const notice = root.querySelector('[data-role="missing"]')!;
-    expect(text(notice)).toContain('Gemini API key, Your name');
+    expect(text(notice)).toContain('Saving to Notion needs: Notion integration token, Your name.');
     notice.querySelector('button')!.click();
     expect(r.settingsOpened()).toBe(1);
 
     view.update(data({ missing: [] }));
     expect(root.querySelector('[data-role="missing"]')).toBeNull();
+  });
+
+  it('says a missing Gemini key means captions-only transcripts, without calling it a blocker', () => {
+    const r = recorder();
+    const view = createDashboardView(root, r.handlers, FMT);
+    view.update(data({ geminiKeyMissing: true }));
+    expect(root.querySelector('[data-role="missing"]')).toBeNull();
+    const notice = root.querySelector('[data-role="no-gemini"]')!;
+    expect(text(notice)).toMatch(/No Gemini API key: transcripts come from Meet's captions only/);
+    notice.querySelector('button')!.click();
+    expect(r.settingsOpened()).toBe(1);
+    view.update(data());
+    expect(root.querySelector('[data-role="no-gemini"]')).toBeNull();
+  });
+
+  it('files a duplicate anyway on request, saying what that does and who recorded it', async () => {
+    const r = recorder();
+    const view = createDashboardView(root, r.handlers, FMT);
+    view.update(data());
+    expect(text(cell('dup', 'status'))).toContain('Already in Notion');
+    expect(text(cell('dup', 'status'))).toContain('Already saved by Marie');
+    const anyway = button('dup', 'Transcribe anyway')!;
+    expect(anyway.disabled).toBe(false);
+    expect(anyway.classList.contains('primary')).toBe(false);
+    expect(text(cell('dup', 'actions'))).toContain('"Anyway" files a second Notion page for the same meeting.');
+    // Save anyway needs a stored transcript.
+    expect(button('dup', 'Save anyway')).toBeUndefined();
+    expect(cell('dup', 'route').querySelector('select')).not.toBeNull();
+
+    anyway.click();
+    expect(r.calls).toEqual([{ action: 'transcribe', id: 'dup', force: true }]);
+    r.settle[0]!.resolve();
+    await flush();
+
+    view.update(data({ resultIds: new Set(['failed', 'saved', 'dup']) }));
+    button('dup', 'Save anyway')!.click();
+    expect(r.calls[1]).toEqual({ action: 'save', id: 'dup', force: true });
+
+    // Elsewhere the duplicate check still runs.
+    button('failed', 'Retry save')!.click();
+    expect(r.calls[2]).toEqual({ action: 'save', id: 'failed' });
+  });
+
+  it('shows an empty recording with Transcribe again and Delete only', () => {
+    const view = createDashboardView(root, recorder().handlers, FMT);
+    const sessions = [...SAMPLE, meta('empty', { status: 'empty', route: 'team' })];
+    view.update(data({ sessions, resultIds: new Set(['empty']) }));
+    expect(text(cell('empty', 'status'))).toContain('Nothing was captured');
+    const labels = [...row('empty').querySelectorAll('[data-cell="actions"] button')].map((b) => text(b));
+    expect(labels).toEqual(['Transcribe again', 'Delete']);
+    expect(button('empty', 'Transcribe again')?.disabled).toBe(false);
+  });
+
+  it('says when a failed transcription is retried automatically', () => {
+    const view = createDashboardView(root, recorder().handlers, FMT);
+    const retryAt = Date.UTC(2026, 8, 19, 9, 40, 0);
+    const sessions = SAMPLE.map((s) =>
+      s.id === 'failed'
+        ? { ...s, retryAt, error: 'Gemini unreachable: HTTP 503. Retrying automatically at 11:40.' }
+        : s,
+    );
+    view.update(data({ sessions, resultIds: new Set() }));
+    const status = text(cell('failed', 'status'));
+    expect(status).toContain('Retrying automatically at 09:40');
+    expect(status).toContain('Gemini unreachable: HTTP 503.');
+    expect(status).not.toContain('11:40');
+    expect(button('failed', 'Retry now')?.disabled).toBe(false);
+  });
+
+  it('warns on a row whose captions are not coming through', () => {
+    const view = createDashboardView(root, recorder().handlers, FMT);
+    const why = 'Captions are not reaching Manet from this tab. Reload the Meet tab to capture who said what.';
+    const sessions = SAMPLE.map((s) => (s.id === 'rec' ? { ...s, captionsError: why } : s));
+    view.update(data({ sessions }));
+    const warning = cell('rec', 'status').querySelector('[data-role="captions-warning"]');
+    expect(text(warning)).toBe(why);
+    view.update(data());
+    expect(cell('rec', 'status').querySelector('[data-role="captions-warning"]')).toBeNull();
+  });
+
+  it('has an auto-transcribe switch that shows and changes the mode', async () => {
+    const r = recorder();
+    const view = createDashboardView(root, r.handlers, FMT);
+    view.update(data({ autoTranscribe: true }));
+    const toggle = root.querySelector<HTMLInputElement>('input[role="switch"]')!;
+    expect(toggle.labels?.[0] && text(toggle.labels[0])).toBe('Transcribe automatically');
+    expect(toggle.checked).toBe(true);
+    const mode = () => text(root.querySelector('[data-role="auto-mode"]'));
+    expect(mode()).toMatch(/^On:/);
+
+    toggle.click();
+    expect(r.calls).toEqual([{ action: 'auto', id: '', on: false }]);
+    expect(toggle.checked).toBe(false);
+    expect(toggle.disabled).toBe(true);
+    // A re-render before the settings change lands keeps the choice.
+    view.update(data({ autoTranscribe: true }));
+    expect(toggle.checked).toBe(false);
+    r.settle[0]!.resolve();
+    await flush();
+    view.update(data({ autoTranscribe: false }));
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.checked).toBe(false);
+    expect(mode()).toMatch(/^Off:/);
+
+    // Changed elsewhere (Settings page).
+    view.update(data({ autoTranscribe: true }));
+    expect(toggle.checked).toBe(true);
+
+    toggle.click();
+    r.settle[1]!.reject(new Error('Storage is full.'));
+    await flush();
+    expect(toggle.checked).toBe(true);
+    expect(text(root.querySelector('[data-role="auto-transcribe"] [role="alert"]'))).toBe('Storage is full.');
   });
 
   it('shows an empty state', () => {
@@ -293,9 +411,9 @@ describe('dashboard view (real DOM)', () => {
 
   it('does not rebuild the settings notice on a clock tick', () => {
     const view = createDashboardView(root, recorder().handlers, FMT);
-    view.update(data({ missing: ['Gemini API key'] }));
+    view.update(data({ missing: ['Your name'] }));
     const open = root.querySelector('[data-role="missing"] button');
-    view.update(data({ missing: ['Gemini API key'], now: T0 + 3_600_000 + 70_000 }));
+    view.update(data({ missing: ['Your name'], now: T0 + 3_600_000 + 70_000 }));
     expect(root.querySelector('[data-role="missing"] button')).toBe(open);
   });
 

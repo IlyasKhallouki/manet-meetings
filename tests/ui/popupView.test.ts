@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '@lib/types';
-import { micView, popupState } from '@lib/ui/popupView';
+import { captionsNotice, micView, NO_CAPTIONS_AFTER_MS, popupState } from '@lib/ui/popupView';
 
 const CALL = 'https://meet.google.com/abc-defg-hij?authuser=0';
 const STARTED = Date.UTC(2026, 8, 19, 8, 15, 0);
@@ -57,6 +57,7 @@ describe('popupState', () => {
       meetCode: 'abc-defg-hij',
       title: 'Weekly sync',
       thisTab: true,
+      captionCount: 0,
     });
   });
 
@@ -70,6 +71,16 @@ describe('popupState', () => {
     expect(popupState({ tab: { id: 7, url: CALL }, active, session: s })).toMatchObject({
       kind: 'recording',
       audioError: 'Tab capture failed: no permission',
+    });
+  });
+
+  it('carries caption progress and why captions are missing', () => {
+    const why = 'Captions are not reaching Manet from this tab. Reload the Meet tab to capture who said what.';
+    const s = session({ captionCount: 3, captionsError: why });
+    expect(popupState({ tab: { id: 7, url: CALL }, active, session: s })).toMatchObject({
+      kind: 'recording',
+      captionCount: 3,
+      captionsError: why,
     });
   });
 
@@ -98,5 +109,28 @@ describe('micView', () => {
   it('stays quiet when the mic is turned off in settings', () => {
     expect(micView('prompt', false)).toMatchObject({ tone: 'muted', canRequest: false });
     expect(micView('granted', false).text).toMatch(/off in settings/i);
+  });
+});
+
+describe('captionsNotice', () => {
+  const recording = (patch: Partial<SessionMeta> = {}) => {
+    const state = popupState({ tab: { id: 7, url: CALL }, active, session: session(patch) });
+    if (state.kind !== 'recording') throw new Error('not recording');
+    return state;
+  };
+
+  it('asks to turn on captions when none arrived after a while', () => {
+    expect(NO_CAPTIONS_AFTER_MS).toBe(20_000);
+    expect(captionsNotice(recording(), STARTED + 19_000)).toBeUndefined();
+    expect(captionsNotice(recording(), STARTED + 20_000)).toBe(
+      'No captions yet — make sure captions are on (CC) so speakers are identified.',
+    );
+    expect(captionsNotice(recording({ captionCount: 1 }), STARTED + 60_000)).toBeUndefined();
+  });
+
+  it('gives the reason when the background knows why captions are missing', () => {
+    const why = 'Captions are not reaching Manet from this tab. Reload the Meet tab to capture who said what.';
+    expect(captionsNotice(recording({ captionsError: why }), STARTED + 1000)).toBe(why);
+    expect(captionsNotice(recording({ captionsError: why }), STARTED + 60_000)).toBe(why);
   });
 });

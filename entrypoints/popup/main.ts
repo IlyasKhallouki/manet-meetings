@@ -1,10 +1,11 @@
 import '@lib/ui/styles.css';
 import { browser } from 'wxt/browser';
 import { errorMessage, sendToBackground } from '@lib/messages';
-import { getSettings, missingSettings } from '@lib/settings';
+import { getSettings } from '@lib/settings';
 import { loadPopupInput, openExtensionPage, startRecording } from '@lib/ui/extension';
 import { queryMicPermission, watchMicPermission } from '@lib/ui/mic';
 import { createPopupView, micView, popupState, type PopupModel } from '@lib/ui/popupView';
+import { setupProblems } from '@lib/ui/settingsForm';
 
 const root = document.getElementById('app')!;
 let model: PopupModel | null = null;
@@ -32,10 +33,12 @@ const view = createPopupView(root, {
 
 async function refresh(): Promise<void> {
   const [input, settings, mic] = await Promise.all([loadPopupInput(), getSettings(), queryMicPermission()]);
+  const problems = setupProblems(settings, settings.defaultRoute);
   model = {
     state: popupState(input),
     mic: micView(mic, settings.includeMic),
-    missing: missingSettings(settings, settings.defaultRoute),
+    missing: problems.blocking,
+    geminiKeyMissing: problems.geminiKeyMissing,
   };
   view.update(model, Date.now());
 }

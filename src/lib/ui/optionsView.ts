@@ -7,7 +7,14 @@ import type { Route, Settings } from '../types';
 import { h, mount, type Child } from './dom';
 import type { MicPermission } from './mic';
 import { micView } from './popupView';
-import { parseSettingsForm, settingsToForm, type SettingsErrors, type SettingsFormValues } from './settingsForm';
+import {
+  languageCodeWarning,
+  parseLanguageCodes,
+  parseSettingsForm,
+  settingsToForm,
+  type SettingsErrors,
+  type SettingsFormValues,
+} from './settingsForm';
 
 export interface OptionsHandlers {
   save(settings: Settings): Promise<void>;
@@ -54,6 +61,8 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
   const inputs = new Map<TextName, HTMLInputElement>();
   const checks = new Map<CheckName, HTMLInputElement>();
   const errorSlots = new Map<keyof Settings, HTMLElement>();
+  /** Advice that does not block saving. */
+  const warningSlots = new Map<keyof Settings, HTMLElement>();
   const focusTargets = new Map<keyof Settings, HTMLElement>();
   let permission: MicPermission | null = null;
   let saving = false;
@@ -63,10 +72,16 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
   const notionResult = h('div', { class: 'check-result', 'data-role': 'notion-result', role: 'status' });
   const micStatus = h('div', { 'data-role': 'mic' });
 
-  function hintAndError(name: keyof Settings, hint?: string): Child[] {
+  function hintAndError(name: keyof Settings, hint?: string, withWarning = false): Child[] {
     const error = h('p', { id: `${name}-error`, class: 'error', hidden: true });
     errorSlots.set(name, error);
-    return [hint ? h('p', { id: `${name}-hint`, class: 'hint' }, hint) : null, error];
+    let warning: HTMLElement | null = null;
+    if (withWarning) {
+      const id = `${name}-warning`;
+      warning = h('p', { id, class: 'hint warn-text', 'data-role': id, hidden: true });
+      warningSlots.set(name, warning);
+    }
+    return [hint ? h('p', { id: `${name}-hint`, class: 'hint' }, hint) : null, error, warning];
   }
 
   function describedBy(name: keyof Settings, hint: boolean): string | undefined {
@@ -79,6 +94,7 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
     hint: string | undefined,
     attrs: Record<string, string | boolean> = {},
     extra: Child[] = [],
+    withWarning = false,
   ): HTMLElement {
     const input = h('input', {
       id: name,
@@ -96,7 +112,7 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
       { class: 'field' },
       h('label', { for: name }, label),
       h('div', { class: 'input-row' }, input, extra),
-      hintAndError(name, hint),
+      hintAndError(name, hint, withWarning),
     );
   }
 
@@ -163,7 +179,12 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
       'section',
       null,
       h('h2', null, 'Gemini'),
-      secretField('geminiApiKey', 'Gemini API key', 'Create one at aistudio.google.com/apikey.', [testGemini]),
+      secretField(
+        'geminiApiKey',
+        'Gemini API key',
+        "Create one at aistudio.google.com/apikey. Without it, transcripts come from Meet's captions only.",
+        [testGemini],
+      ),
       geminiResult,
       h(
         'div',
@@ -182,6 +203,8 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
         'Comma-separated codes such as en-US, fr-FR. Leave empty for automatic detection, which handles ' +
           'meetings that mix languages.',
         { placeholder: 'Automatic' },
+        [],
+        true,
       ),
     ),
     h(
@@ -257,20 +280,36 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
     };
   }
 
+  /** Points the field at its hint and whichever error or warning is showing. */
+  function linkDescriptions(name: keyof Settings): void {
+    const target = focusTargets.get(name);
+    if (!target) return;
+    const hint = name === 'defaultRoute' ? null : document.getElementById(`${name}-hint`);
+    const shown = [errorSlots.get(name), warningSlots.get(name)].filter((slot) => slot && !slot.hidden);
+    const ids = [hint?.id, ...shown.map((slot) => slot!.id)].filter(Boolean).join(' ');
+    if (ids) target.setAttribute('aria-describedby', ids);
+    else target.removeAttribute('aria-describedby');
+  }
+
   function showErrors(errors: SettingsErrors): void {
     for (const [name, slot] of errorSlots) {
       const message = errors[name];
       const target = focusTargets.get(name);
       slot.textContent = message ?? '';
       slot.hidden = !message;
-      if (!target) continue;
-      const hint = name === 'defaultRoute' ? null : document.getElementById(`${name}-hint`);
-      const ids = [hint ? hint.id : null, message ? slot.id : null].filter(Boolean).join(' ');
-      if (ids) target.setAttribute('aria-describedby', ids);
-      else target.removeAttribute('aria-describedby');
-      if (message) target.setAttribute('aria-invalid', 'true');
-      else target.removeAttribute('aria-invalid');
+      linkDescriptions(name);
+      if (message) target?.setAttribute('aria-invalid', 'true');
+      else target?.removeAttribute('aria-invalid');
     }
+  }
+
+  /** Codes outside Gemini's list are saved, but may be rejected: say so while typing. */
+  function showLanguageWarning(): void {
+    const slot = warningSlots.get('languageCodes')!;
+    const message = languageCodeWarning(parseLanguageCodes(inputs.get('languageCodes')!.value).codes);
+    slot.textContent = message ?? '';
+    slot.hidden = !message;
+    linkDescriptions('languageCodes');
   }
 
   function setStatus(message: string, tone?: 'ok' | 'error'): void {
@@ -354,7 +393,8 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
     }
   }
 
-  form.addEventListener('input', () => {
+  form.addEventListener('input', (e) => {
+    if (e.target === inputs.get('languageCodes')) showLanguageWarning();
     if (!saving) setStatus('Unsaved changes.');
   });
   form.addEventListener('change', (e) => {
@@ -399,6 +439,7 @@ export function createOptionsView(root: HTMLElement, handlers: OptionsHandlers):
       checks.get('autoTranscribe')!.checked = v.autoTranscribe;
       checks.get('includeMic')!.checked = v.includeMic;
       showErrors({});
+      showLanguageWarning();
       setStatus('');
       renderMic();
     },

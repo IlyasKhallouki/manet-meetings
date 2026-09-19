@@ -3,8 +3,10 @@
  * available, and formatted row fields. Pure, so the rules can be tested without a DOM.
  *
  * The action rules mirror what the background accepts (sessionManager.ts): Transcribe
- * from awaiting-route, ready, failed or processed; Save from processed, or failed with a
- * stored result; a route change from awaiting-route, ready, failed or processed.
+ * from awaiting-route, ready, failed, processed, empty or duplicate; Save from processed,
+ * failed or duplicate with a stored result; a route change from awaiting-route, ready,
+ * failed, processed, empty or duplicate. On a duplicate both skip the Notion check
+ * ("anyway"), which files a second page.
  */
 import type { JobStage, Route, SessionMeta, SessionStatus } from '../types';
 import { formatBytes, formatDuration } from '../util/time';
@@ -20,9 +22,11 @@ export interface ActionView {
   primary: boolean;
   /** Why a visible action is disabled. */
   hint?: string;
+  /** Send `force`: skip the Notion duplicate check. */
+  force?: boolean;
 }
 
-export type StatusTone = 'recording' | 'waiting' | 'busy' | 'done' | 'error';
+export type StatusTone = 'recording' | 'waiting' | 'busy' | 'done' | 'error' | 'neutral';
 
 export interface StatusView {
   label: string;
@@ -31,9 +35,14 @@ export interface StatusView {
   detail?: string;
 }
 
-const TRANSCRIBABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed']);
-const ROUTABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'processed', 'failed']);
+const TRANSCRIBABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
+/** Only with a stored result. */
+const SAVABLE = new Set<SessionStatus>(['processed', 'failed', 'duplicate']);
+const ROUTABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
 const BUSY = new Set<SessionStatus>(['processing', 'saving']);
+
+/** Shown next to "Transcribe anyway" and "Save anyway". */
+export const ANYWAY_NOTE = '"Anyway" files a second Notion page for the same meeting.';
 
 const STAGE_LABELS: Record<JobStage, string> = {
   'checking-duplicate': 'Checking Notion for duplicates',
@@ -55,6 +64,7 @@ const STATUS: Record<SessionStatus, { label: string; tone: StatusTone }> = {
   saving: { label: 'Saving to Notion', tone: 'busy' },
   saved: { label: 'Saved', tone: 'done' },
   duplicate: { label: 'Already in Notion', tone: 'done' },
+  empty: { label: 'Nothing was captured', tone: 'neutral' },
   failed: { label: 'Failed', tone: 'error' },
 };
 
@@ -94,20 +104,37 @@ export function sessionActions(
 ): Record<SessionAction, ActionView> {
   const { status } = meta;
   const busy = BUSY.has(status);
-  const canSave = (status === 'processed' || status === 'failed') && ctx.hasResult;
+  const duplicate = status === 'duplicate';
+  const canSave = SAVABLE.has(status) && ctx.hasResult;
   const canTranscribe = TRANSCRIBABLE.has(status);
   const retrySave = status === 'failed' && ctx.hasResult;
+  // A second page (duplicate) or another try at silence (empty) is a choice, not the next step.
+  const noPrimary = duplicate || status === 'empty';
 
-  const view = (visible: boolean, allowed: boolean, label: string, primary: boolean, hint: string): ActionView => {
+  const view = (
+    visible: boolean,
+    allowed: boolean,
+    label: string,
+    primary: boolean,
+    hint: string,
+    force = false,
+  ): ActionView => {
     const enabled = allowed && !ctx.pending;
-    const out: ActionView = { visible, enabled, label, primary: primary && enabled };
+    const out: ActionView = { visible, enabled, label, primary: primary && enabled && !noPrimary };
     if (visible && !enabled) out.hint = ctx.pending ? 'Working…' : hint;
+    if (force) out.force = true;
     return out;
   };
 
   let transcribeLabel = 'Transcribe';
-  if (status === 'failed') transcribeLabel = ctx.hasResult ? 'Transcribe again' : 'Retry';
-  else if (status === 'processed') transcribeLabel = 'Transcribe again';
+  if (duplicate) transcribeLabel = 'Transcribe anyway';
+  else if (status === 'failed' && ctx.hasResult) transcribeLabel = 'Transcribe again';
+  else if (status === 'failed') transcribeLabel = meta.retryAt === undefined ? 'Retry' : 'Retry now';
+  else if (status === 'processed' || status === 'empty') transcribeLabel = 'Transcribe again';
+
+  let saveLabel = 'Save to Notion';
+  if (duplicate) saveLabel = 'Save anyway';
+  else if (retrySave) saveLabel = 'Retry save';
 
   return {
     stop: view(status === 'recording', status === 'recording', 'Stop', true, 'Not recording.'),
@@ -117,13 +144,15 @@ export function sessionActions(
       transcribeLabel,
       !canSave,
       busy ? 'A job is already running for this meeting.' : 'Not available now.',
+      duplicate,
     ),
     save: view(
-      status === 'processed' || status === 'saving' || retrySave,
+      status === 'processed' || status === 'saving' || retrySave || (duplicate && ctx.hasResult),
       canSave,
-      retrySave ? 'Retry save' : 'Save to Notion',
+      saveLabel,
       true,
       status === 'saving' ? 'Saving to Notion…' : 'Nothing to save yet: transcribe first.',
+      duplicate,
     ),
     delete: view(true, !busy, 'Delete', false, 'Wait for the running job to finish.'),
   };
@@ -134,6 +163,12 @@ export interface FormatOptions {
   locale?: string;
   /** Defaults to the local zone. */
   timeZone?: string;
+}
+
+/** 14:40, in the page's locale and zone. */
+export function formatTime(epochMs: number, opts: FormatOptions = {}): string {
+  const format = new Intl.DateTimeFormat(opts.locale, { hour: '2-digit', minute: '2-digit', timeZone: opts.timeZone });
+  return format.format(epochMs);
 }
 
 export function formatDateTime(epochMs: number, opts: FormatOptions = {}): string {
@@ -162,6 +197,10 @@ export interface SessionRowView {
   route: string;
   recovered: boolean;
   error?: string;
+  /** "Retrying automatically at 14:40", while an automatic retry is scheduled. */
+  retry?: string;
+  /** Why captions (who said what) are not being captured. */
+  captionsNote?: string;
   notion?: { url: string; label: string };
 }
 
@@ -199,8 +238,14 @@ export function sessionRow(
     recovered: meta.recovered === true,
   };
   if (meta.audio.error) row.audioNote = meta.audio.error;
+  if (meta.captionsError) row.captionsNote = meta.captionsError;
   // An error from an earlier attempt is history once the meeting is in Notion.
   if (meta.error && meta.status !== 'saved' && meta.status !== 'duplicate') row.error = meta.error;
+  if (meta.status === 'failed' && meta.retryAt !== undefined) {
+    row.retry = `Retrying automatically at ${formatTime(meta.retryAt, opts)}`;
+    // The background's message ends with the same news, in the worker's clock.
+    if (row.error) row.error = row.error.replace(/\s*Retrying automatically at [^.]*\.$/, '');
+  }
   if (meta.notion && (meta.status === 'saved' || meta.status === 'duplicate')) {
     row.notion = {
       url: meta.notion.url,

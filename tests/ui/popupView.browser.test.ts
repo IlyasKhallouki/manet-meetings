@@ -26,6 +26,7 @@ function model(patch: Partial<PopupModel> = {}): PopupModel {
     state: { kind: 'idle', tabId: 7, meetCode: 'abc-defg-hij' },
     mic: micView('granted', true),
     missing: [],
+    geminiKeyMissing: false,
     ...patch,
   };
 }
@@ -84,6 +85,7 @@ describe('popup view (real DOM)', () => {
         meetCode: 'abc-defg-hij',
         title: 'Weekly sync',
         thisTab: true,
+        captionCount: 4,
       },
     });
     view.update(recording, T0 + 65_000);
@@ -115,6 +117,7 @@ describe('popup view (real DOM)', () => {
           meetCode: 'abc-defg-hij',
           thisTab: false,
           audioError: 'Tab capture failed',
+          captionCount: 2,
         },
       }),
       T0,
@@ -138,11 +141,70 @@ describe('popup view (real DOM)', () => {
     expect(button('Allow microphone')).toBeUndefined();
   });
 
+  it('asks to turn captions on when none arrived 20 s into the recording', () => {
+    const view = createPopupView(root, handlers().handlers);
+    const state = {
+      kind: 'recording',
+      sessionId: 's1',
+      startedAt: T0,
+      meetCode: 'abc-defg-hij',
+      thisTab: true,
+      captionCount: 0,
+    } as const;
+    const recording = model({ state });
+    const notice = () => root.querySelector('[data-role="captions"]');
+    view.update(recording, T0 + 10_000);
+    expect(notice()).toBeNull();
+    const stop = button('Stop recording');
+    // Only the clock moves in between: the notice still has to appear.
+    view.update(recording, T0 + 21_000);
+    expect(text(notice())).toBe('No captions yet — make sure captions are on (CC) so speakers are identified.');
+    expect(notice()!.classList.contains('warn')).toBe(true);
+    expect(button('Stop recording')).toBe(stop);
+
+    const captioned = model({ state: { ...state, captionCount: 1 } });
+    view.update(captioned, T0 + 22_000);
+    expect(notice()).toBeNull();
+  });
+
+  it('says why captions are not coming through', () => {
+    const view = createPopupView(root, handlers().handlers);
+    const why = 'Captions are not reaching Manet from this tab. Reload the Meet tab to capture who said what.';
+    view.update(
+      model({
+        state: {
+          kind: 'recording',
+          sessionId: 's1',
+          startedAt: T0,
+          meetCode: 'abc-defg-hij',
+          thisTab: true,
+          captionCount: 0,
+          captionsError: why,
+        },
+      }),
+      T0 + 3000,
+    );
+    expect(text(root.querySelector('[data-role="captions"]'))).toBe(why);
+  });
+
+  it('says a missing Gemini key means captions-only transcripts, without calling it a blocker', () => {
+    const h = handlers();
+    const view = createPopupView(root, h.handlers);
+    view.update(model({ geminiKeyMissing: true }), T0);
+    expect(root.querySelector('[data-role="missing"]')).toBeNull();
+    const notice = root.querySelector('[data-role="no-gemini"]')!;
+    expect(text(notice)).toMatch(/No Gemini API key: transcripts come from Meet's captions only/);
+    notice.querySelector('button')!.click();
+    expect(h.calls).toEqual(['openSettings']);
+  });
+
   it('warns about missing settings with a way to fix them', () => {
     const h = handlers();
     const view = createPopupView(root, h.handlers);
-    view.update(model({ missing: ['Gemini API key', 'Your name'] }), T0);
-    expect(text(root.querySelector('[data-role="missing"]'))).toContain('Gemini API key, Your name');
+    view.update(model({ missing: ['Notion integration token', 'Your name'] }), T0);
+    expect(text(root.querySelector('[data-role="missing"]'))).toContain(
+      'Saving to Notion needs: Notion integration token, Your name.',
+    );
     root.querySelector<HTMLButtonElement>('[data-role="missing"] button')!.click();
     expect(h.calls).toEqual(['openSettings']);
     view.update(model(), T0);

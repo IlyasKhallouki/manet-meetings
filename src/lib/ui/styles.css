@@ -322,6 +322,30 @@ main.narrow,
 
 /* Dashboard */
 
+.dashboard-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  margin: 0 0 12px;
+}
+
+.dashboard-bar .sub {
+  display: inline;
+}
+
+.dashboard-bar .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+label.switch {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+}
+
 .storage {
   font-size: 13px;
 }
@@ -379,6 +403,12 @@ table.sessions .col-status .error {
   font-size: 12.5px;
   margin: 4px 0 0;
   overflow-wrap: anywhere;
+}
+
+table.sessions .col-status p.sub,
+table.sessions .col-actions p.sub {
+  margin: 4px 0 0;
+  max-width: 260px;
 }
 
 .status-line {

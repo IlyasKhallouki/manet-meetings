@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '@lib/settings';
 import type { Settings } from '@lib/types';
 import {
+  languageCodeWarning,
   parseLanguageCodes,
   parseSettingsForm,
   parseVocabulary,
   settingsToForm,
+  setupProblems,
+  SUPPORTED_LANGUAGE_CODES,
   type SettingsFormValues,
 } from '@lib/ui/settingsForm';
 
@@ -101,6 +104,15 @@ describe('settingsToForm / parseSettingsForm', () => {
     expect(!r.ok && r.errors.defaultRoute).toBeTruthy();
   });
 
+  it('saves language codes Gemini does not list, with a warning', () => {
+    const r = parseSettingsForm(form({ languageCodes: 'fr, cmn-hans-cn' }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.settings.languageCodes).toEqual(['fr', 'cmn-Hans-CN']);
+    expect(r.warnings?.languageCodes).toContain('"fr" (try fr-FR)');
+    expect(parseSettingsForm(form()).ok && parseSettingsForm(form())).not.toHaveProperty('warnings');
+  });
+
   it('reports every problem at once', () => {
     const r = parseSettingsForm(form({ retentionDays: 'x', languageCodes: 'english', notionTeamDbId: 'nope' }));
     expect(!r.ok && Object.keys(r.errors).sort()).toEqual(['languageCodes', 'notionTeamDbId', 'retentionDays']);
@@ -127,11 +139,22 @@ describe('parseVocabulary', () => {
 });
 
 describe('parseLanguageCodes', () => {
-  it('splits on commas, semicolons and spaces and canonicalizes', () => {
-    expect(parseLanguageCodes('fr-fr, EN-us;de  pt-BR,')).toEqual({ codes: ['fr-FR', 'en-US', 'de', 'pt-BR'], invalid: [] });
+  it('splits on commas, semicolons and spaces and normalizes the casing of each subtag', () => {
+    expect(parseLanguageCodes('fr-fr, EN-us;de-DE  pt-br,')).toMatchObject({
+      codes: ['fr-FR', 'en-US', 'de-DE', 'pt-BR'],
+      invalid: [],
+    });
+    expect(parseLanguageCodes('YUE-hant-hk, es-419, CEB').codes).toEqual(['yue-Hant-HK', 'es-419', 'ceb']);
   });
 
-  it('dedupes after canonicalizing', () => {
+  it('keeps the documented codes as written instead of rewriting CLDR aliases', () => {
+    // Intl.getCanonicalLocales rewrites cmn-Hans-CN (Gemini's Mandarin code) to zh-Hans-CN.
+    const r = parseLanguageCodes('cmn-Hans-CN, fil-PH, nb-NO, kea-CV, pa-Guru-IN, sd-Arab-IN');
+    expect(r.codes).toEqual(['cmn-Hans-CN', 'fil-PH', 'nb-NO', 'kea-CV', 'pa-Guru-IN', 'sd-Arab-IN']);
+    expect(r.unsupported).toEqual([]);
+  });
+
+  it('dedupes after normalizing', () => {
     expect(parseLanguageCodes('fr-FR, fr-fr').codes).toEqual(['fr-FR']);
   });
 
@@ -139,7 +162,48 @@ describe('parseLanguageCodes', () => {
     expect(parseLanguageCodes('english, fr, x1').invalid).toEqual(['english', 'x1']);
   });
 
+  it('keeps well-formed codes Gemini does not list, and names them', () => {
+    const r = parseLanguageCodes('fr, en-US, fr-CA, zz-ZZ, zh-Hans-CN');
+    expect(r.codes).toEqual(['fr', 'en-US', 'fr-CA', 'zz-ZZ', 'zh-Hans-CN']);
+    expect(r.unsupported).toEqual(['fr', 'fr-CA', 'zz-ZZ', 'zh-Hans-CN']);
+  });
+
   it('treats an empty field as automatic detection', () => {
-    expect(parseLanguageCodes('  ')).toEqual({ codes: [], invalid: [] });
+    expect(parseLanguageCodes('  ')).toEqual({ codes: [], invalid: [], unsupported: [] });
+  });
+});
+
+describe('languageCodeWarning', () => {
+  it('suggests the listed code for the same language', () => {
+    const w = languageCodeWarning(['fr', 'en', 'zh-Hans-CN', 'zz-ZZ'])!;
+    expect(w).toMatch(/not in Gemini's list/i);
+    expect(w).toContain('"fr" (try fr-FR)');
+    expect(w).toContain('"en" (try en-GB, en-IN or en-US)');
+    expect(w).toContain('"zh-Hans-CN" (try cmn-Hans-CN or yue-Hant-HK)');
+    expect(w).toContain('"zz-ZZ"');
+    expect(w).not.toContain('"zz-ZZ" (try');
+  });
+
+  it('says nothing when every code is listed', () => {
+    expect(languageCodeWarning(['en-US', 'fr-FR'])).toBeUndefined();
+    expect(languageCodeWarning([])).toBeUndefined();
+  });
+
+  it('lists every documented code once', () => {
+    expect(SUPPORTED_LANGUAGE_CODES.size).toBe(83);
+    for (const code of ['cmn-Hans-CN', 'yue-Hant-HK', 'ceb', 'es-419', 'en-IN', 'fil-PH', 'rup-BG']) {
+      expect(SUPPORTED_LANGUAGE_CODES.has(code), code).toBe(true);
+    }
+  });
+});
+
+describe('setupProblems', () => {
+  it('blocks saving only on Notion and the name; a missing Gemini key means captions only', () => {
+    expect(setupProblems(FILLED, 'team')).toEqual({ blocking: [], geminiKeyMissing: false });
+    expect(setupProblems({ ...FILLED, geminiApiKey: '' }, 'team')).toEqual({ blocking: [], geminiKeyMissing: true });
+    expect(setupProblems(DEFAULT_SETTINGS, 'personal')).toEqual({
+      blocking: ['Notion integration token', 'Notion personal database id', 'Your name'],
+      geminiKeyMissing: true,
+    });
   });
 });

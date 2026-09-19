@@ -36,6 +36,7 @@ const ALL: SessionStatus[] = [
   'saving',
   'saved',
   'duplicate',
+  'empty',
   'failed',
 ];
 
@@ -56,9 +57,35 @@ describe('sessionActions', () => {
     expect(enabled('processed', true)).toEqual(['delete', 'save', 'transcribe']);
     expect(enabled('saving', true)).toEqual([]);
     expect(enabled('saved', true)).toEqual(['delete']);
-    expect(enabled('duplicate')).toEqual(['delete']);
+    expect(enabled('duplicate')).toEqual(['delete', 'transcribe']);
+    expect(enabled('duplicate', true)).toEqual(['delete', 'save', 'transcribe']);
+    expect(enabled('empty')).toEqual(['delete', 'transcribe']);
+    // Filing an empty transcript would claim the day's key: the background refuses it.
+    expect(enabled('empty', true)).toEqual(['delete', 'transcribe']);
     expect(enabled('failed')).toEqual(['delete', 'transcribe']);
     expect(enabled('failed', true)).toEqual(['delete', 'save', 'transcribe']);
+  });
+
+  it('offers to file a duplicate anyway, skipping the Notion check', () => {
+    const dup = sessionActions(meta({ status: 'duplicate' }), { hasResult: false });
+    expect(dup.transcribe).toMatchObject({ visible: true, enabled: true, label: 'Transcribe anyway', force: true });
+    expect(dup.save.visible).toBe(false);
+    const withResult = sessionActions(meta({ status: 'duplicate' }), { hasResult: true });
+    expect(withResult.save).toMatchObject({ visible: true, enabled: true, label: 'Save anyway', force: true });
+    // A second page is a deliberate choice, never the highlighted next step.
+    expect(withResult.transcribe.primary || withResult.save.primary).toBe(false);
+    // Everywhere else the check runs.
+    for (const status of ALL.filter((st) => st !== 'duplicate')) {
+      const a = sessionActions(meta({ status }), { hasResult: true });
+      expect(a.transcribe.force ?? false, status).toBe(false);
+      expect(a.save.force ?? false, status).toBe(false);
+    }
+  });
+
+  it('offers to transcribe an empty recording again', () => {
+    const a = sessionActions(meta({ status: 'empty' }), { hasResult: true });
+    expect(a.transcribe).toMatchObject({ visible: true, enabled: true, label: 'Transcribe again', primary: false });
+    expect(a.save.visible).toBe(false);
   });
 
   it('never offers Save without a stored result', () => {
@@ -84,7 +111,9 @@ describe('sessionActions', () => {
     expect(visible('processing')).toEqual(['delete', 'transcribe']);
     expect(visible('saving')).toEqual(['delete', 'save', 'transcribe']);
     expect(visible('saved')).toEqual(['delete']);
-    expect(visible('duplicate')).toEqual(['delete']);
+    expect(visible('duplicate')).toEqual(['delete', 'transcribe']);
+    expect(visible('duplicate', true)).toEqual(['delete', 'save', 'transcribe']);
+    expect(visible('empty', true)).toEqual(['delete', 'transcribe']);
     expect(visible('failed')).toEqual(['delete', 'transcribe']);
     expect(visible('failed', true)).toEqual(['delete', 'save', 'transcribe']);
   });
@@ -120,13 +149,16 @@ describe('sessionActions', () => {
     expect(failedSave.save.label).toBe('Retry save');
     expect(failedSave.transcribe.label).toBe('Transcribe again');
     expect(sessionActions(meta({ status: 'processed' }), { hasResult: true }).save.label).toBe('Save to Notion');
+    const retrying = meta({ status: 'failed', retryAt: STARTED + 600_000 });
+    expect(sessionActions(retrying, { hasResult: false }).transcribe.label).toBe('Retry now');
   });
 });
 
 describe('canChooseRoute', () => {
   it('allows choosing or changing the destination only where the background accepts it', () => {
     const allowed = ALL.filter((status) => canChooseRoute(meta({ status })));
-    expect(allowed).toEqual(['awaiting-route', 'ready', 'processed', 'failed']);
+    // A duplicate can go to the other database instead.
+    expect(allowed).toEqual(['awaiting-route', 'ready', 'processed', 'duplicate', 'empty', 'failed']);
   });
 });
 
@@ -142,8 +174,10 @@ describe('statusView', () => {
       saving: 'busy',
       saved: 'done',
       duplicate: 'done',
+      empty: 'neutral',
       failed: 'error',
     });
+    expect(statusView(meta({ status: 'empty' })).label).toBe('Nothing was captured');
     for (const s of ALL) expect(statusView(meta({ status: s })).label.length).toBeGreaterThan(0);
   });
 
@@ -257,6 +291,31 @@ describe('sessionRow', () => {
     expect(row.recovered).toBe(true);
     expect(row.route).toBe('Not chosen');
     expect(sessionRow(meta({ route: 'personal' }), { now: STARTED, ...FMT }).route).toBe('Personal');
+  });
+
+  it('says when a failed transcription is retried automatically', () => {
+    const retryAt = Date.UTC(2026, 8, 19, 9, 25, 0);
+    const row = sessionRow(
+      meta({
+        status: 'failed',
+        retryAt,
+        error: 'Gemini unreachable: HTTP 503. Retrying automatically at 11:25.',
+      }),
+      { now: STARTED, ...FMT },
+    );
+    expect(row.retry).toBe('Retrying automatically at 09:25');
+    // The background's message says it in its own zone; the row says it once.
+    expect(row.error).toBe('Gemini unreachable: HTTP 503.');
+    expect(sessionRow(meta({ status: 'failed', error: 'x' }), { now: STARTED, ...FMT }).retry).toBeUndefined();
+    // Only while it is still pending.
+    expect(sessionRow(meta({ status: 'processing', retryAt }), { now: STARTED, ...FMT }).retry).toBeUndefined();
+  });
+
+  it('carries why captions are missing', () => {
+    const why = 'Captions are not reaching Manet from this tab. Reload the Meet tab to capture who said what.';
+    const row = sessionRow(meta({ status: 'recording', captionsError: why }), { now: STARTED, ...FMT });
+    expect(row.captionsNote).toBe(why);
+    expect(sessionRow(meta(), { now: STARTED, ...FMT }).captionsNote).toBeUndefined();
   });
 
   it('does not show a stale error once the session is saved', () => {

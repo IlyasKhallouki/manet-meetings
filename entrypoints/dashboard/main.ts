@@ -1,11 +1,12 @@
 import '@lib/ui/styles.css';
 import { browser } from 'wxt/browser';
 import { errorMessage, sendToBackground } from '@lib/messages';
-import { getSettings, missingSettings, settingsItem } from '@lib/settings';
+import { getSettings, settingsItem, updateSettings } from '@lib/settings';
 import { listSessions, watchSessions } from '@lib/storage/sessionStore';
 import type { SessionMeta } from '@lib/types';
 import { createDashboardView } from '@lib/ui/dashboardView';
 import { listResultIds, watchResultIds } from '@lib/ui/extension';
+import { setupProblems } from '@lib/ui/settingsForm';
 import { audioBytesOnDisk, storageEstimate } from '@lib/ui/storageInfo';
 
 const DISK_REFRESH_MS = 15_000;
@@ -19,6 +20,8 @@ const touchedResults = new Set<string>();
 let audioOnDisk: Map<string, number> | null = null;
 let estimate: { usage: number; quota: number } | null = null;
 let missing: string[] = [];
+let geminiKeyMissing = false;
+let autoTranscribe = true;
 let loaded = false;
 
 const openSettings = () => {
@@ -28,13 +31,20 @@ document.getElementById('open-settings')?.addEventListener('click', openSettings
 
 const view = createDashboardView(root, {
   stop: (sessionId) => sendToBackground('session/stop', { sessionId }),
-  transcribe: (sessionId) => sendToBackground('session/transcribe', { sessionId }),
-  save: (sessionId) => sendToBackground('session/save', { sessionId }),
+  transcribe: (sessionId, { force }) =>
+    sendToBackground('session/transcribe', force ? { sessionId, force } : { sessionId }),
+  save: (sessionId, { force }) => sendToBackground('session/save', force ? { sessionId, force } : { sessionId }),
   remove: async (sessionId) => {
     await sendToBackground('session/delete', { sessionId });
     refreshDiskSoon();
   },
   route: (sessionId, route) => sendToBackground('session/route', { sessionId, route }),
+  setAutoTranscribe: async (on) => {
+    await updateSettings({ autoTranscribe: on });
+    // Before the storage event, so a clock tick in between does not flip the switch back.
+    autoTranscribe = on;
+    render();
+  },
   openSettings,
 });
 
@@ -44,7 +54,16 @@ function report(err: unknown): void {
 
 function render(): void {
   if (!loaded) return;
-  view.update({ sessions: [...sessions.values()], resultIds, audioOnDisk, estimate, missing, now: Date.now() });
+  view.update({
+    sessions: [...sessions.values()],
+    resultIds,
+    audioOnDisk,
+    estimate,
+    missing,
+    geminiKeyMissing,
+    autoTranscribe,
+    now: Date.now(),
+  });
 }
 
 async function refreshDisk(): Promise<void> {
@@ -58,14 +77,17 @@ function refreshDiskSoon(): void {
   diskTimer = setTimeout(() => void refreshDisk().catch(report), 1000);
 }
 
-async function refreshMissing(): Promise<void> {
+async function refreshSettings(): Promise<void> {
   const settings = await getSettings();
-  missing = missingSettings(settings, settings.defaultRoute);
+  const problems = setupProblems(settings, settings.defaultRoute);
+  missing = problems.blocking;
+  geminiKeyMissing = problems.geminiKeyMissing;
+  autoTranscribe = settings.autoTranscribe;
   render();
 }
 
 async function load(): Promise<void> {
-  const [list, ids] = await Promise.all([listSessions(), listResultIds(), refreshMissing(), refreshDisk()]);
+  const [list, ids] = await Promise.all([listSessions(), listResultIds(), refreshSettings(), refreshDisk()]);
   for (const meta of list) if (!touchedSessions.has(meta.id)) sessions.set(meta.id, meta);
   for (const id of ids) if (!touchedResults.has(id)) resultIds.add(id);
   loaded = true;
@@ -87,7 +109,7 @@ watchResultIds((id, present) => {
   else resultIds.delete(id);
   render();
 });
-settingsItem.watch(() => void refreshMissing().catch(report));
+settingsItem.watch(() => void refreshSettings().catch(report));
 
 setInterval(() => {
   // Only recording rows change with time.
