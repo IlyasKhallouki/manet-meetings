@@ -21,8 +21,9 @@ export interface LagEstimate {
   end: number | null;
 }
 
-const MIN_LAG_MS = -2000;
-const MAX_LAG_MS = 8000;
+/** Plausible caption lags: a block can appear slightly before the audio clock, or seconds after. */
+export const MIN_LAG_MS = -2000;
+export const MAX_LAG_MS = 8000;
 const MIN_SAMPLES = 3;
 /** Words are sorted by start; a word ending in range starts at most this much earlier. */
 const MAX_WORD_MS = 3000;

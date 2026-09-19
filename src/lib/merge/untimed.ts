@@ -13,6 +13,8 @@ export interface UntimedAlignment {
   words: LabeledWord[];
   /** Share of transcript words that matched a caption word. */
   matchedRatio: number;
+  /** How many transcript words landed on each segment, in input order. */
+  perSegment: number[];
 }
 
 /** Null when the captions carry no words to align against. */
@@ -21,17 +23,19 @@ export function alignUntimed(text: string, segments: readonly Segment[], lags: L
   const capSpeaker: string[] = [];
   const capStart: number[] = [];
   const capEnd: number[] = [];
-  for (const seg of segments) {
+  const capSegment: number[] = [];
+  segments.forEach((seg, k) => {
     const n = seg.tokens.length;
     const a = seg.tStart - lags.start;
     const b = Math.max(a, seg.tEnd - lags.end);
-    for (let k = 0; k < n; k++) {
-      capTokens.push(seg.tokens[k]!);
+    for (let t = 0; t < n; t++) {
+      capTokens.push(seg.tokens[t]!);
       capSpeaker.push(seg.speaker);
-      capStart.push(a + ((b - a) * k) / n);
-      capEnd.push(a + ((b - a) * (k + 1)) / n);
+      capStart.push(a + ((b - a) * t) / n);
+      capEnd.push(a + ((b - a) * (t + 1)) / n);
+      capSegment.push(k);
     }
-  }
+  });
   const raw = splitWords(text);
   const m = capTokens.length;
   const n = raw.length;
@@ -57,6 +61,7 @@ export function alignUntimed(text: string, segments: readonly Segment[], lags: L
   }
 
   const words: LabeledWord[] = [];
+  const perSegment = new Array<number>(segments.length).fill(0);
   let prevStart = 0;
   for (let i = 0; i < n; i++) {
     const p = pos[i]!;
@@ -65,8 +70,11 @@ export function alignUntimed(text: string, segments: readonly Segment[], lags: L
     const t = p - f;
     const start = Math.max(prevStart, Math.round(capStart[f]! + (capStart[c]! - capStart[f]!) * t));
     const end = Math.max(start, Math.round(capEnd[f]! + (capEnd[c]! - capEnd[f]!) * t));
-    words.push({ text: raw[i]!, start, end, speaker: capSpeaker[Math.round(p)]! });
+    const at = Math.round(p);
+    words.push({ text: raw[i]!, start, end, speaker: capSpeaker[at]! });
+    const k = capSegment[at]!;
+    perSegment[k] = perSegment[k]! + 1;
     prevStart = start;
   }
-  return { words, matchedRatio: pairs.length / n };
+  return { words, matchedRatio: pairs.length / n, perSegment };
 }

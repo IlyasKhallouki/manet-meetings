@@ -12,6 +12,8 @@ export const DEFAULT_CAPTION_LAG_MS = 1500;
 
 export interface Segment {
   speaker: string;
+  /** Meet labelled the block as the local user. */
+  self: boolean;
   text: string;
   /** Normalized, non-empty tokens of `text`. */
   tokens: string[];
@@ -45,6 +47,7 @@ export function prepareSegments(captions: readonly CaptionSegment[], selfName: s
     if (!text) continue;
     out.push({
       speaker: speakerLabel(c, selfName),
+      self: c.self,
       text,
       tokens: splitWords(text).map(normalizeToken).filter(Boolean),
       tStart: c.tStart,

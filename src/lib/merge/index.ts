@@ -1,17 +1,40 @@
 /**
  * Merges what was said (Gemini words) with who said it (Meet captions) into a
  * speaker-labelled transcript, degrading gracefully when either side is missing.
+ * Where the audio cannot have the speech (the recorder's own voice without their
+ * mic, a failed transcription part, audio that ended early), the caption text
+ * itself fills in (see fill.ts).
  */
 import { normalizeToken } from '../align/sequence';
 import type { CaptionSegment, MeetingTranscript, TimedWord, TranscriptTurn } from '../types';
 import { formatClock } from '../util/time';
 import { assignSpeakers, type Lags } from './assign';
+import {
+  fillNotes,
+  formatRanges,
+  inUncoveredTime,
+  mayBeHeard,
+  touchesUncoveredTime,
+  uncoveredRanges,
+  unheardFills,
+  wholeFill,
+  type CaptionFill,
+  type TimeRange,
+} from './fill';
 import { estimateLags, estimateLagsFromTiming, type LagEstimate } from './lag';
-import { DEFAULT_CAPTION_LAG_MS, latestRevisions, prepareSegments, speakerLabel, UNKNOWN_SPEAKER } from './segments';
+import {
+  DEFAULT_CAPTION_LAG_MS,
+  latestRevisions,
+  prepareSegments,
+  speakerLabel,
+  UNKNOWN_SPEAKER,
+  type Segment,
+} from './segments';
 import { buildTurns, tidyText, type LabeledWord } from './turns';
 import { alignUntimed } from './untimed';
 
 export { DEFAULT_CAPTION_LAG_MS, UNKNOWN_SPEAKER };
+export type { TimeRange };
 
 export interface MergeInput {
   /** Timed words (ms from recording start). Empty when the timing pass failed. */
@@ -30,13 +53,28 @@ export interface MergeInput {
   captionLagMs?: number;
   /** Notes from earlier stages; kept first. */
   notes?: string[];
+  /**
+   * Whether the recorder's mic is in the recording (SessionMeta.audio.micIncluded).
+   * Default true. When false, the audio cannot contain the recorder's own speech, so
+   * their caption blocks are kept as caption text and never label audio words.
+   */
+  micIncluded?: boolean;
+  /**
+   * Ranges (ms from recording start) with no audio transcription, such as a failed
+   * part (TranscriptionResult.gaps). Captions there become caption-text turns.
+   */
+  gaps?: readonly TimeRange[];
+  /**
+   * Where the recorded audio ends (ms from recording start), when the recorder
+   * stopped before the meeting did. Captions after it become caption-text turns.
+   */
+  audioEndMs?: number;
 }
 
 /** Without speakers, a pause this long starts a new paragraph. */
 const AUDIO_ONLY_PAUSE_MS = 1500;
 /** Below this share of matched words, speakers from the untimed fallback are a guess. */
 const ROUGH_MATCH_RATIO = 0.3;
-const MAX_UNKNOWN_RANGES = 5;
 
 const NOTES = {
   noCaptions: 'Meet captions were not captured, so speakers are not identified.',
@@ -45,6 +83,7 @@ const NOTES = {
     'times are approximate.',
   rough: 'Few transcript words matched the captions, so speaker labels are rough.',
   untimedOnly: 'Word timings and captions were unavailable, so the transcript has no speakers or times.',
+  untimedUnmatched: 'Word timings were unavailable, so the audio transcript has no speakers or times.',
   captionsOnly:
     'No audio transcript was available; the text comes from Meet captions and may contain recognition errors.',
   nothing: 'Nothing was captured: no audio transcript and no captions.',
@@ -54,6 +93,9 @@ export function mergeTranscript(input: MergeInput): MeetingTranscript {
   const notes = [...(input.notes ?? [])];
   const segments = prepareSegments(input.captions, input.selfName);
   const words = cleanWords(input.words);
+  const micIncluded = input.micIncluded ?? true;
+  // Without the mic, the audio has none of the recorder's speech: their blocks can only mislabel words.
+  const inAudio = micIncluded ? segments : segments.filter((seg) => !seg.self);
 
   if (words.length > 0) {
     if (segments.length === 0) {
@@ -62,32 +104,57 @@ export function mergeTranscript(input: MergeInput): MeetingTranscript {
       return { turns: buildTurns(unlabeled, AUDIO_ONLY_PAUSE_MS), source: 'audio-only', notes };
     }
     const norm = words.map((w) => normalizeToken(w.text));
+    const uncovered = uncoveredRanges(input.gaps, input.audioEndMs, words);
     const lags = resolveLags(input.captionLagMs, () => {
-      const byText = estimateLags(words, segments, norm);
-      return byText.start === null && byText.end === null ? estimateLagsFromTiming(words, segments) : byText;
+      const probe = inAudio.filter((seg) => mayBeHeard(seg, uncovered));
+      const byText = estimateLags(words, probe, norm);
+      return byText.start === null && byText.end === null ? estimateLagsFromTiming(words, probe) : byText;
     });
-    const labels = assignSpeakers(words, norm, segments, lags);
-    const turns = buildTurns(words.map((w, i) => ({ ...w, speaker: labels[i] ?? UNKNOWN_SPEAKER })));
+    const { labels, quality } = assignSpeakers(words, norm, inAudio, lags);
+    const fills = [
+      ...selfFills(segments, micIncluded, lags),
+      ...unheardFills({ words, norm }, inAudio, quality, lags, uncovered),
+    ];
+    const labeled = words.map((w, i) => ({ ...w, speaker: labels[i] ?? UNKNOWN_SPEAKER }));
+    const turns = buildTurns(inReadingOrder(labeled, fills));
     const unknown = unknownNote(turns);
     if (unknown) notes.push(unknown);
+    notes.push(...fillNotes(fills, words, input.selfName));
     return { turns, source: 'audio+captions', notes };
   }
 
   const text = input.text?.trim() ?? '';
   if (text) {
-    const aligned = alignUntimed(text, segments, resolveLags(input.captionLagMs));
+    const lags = resolveLags(input.captionLagMs);
+    const uncovered = uncoveredRanges(input.gaps, input.audioEndMs);
+    // Keep the transcript off blocks it cannot contain, so they neither pull words nor lose their text.
+    const fills = selfFills(segments, micIncluded, lags);
+    const audible: Segment[] = [];
+    for (const seg of inAudio) {
+      if (inUncoveredTime(seg, lags, uncovered)) fills.push(wholeFill(seg, lags, 'gap'));
+      else audible.push(seg);
+    }
+    const aligned = alignUntimed(text, audible, lags);
     if (aligned) {
+      // A block at an uncovered edge that received no transcript word was not heard.
+      audible.forEach((seg, k) => {
+        if (aligned.perSegment[k] === 0 && seg.tokens.length > 0 && touchesUncoveredTime(seg, lags, uncovered)) {
+          fills.push(wholeFill(seg, lags, 'gap'));
+        }
+      });
       notes.push(NOTES.textAligned);
       if (aligned.matchedRatio < ROUGH_MATCH_RATIO) notes.push(NOTES.rough);
-      return { turns: buildTurns(aligned.words), source: 'audio+captions', notes };
+      notes.push(...fillNotes(fills, aligned.words, input.selfName));
+      return { turns: buildTurns(inReadingOrder(aligned.words, fills)), source: 'audio+captions', notes };
     }
-    notes.push(NOTES.untimedOnly);
-    const turns = text
+    notes.push(segments.length > 0 ? NOTES.untimedUnmatched : NOTES.untimedOnly);
+    const paragraphs = text
       .split(/\n+/)
       .map(tidyText)
       .filter(Boolean)
       .map((p): TranscriptTurn => ({ speaker: UNKNOWN_SPEAKER, start: 0, end: 0, text: p }));
-    return { turns, source: 'audio-only', notes };
+    notes.push(...fillNotes(fills, [], input.selfName));
+    return { turns: [...paragraphs, ...buildTurns(fills)], source: 'audio-only', notes };
   }
 
   if (segments.length > 0) {
@@ -153,6 +220,17 @@ function cleanWords(words: readonly TimedWord[]): TimedWord[] {
     .sort((x, y) => x.start - y.start);
 }
 
+/** The recorder's blocks as caption text when the recording has no mic. */
+function selfFills(segments: readonly Segment[], micIncluded: boolean, lags: Lags): CaptionFill[] {
+  return micIncluded ? [] : segments.filter((seg) => seg.self).map((seg) => wholeFill(seg, lags, 'mic'));
+}
+
+/** Words and caption fills by start; words first on ties. */
+function inReadingOrder(words: readonly LabeledWord[], fills: readonly LabeledWord[]): LabeledWord[] {
+  if (fills.length === 0) return [...words];
+  return [...words, ...fills].sort((x, y) => x.start - y.start);
+}
+
 function unknownNote(turns: readonly TranscriptTurn[]): string | null {
   const ranges: Array<[number, number]> = [];
   let lastIndex = -2;
@@ -164,7 +242,5 @@ function unknownNote(turns: readonly TranscriptTurn[]): string | null {
     lastIndex = k;
   });
   if (ranges.length === 0) return null;
-  const shown = ranges.slice(0, MAX_UNKNOWN_RANGES).map(([a, b]) => `${formatClock(a)}–${formatClock(b)}`);
-  const more = ranges.length > MAX_UNKNOWN_RANGES ? ` and ${ranges.length - MAX_UNKNOWN_RANGES} more` : '';
-  return `Speaker unknown for ${shown.join(', ')}${more} (no captions at the time).`;
+  return `Speaker unknown for ${formatRanges(ranges)} (no captions at the time).`;
 }

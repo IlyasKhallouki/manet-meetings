@@ -69,12 +69,21 @@ const TEXT_NONE = 0;
 const TEXT_AGAINST = -1;
 
 interface Span {
+  /** Index in the input segments. */
+  index: number;
   speaker: string;
   tokens: readonly string[];
   a: number;
   b: number;
   /** Share of the block's tokens found among nearby words. */
   quality: number;
+}
+
+export interface Assignment {
+  /** One speaker per word, null when nothing supports any speaker. */
+  labels: (string | null)[];
+  /** Per input segment: share of its caption tokens found among the words spoken around it. */
+  quality: number[];
 }
 
 interface Candidate {
@@ -86,31 +95,39 @@ interface Candidate {
   a: number;
 }
 
-/**
- * `words` sorted by start, `norm` their normalized tokens. Returns one speaker per
- * word, null when nothing supports any speaker.
- */
+/** `words` sorted by start, `norm` their normalized tokens. */
 export function assignSpeakers(
   words: readonly TimedWord[],
   norm: readonly string[],
   segments: readonly Segment[],
   lags: Lags,
-): (string | null)[] {
+): Assignment {
   const spans = toSpans(segments, lags);
   const hits = matchText(words, norm, spans);
   const { labels, evidence } = decide(words, norm, spans, hits);
   smooth(words, labels, evidence);
   snapToPauses(words, labels, evidence);
-  return labels;
+  const quality: number[] = new Array(segments.length);
+  for (const s of spans) quality[s.index] = s.quality;
+  return { labels, quality };
+}
+
+/** The block's estimated speech interval: lag compensated, at least a few hundred ms per word. */
+export function blockSpan(seg: Segment, lags: Lags): { a: number; b: number } {
+  const a = seg.tStart - lags.start;
+  const minLen = Math.min(MAX_MIN_SPAN_MS, Math.max(1, seg.tokens.length) * MS_PER_TOKEN);
+  return { a, b: Math.max(seg.tEnd - lags.end, a + minLen) };
 }
 
 function toSpans(segments: readonly Segment[], lags: Lags): Span[] {
   return segments
-    .map((seg) => {
-      const a = seg.tStart - lags.start;
-      const minLen = Math.min(MAX_MIN_SPAN_MS, Math.max(1, seg.tokens.length) * MS_PER_TOKEN);
-      return { speaker: seg.speaker, tokens: seg.tokens, a, b: Math.max(seg.tEnd - lags.end, a + minLen), quality: 0 };
-    })
+    .map((seg, index) => ({
+      index,
+      speaker: seg.speaker,
+      tokens: seg.tokens,
+      ...blockSpan(seg, lags),
+      quality: 0,
+    }))
     .sort((x, y) => x.a - y.a);
 }
 
