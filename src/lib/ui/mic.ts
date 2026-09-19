@@ -50,23 +50,25 @@ export async function requestMicAccess(): Promise<MicRequestResult> {
   return { ok: true };
 }
 
+/**
+ * What went wrong, for the permission page. A missing mic names the page's button
+ * (Continue: without a device Chrome never gets as far as blocking it); the other
+ * messages say only what happened, because the page adds the next step with the label
+ * of the button on screen. An unexpected error's own words go to the console.
+ */
 export function micFailure(err: unknown): Extract<MicRequestResult, { ok: false }> {
   const name = err instanceof DOMException || err instanceof Error ? err.name : '';
-  const detail = err instanceof Error && err.message ? err.message : String(err);
   switch (name) {
     case 'NotAllowedError':
     case 'SecurityError':
-      return { ok: false, reason: 'denied', message: 'Microphone access was blocked.' };
+      return { ok: false, reason: 'denied', message: 'Chrome blocked the microphone for Manet Meetings.' };
     case 'NotFoundError':
     case 'OverconstrainedError':
-      return { ok: false, reason: 'no-device', message: 'No microphone was found. Plug one in and try again.' };
+      return { ok: false, reason: 'no-device', message: 'No microphone was found. Plug one in, then choose Continue.' };
     case 'NotReadableError':
-      return {
-        ok: false,
-        reason: 'error',
-        message: 'The microphone could not be opened. Another app may be using it.',
-      };
+      return { ok: false, reason: 'error', message: 'Chrome couldn’t open the microphone. Another app may be using it.' };
     default:
-      return { ok: false, reason: 'error', message: `The microphone could not be opened: ${detail}` };
+      console.warn('[manet] The microphone could not be opened:', err);
+      return { ok: false, reason: 'error', message: 'Chrome couldn’t open the microphone.' };
   }
 }

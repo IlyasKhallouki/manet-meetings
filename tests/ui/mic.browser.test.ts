@@ -53,7 +53,7 @@ describe('microphone permission in real Chrome', () => {
   it('explains a blocked microphone', async () => {
     await setMic('denied');
     const result = await requestMicAccess();
-    expect(result).toEqual({ ok: false, reason: 'denied', message: 'Microphone access was blocked.' });
+    expect(result).toEqual({ ok: false, reason: 'denied', message: 'Chrome blocked the microphone for Manet Meetings.' });
   });
 
   it.skipIf(!hasAudioInput)('opens a granted mic and releases it at once', async () => {
@@ -98,7 +98,34 @@ describe('micFailure', () => {
     const busy = micFailure(new DOMException('Could not start audio source', 'NotReadableError'));
     expect(busy.reason).toBe('error');
     expect(busy.message).toMatch(/another app/i);
-    const odd = micFailure(new Error('boom'));
-    expect(odd).toEqual({ ok: false, reason: 'error', message: 'The microphone could not be opened: boom' });
+  });
+
+  it('names the permission page’s button (Continue) as the next step for a missing mic', () => {
+    expect(micFailure(new DOMException('Requested device not found', 'NotFoundError'))).toEqual({
+      ok: false,
+      reason: 'no-device',
+      message: 'No microphone was found. Plug one in, then choose Continue.',
+    });
+  });
+
+  it('says what went wrong in a sentence the page can follow with its own next step', () => {
+    // permissionView adds “Choose Continue to try again.”: these end without a next step of their own.
+    expect(micFailure(new DOMException('Permission denied', 'NotAllowedError')).message).toBe(
+      'Chrome blocked the microphone for Manet Meetings.',
+    );
+    expect(micFailure(new DOMException('Could not start audio source', 'NotReadableError')).message).toBe(
+      'Chrome couldn’t open the microphone. Another app may be using it.',
+    );
+  });
+
+  it('keeps an unexpected error’s own words in the console', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const boom = new Error('boom');
+      expect(micFailure(boom)).toEqual({ ok: false, reason: 'error', message: 'Chrome couldn’t open the microphone.' });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/microphone/i), boom);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
