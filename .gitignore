@@ -28,3 +28,6 @@ web-ext.config.ts
 # Local integration-test keys
 .env*.local
 .env
+
+# Vitest browser-mode screenshots
+.vitest/
