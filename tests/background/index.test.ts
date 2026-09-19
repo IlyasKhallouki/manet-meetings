@@ -4,7 +4,7 @@ import { sendToBackground, type Envelope } from '@lib/messages';
 import { getActiveRecording, getSession, putSession } from '@lib/storage/sessionStore';
 import { idempotencyKey } from '@lib/util/ids';
 import background from '@/entrypoints/background/index';
-import { configure, MEET_CODE, seg, setupHarness, type Harness } from './harness';
+import { configure, MEET_CODE, MEET_URL, resultFor, seg, setupHarness, type Harness } from './harness';
 
 type CommandListener = (command: string, tab?: { id?: number }) => void;
 
@@ -56,7 +56,7 @@ describe('background entrypoint', () => {
       ok: true,
       value: { sessionId: id, startedAt: expect.any(Number) },
     });
-    await sendToBackground('captions/batch', { sessionId: id, segments: [seg('c1', 'Alice', 0, 'Salut')] });
+    await fromTab(tabId, 'captions/batch', { sessionId: id, segments: [seg('c1', 'Alice', 0, 'Salut')] });
     await sendToBackground('offscreen/recorder-chunk', { sessionId: id, index: 0, bytes: 1000 });
     expect(await getSession(id)).toMatchObject({ captionCount: 1, audio: { chunkCount: 1, bytes: 1000 } });
 
@@ -74,6 +74,24 @@ describe('background entrypoint', () => {
 
     await sendToBackground('session/delete', { sessionId: id });
     expect(await getSession(id)).toBeNull();
+  });
+
+  it('passes "anyway" requests on to the jobs', async () => {
+    await startWorker();
+    const tabId = await h.openMeetTab();
+    h.offscreen.process = (job) =>
+      job.force
+        ? { status: 'processed', result: resultFor(job, Date.now()) }
+        : { status: 'duplicate', existing: { pageId: 'p1', url: 'https://www.notion.so/p1', recordedBy: 'Alice' } };
+    const res = await sendToBackground('session/start', { tabId });
+    if (!res.ok) throw new Error(res.error);
+    await sendToBackground('session/stop', { sessionId: res.sessionId });
+    await sendToBackground('session/route', { sessionId: res.sessionId, route: 'team' });
+    await vi.waitFor(async () => expect(await statusOf(res.sessionId)).toBe('duplicate'));
+
+    await sendToBackground('session/transcribe', { sessionId: res.sessionId, force: true });
+    await vi.waitFor(async () => expect(await statusOf(res.sessionId)).toBe('saved'));
+    expect(h.offscreen.callsOf('offscreen/save').at(-1)?.force).toBe(true);
   });
 
   it('toggles recording from the keyboard command and stops when the tab leaves the call', async () => {
@@ -120,7 +138,33 @@ describe('background entrypoint', () => {
 
     await fakeBrowser.runtime.onStartup.trigger();
     await vi.waitFor(async () =>
-      expect(await getSession(id)).toMatchObject({ status: 'ready', recovered: true, durationMs: 20_000 }),
+      expect(await getSession(id)).toMatchObject({ status: 'awaiting-route', recovered: true, durationMs: 20_000 }),
     );
+    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('restricts storage.local to trusted contexts before anything else', async () => {
+    const get = vi.spyOn(fakeBrowser.storage.local, 'get');
+    await startWorker();
+    expect(h.setAccessLevel).toHaveBeenCalledWith({ accessLevel: 'TRUSTED_CONTEXTS' });
+    expect(h.setAccessLevel.mock.invocationCallOrder[0]).toBeLessThan(get.mock.invocationCallOrder[0]!);
+  });
+
+  it('still starts when the access level cannot be set', async () => {
+    h.setAccessLevel.mockRejectedValueOnce(new Error('Not supported for this storage area'));
+    await startWorker();
+    const tabId = await h.openMeetTab();
+    expect(await sendToBackground('session/start', { tabId })).toMatchObject({ ok: true });
+  });
+
+  it('gives Meet tabs that predate an install or update a content script', async () => {
+    const stale = await h.openMeetTab(MEET_URL, { contentScript: false });
+    await h.openMeetTab('https://meet.google.com/xyz-abcd-efg');
+    await fakeBrowser.tabs.create({ url: 'https://example.com/' });
+    await startWorker();
+
+    await fakeBrowser.runtime.onInstalled.trigger({ reason: 'update', previousVersion: '0.0.0' } as never);
+    await vi.waitFor(() => expect(h.executeScript).toHaveBeenCalledTimes(1));
+    expect(h.executeScript).toHaveBeenCalledWith({ target: { tabId: stale }, files: ['content-scripts/content.js'] });
   });
 });

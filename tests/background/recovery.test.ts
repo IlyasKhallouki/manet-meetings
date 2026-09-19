@@ -4,11 +4,12 @@ import { putResult } from '@lib/storage/resultStore';
 import { getActiveRecording, getSession, listSessions, putSession, setActiveRecording } from '@lib/storage/sessionStore';
 import type { SessionMeta, SessionResult } from '@lib/types';
 import { idempotencyKey, sessionId } from '@lib/util/ids';
-import { configure, DAY, MEET_CODE, MEET_URL, setupHarness, T0, type Harness } from './harness';
+import { configure, DAY, MEET_CODE, MEET_URL, seg, setupHarness, T0, type Harness } from './harness';
 
 const ID = sessionId(MEET_CODE, T0);
 const STARTED = T0 + 150;
 const HOUR = 60 * 60 * 1000;
+const ROUTE_DELAY = 2 * 60 * 1000;
 
 let h: Harness;
 
@@ -51,7 +52,7 @@ async function sameBrowserSession() {
 }
 
 describe('recovering interrupted recordings', () => {
-  it('recovers a recording cut short by a browser restart and transcribes it', async () => {
+  it('asks where a recording cut short by a browser restart goes, then files it', async () => {
     await putSession(stored({ lastHeartbeat: STARTED + 60_000 }));
     h.offscreen.audio.set(ID, { sessionId: ID, chunkCount: 13, bytes: 52_000 });
     h.clock.set(T0 + HOUR);
@@ -62,23 +63,34 @@ describe('recovering interrupted recordings', () => {
 
     const meta = await getSession(ID);
     expect(meta).toMatchObject({
+      status: 'awaiting-route',
       recovered: true,
       endedAt: STARTED + 60_000,
       durationMs: 60_000,
-      route: 'team',
       audio: { chunkCount: 13, bytes: 52_000 },
-      status: 'saved',
     });
+    expect(meta?.route).toBeUndefined();
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
+    expect(h.windowsCreate.mock.calls[0]?.[0]).toMatchObject({
+      url: `chrome-extension://test-extension-id/routing.html?session=${encodeURIComponent(ID)}`,
+    });
+    expect((await fakeBrowser.alarms.get(`route:${ID}`))?.scheduledTime).toBe(T0 + HOUR + ROUTE_DELAY);
+
+    // Nobody answers: the default route applies and auto-transcribe files it.
+    await m.onAlarm(`route:${ID}`);
+    await m.idle();
+    expect(await getSession(ID)).toMatchObject({ status: 'saved', route: 'team' });
     const [job] = h.offscreen.callsOf('offscreen/process');
     expect(job?.meta).toMatchObject({ id: ID, recovered: true, status: 'processing' });
-    expect(h.windowsCreate).not.toHaveBeenCalled();
   });
 
-  it('leaves the recovered session ready when auto-transcribe is off', async () => {
+  it('waits for the route when auto-transcribe is off', async () => {
     await configure({ autoTranscribe: false, defaultRoute: 'personal' });
     await putSession(stored());
     const m = h.createManager();
     await m.boot();
+    await m.onAlarm(`route:${ID}`);
     await m.idle();
     expect(await getSession(ID)).toMatchObject({
       status: 'ready',
@@ -100,7 +112,8 @@ describe('recovering interrupted recordings', () => {
 
     const m = h.createManager();
     await m.boot();
-    expect(await getSession(ID)).toMatchObject({ status: 'ready', recovered: true, endedAt: STARTED + 5000 });
+    expect(await getSession(ID)).toMatchObject({ status: 'awaiting-route', recovered: true, endedAt: STARTED + 5000 });
+    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
     expect(await getActiveRecording()).toBeNull();
     expect(await h.badge()).toBe('');
     expect(await m.onMeetJoined(tabId, { meetCode: MEET_CODE })).toBeNull();
@@ -117,7 +130,46 @@ describe('recovering interrupted recordings', () => {
     const m = h.createManager();
     await m.boot();
     expect(h.offscreen.callsOf('offscreen/recorder-status')).toHaveLength(1);
-    expect(await getSession(ID)).toMatchObject({ status: 'ready', recovered: true });
+    expect(await getSession(ID)).toMatchObject({ status: 'awaiting-route', recovered: true });
+  });
+
+  it('keeps a recording whose recorder status cannot be read', async () => {
+    await sameBrowserSession();
+    await putSession(stored());
+    const tabId = await h.openMeetTab();
+    await setActiveRecording({ sessionId: ID, tabId, meetCode: MEET_CODE });
+    offscreenStillRecording(ID);
+    h.offscreen.recorderStatusError = 'Recorder status timed out';
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect((await getSession(ID))?.status).toBe('recording');
+    expect(await getActiveRecording()).toEqual({ sessionId: ID, tabId, meetCode: MEET_CODE });
+    expect(h.offscreen.callsOf('offscreen/recorder-stop')).toHaveLength(0);
+    expect(await h.badge()).toBe('REC');
+    expect(h.pushes).toEqual([]);
+  });
+
+  it('does not wait on the tab when it releases a dead recording', async () => {
+    await sameBrowserSession();
+    await putSession(stored());
+    const tabId = await h.openMeetTab();
+    await setActiveRecording({ sessionId: ID, tabId, meetCode: MEET_CODE });
+    const m = h.createManager();
+    // Like the content script: it answers only once its last caption batch was taken.
+    h.hooks.onPush = async (_tab, state) => {
+      if (state === null) await m.onCaptions({ sessionId: ID, segments: [seg('c9', 'Alice', 1000, 'Au revoir')] });
+    };
+
+    const outcome = await Promise.race([
+      m.boot().then(() => 'booted'),
+      new Promise((r) => setTimeout(() => r('stuck'), 1000)),
+    ]);
+    expect(outcome).toBe('booted');
+    await m.idle();
+    expect((await getSession(ID))?.captionCount).toBe(1);
+    expect(h.pushes).toEqual([{ tabId, state: null }]);
   });
 
   it('leaves a live recording alone after a worker restart', async () => {
@@ -149,7 +201,7 @@ describe('recovering interrupted recordings', () => {
     await m.boot();
     expect(h.offscreen.callsOf('offscreen/recorder-stop')).toEqual([{ sessionId: ID }]);
     expect(h.offscreen.recording.size).toBe(0);
-    expect(await getSession(ID)).toMatchObject({ status: 'ready', recovered: true });
+    expect(await getSession(ID)).toMatchObject({ status: 'awaiting-route', recovered: true });
   });
 
   it('keeps a captions-only recording while its tab is still in the call', async () => {
@@ -164,11 +216,16 @@ describe('recovering interrupted recordings', () => {
     expect((await getSession(ID))?.status).toBe('recording');
     expect(await h.badge()).toBe('REC');
 
-    // Same state, but the tab has moved on.
+    // Same state, but the tab has moved on while the worker slept: ask, don't file silently.
     await fakeBrowser.tabs.update(tabId, { url: 'https://meet.google.com/' });
-    await h.createManager().boot();
-    expect(await getSession(ID)).toMatchObject({ status: 'ready', recovered: true });
+    const next = h.createManager();
+    await next.boot();
+    await next.idle();
+    expect(await getSession(ID)).toMatchObject({ status: 'awaiting-route', recovered: true });
     expect(await getActiveRecording()).toBeNull();
+    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
+    expect(await fakeBrowser.alarms.get(`route:${ID}`)).toBeDefined();
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
   });
 
   it('does not treat a session being started as orphaned', async () => {
@@ -241,14 +298,16 @@ describe('recovery racing a finalize', () => {
 });
 
 describe('interrupted jobs and alarms', () => {
-  it('puts sessions stuck in processing or saving back where a retry can start', async () => {
+  it('puts sessions whose job died back where a retry can start', async () => {
+    await configure({ autoTranscribe: false });
     const a = 'aaa-bbbb-ccc_20260919T080000Z';
     const b = 'aaa-bbbb-ccc_20260919T070000Z';
     const c = 'aaa-bbbb-ccc_20260919T060000Z';
-    await putSession(stored({ id: a, status: 'processing', stage: 'transcribing-text', route: 'team' }));
-    await putSession(stored({ id: b, status: 'saving', stage: 'saving', route: 'team' }));
+    const job = (id: string, kind: 'process' | 'save') => ({ id, kind, startedAt: T0 });
+    await putSession(stored({ id: a, status: 'processing', stage: 'transcribing-text', route: 'team', job: job('ja', 'process') }));
+    await putSession(stored({ id: b, status: 'saving', stage: 'saving', route: 'team', job: job('jb', 'save') }));
     await putResult(b, RESULT);
-    await putSession(stored({ id: c, status: 'saving', route: 'team' }));
+    await putSession(stored({ id: c, status: 'saving', route: 'team', job: job('jc', 'save') }));
 
     const m = h.createManager();
     await m.boot();
@@ -256,13 +315,53 @@ describe('interrupted jobs and alarms', () => {
     const [sa, sb, sc] = await Promise.all([getSession(a), getSession(b), getSession(c)]);
     expect(sa).toMatchObject({ status: 'ready' });
     expect(sa?.stage).toBeUndefined();
+    expect(sa?.job).toBeUndefined();
     expect(sb).toMatchObject({ status: 'processed' });
     expect(sb?.stage).toBeUndefined();
     expect(sc).toMatchObject({ status: 'ready' });
     expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+    expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(0);
   });
 
-  it('applies overdue default routes and re-arms pending route alarms', async () => {
+  it('runs jobs that died again when auto-transcribe is on', async () => {
+    const a = 'aaa-bbbb-ccc_20260919T080000Z';
+    const b = 'aaa-bbbb-ccc_20260919T070000Z';
+    await putSession(
+      stored({ id: a, status: 'processing', route: 'personal', attempt: 2, job: { id: 'ja', kind: 'process', startedAt: T0 } }),
+    );
+    await putSession(stored({ id: b, status: 'saving', route: 'team', job: { id: 'jb', kind: 'save', startedAt: T0 } }));
+    await putResult(b, RESULT);
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect(h.offscreen.callsOf('offscreen/process').map((j) => [j.meta.id, j.route, j.attempt])).toEqual([
+      [a, 'personal', 2],
+    ]);
+    expect(h.offscreen.callsOf('offscreen/save').map((j) => j.meta.id).sort()).toEqual([a, b].sort());
+    expect((await getSession(a))?.status).toBe('saved');
+    expect((await getSession(b))?.status).toBe('saved');
+  });
+
+  it('leaves a session alone while the offscreen document still runs its job', async () => {
+    await sameBrowserSession();
+    await putSession(stored({ status: 'processing', route: 'team', job: { id: 'j1', kind: 'process', startedAt: T0 } }));
+    h.offscreen.start();
+    h.offscreen.runningJob({ sessionId: ID, jobId: 'j1', kind: 'process' });
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect(h.offscreen.callsOf('offscreen/job-status')).toHaveLength(1);
+    expect(await getSession(ID)).toMatchObject({ status: 'processing', job: { id: 'j1' } });
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+
+    // Its report still lands, in whichever worker is up.
+    await m.onJobDone({ sessionId: ID, jobId: 'j1', kind: 'process', outcome: { status: 'error', error: 'Processing failed: boom' } });
+    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Processing failed: boom' });
+  });
+
+  it('asks again for routes whose prompt and alarm a browser restart lost', async () => {
     const overdue = 'aaa-bbbb-ccc_20260919T080000Z';
     const pending = 'aaa-bbbb-ccc_20260919T083000Z';
     h.clock.set(T0 + HOUR);
@@ -272,9 +371,38 @@ describe('interrupted jobs and alarms', () => {
     const m = h.createManager();
     await m.boot();
     await m.idle();
-    expect(await getSession(overdue)).toMatchObject({ status: 'saved', route: 'team' });
+    expect(await getSession(overdue)).toMatchObject({ status: 'awaiting-route' });
     expect(await getSession(pending)).toMatchObject({ status: 'awaiting-route' });
-    expect((await fakeBrowser.alarms.get(`route:${pending}`))?.scheduledTime).toBe(T0 + HOUR - 30_000 + 2 * 60_000);
+    expect(h.windowsCreate).toHaveBeenCalledTimes(2);
+    for (const id of [overdue, pending]) {
+      expect((await fakeBrowser.alarms.get(`route:${id}`))?.scheduledTime).toBe(T0 + HOUR + ROUTE_DELAY);
+    }
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+  });
+
+  it('applies a default route whose alarm fired while the worker was starting', async () => {
+    await sameBrowserSession();
+    const fired = 'aaa-bbbb-ccc_20260919T080000Z';
+    const pending = 'aaa-bbbb-ccc_20260919T083000Z';
+    h.clock.set(T0 + HOUR);
+    await putSession(stored({ id: fired, status: 'awaiting-route', endedAt: T0 + HOUR - 10 * 60_000 }));
+    await putSession(stored({ id: pending, status: 'awaiting-route', endedAt: T0 + HOUR - 30_000 }));
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect(await getSession(fired)).toMatchObject({ status: 'saved', route: 'team' });
+    // Not due yet, so it never fired: it was never armed, and its prompt never showed.
+    expect(await getSession(pending)).toMatchObject({ status: 'awaiting-route' });
+    expect((await fakeBrowser.alarms.get(`route:${pending}`))?.scheduledTime).toBe(T0 + HOUR + ROUTE_DELAY);
+    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-arms automatic retries a browser restart lost', async () => {
+    await putSession(stored({ status: 'failed', route: 'team', attempt: 1, retryAt: T0 + HOUR, error: 'Gemini unreachable' }));
+    const m = h.createManager();
+    await m.boot();
+    expect((await fakeBrowser.alarms.get(`retry:${ID}`))?.scheduledTime).toBe(T0 + HOUR);
   });
 
   it('creates the periodic retention alarm once', async () => {

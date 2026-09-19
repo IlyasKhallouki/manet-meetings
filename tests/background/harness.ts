@@ -1,18 +1,31 @@
 /**
  * Test harness for the background: WXT's fakeBrowser for storage, tabs, windows,
  * alarms, notifications and the action badge, plus stubs for the chrome APIs it lacks
- * (tabCapture, offscreen, runtime.getContexts, tabs.sendMessage, commands).
+ * (tabCapture, offscreen, runtime.getContexts, tabs.sendMessage, scripting, commands).
  *
  * The offscreen document cannot run in Node (it needs a tab-capture MediaStream), so
  * FakeOffscreen answers OffscreenProtocol messages over the fake chrome.runtime, through
- * the real handleMessages/sendToOffscreen code. It only exists once createDocument ran.
+ * the real handleMessages/sendToOffscreen code, the way entrypoints/offscreen does:
+ * jobs are accepted at once and report back with 'offscreen/job-done', 'job-status'
+ * lists them, and audio is never deleted under a running recorder. It only exists once
+ * createDocument ran.
  */
 import { vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { handleMessages, type OffscreenProtocol, type RecorderStartResult, type RecordingState } from '@lib/messages';
+import {
+  errorMessage,
+  handleMessages,
+  sendToBackground,
+  type BackgroundProtocol,
+  type JobDone,
+  type OffscreenProtocol,
+  type RecorderStartResult,
+  type RecordingState,
+} from '@lib/messages';
 import { updateSettings } from '@lib/settings';
 import { createChromeDeps } from '@/entrypoints/background/chromeDeps';
 import {
+  backgroundHandlers,
   createSessionManager,
   type SessionManager,
   type SessionManagerDeps,
@@ -62,16 +75,32 @@ export async function configure(patch: Partial<Settings> = {}): Promise<void> {
   await updateSettings({ ...FULL_SETTINGS, ...patch });
 }
 
+export function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Local HH:MM, as the retry message shows it. */
+export function clockTime(epochMs: number): string {
+  const d = new Date(epochMs);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function seg(id: string, speaker: string, tStart: number, text: string, rev = 0): CaptionSegment {
   return { id, speaker, self: false, text, tStart, tEnd: tStart + 2000, rev };
 }
 
+/** A canned pipeline result: one turn per caption, or one audio turn when there are none. */
 export function resultFor(job: ProcessJob, createdAt: number): SessionResult {
+  const turns = job.captions.map((c) => ({ speaker: c.speaker, start: c.tStart, end: c.tEnd, text: c.text }));
   return {
     title: 'Weekly sync',
     attendees: [...new Set(job.captions.map((c) => c.speaker))],
     transcript: {
-      turns: job.captions.map((c) => ({ speaker: c.speaker, start: c.tStart, end: c.tEnd, text: c.text })),
+      turns: turns.length > 0 ? turns : [{ speaker: 'Unknown speaker', start: 0, end: 4000, text: 'Bonjour' }],
       source: 'audio+captions',
       notes: [],
     },
@@ -82,6 +111,16 @@ export function resultFor(job: ProcessJob, createdAt: number): SessionResult {
 }
 
 type Call = { [K in keyof OffscreenProtocol]: { type: K; payload: OffscreenProtocol[K]['req'] } }[keyof OffscreenProtocol];
+
+interface RunningJob {
+  sessionId: string;
+  jobId: string;
+  kind: 'process' | 'save';
+  /** Settles once the outcome was reported (or the document closed). Null: never reports. */
+  done: Promise<void> | null;
+  /** The work ended; only the report may still be on its way. */
+  finished?: boolean;
+}
 
 export class FakeOffscreen {
   open = false;
@@ -94,8 +133,14 @@ export class FakeOffscreen {
   process: (job: ProcessJob) => ProcessOutcome | Promise<ProcessOutcome>;
   save: (job: SaveJob) => SaveOutcome | Promise<SaveOutcome>;
   audioDeleteError: string | null = null;
+  /** Makes 'offscreen/recorder-status' fail, like a document too busy to answer in time. */
+  recorderStatusError: string | null = null;
+  /** Makes 'offscreen/recorder-stop' fail while the recorder keeps running. */
+  recorderStopError: string | null = null;
   /** Runs inside 'offscreen/recorder-stop' after the recorder stopped, before it answers. */
   onRecorderStop: (sessionId: string) => void | Promise<void> = () => undefined;
+  /** Accepted jobs, until their 'offscreen/job-done' was delivered. */
+  readonly jobs = new Map<string, RunningJob>();
   private unsubscribe: (() => void) | null = null;
 
   constructor(private readonly clock: Clock) {
@@ -128,6 +173,7 @@ export class FakeOffscreen {
       },
       'offscreen/recorder-stop': async (req) => {
         log('offscreen/recorder-stop', req);
+        if (this.recorderStopError) throw new Error(this.recorderStopError);
         this.recording.delete(req.sessionId);
         await this.onRecorderStop(req.sessionId);
         const info = this.audio.get(req.sessionId);
@@ -135,15 +181,28 @@ export class FakeOffscreen {
       },
       'offscreen/recorder-status': (req) => {
         log('offscreen/recorder-status', req);
+        if (this.recorderStatusError) throw new Error(this.recorderStatusError);
         return { recordingSessionIds: [...this.recording] };
       },
       'offscreen/process': (job) => {
         log('offscreen/process', job);
-        return this.process(job);
+        this.run({ sessionId: job.meta.id, jobId: job.jobId, kind: 'process' }, async () => ({
+          kind: 'process',
+          outcome: await this.process(job),
+        }));
+        return { accepted: true };
       },
       'offscreen/save': (job) => {
         log('offscreen/save', job);
-        return this.save(job);
+        this.run({ sessionId: job.meta.id, jobId: job.jobId, kind: 'save' }, async () => ({
+          kind: 'save',
+          outcome: await this.save(job),
+        }));
+        return { accepted: true };
+      },
+      'offscreen/job-status': (req) => {
+        log('offscreen/job-status', req);
+        return { jobs: [...this.jobs.values()].map(({ sessionId, jobId, kind }) => ({ sessionId, jobId, kind })) };
       },
       'offscreen/audio-scan': (req) => {
         log('offscreen/audio-scan', req);
@@ -151,18 +210,71 @@ export class FakeOffscreen {
       },
       'offscreen/audio-delete': (req) => {
         log('offscreen/audio-delete', req);
+        // Like capture.deleteAudio: never under a running recorder.
+        if (this.recording.has(req.sessionId)) {
+          throw new Error(`Session ${req.sessionId} is still recording; stop it before deleting its audio`);
+        }
         if (this.audioDeleteError) throw new Error(this.audioDeleteError);
         this.audio.delete(req.sessionId);
       },
     });
   }
 
-  /** The document went away (browser restart, crash). */
+  /** A job accepted before this test's worker started, still running (it never reports). */
+  runningJob(job: Omit<RunningJob, 'done'>): void {
+    this.jobs.set(job.jobId, { ...job, done: null });
+  }
+
+  /** Waits until every job this document runs reported back. False when there were none. */
+  async settle(): Promise<boolean> {
+    const running = [...this.jobs.values()].flatMap((j) => (j.done ? [j.done] : []));
+    if (running.length === 0) return false;
+    await Promise.allSettled(running);
+    return true;
+  }
+
+  /** The document went away (browser restart, crash): its recorders and jobs die with it. */
   close(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.open = false;
     this.recording.clear();
+    this.jobs.clear();
+  }
+
+  private run(
+    job: Omit<RunningJob, 'done'>,
+    work: () => Promise<Pick<JobDone, 'kind' | 'outcome'>>,
+  ): void {
+    // Like the real runner (offscreen/jobs.ts): a resent job does not run twice, and a
+    // session runs one job at a time.
+    if (this.jobs.has(job.jobId)) return;
+    const busy = [...this.jobs.values()].find((j) => j.sessionId === job.sessionId && !j.finished);
+    if (busy) throw new Error(`Session ${job.sessionId} already has a ${busy.kind} job running (${busy.jobId}); wait for its outcome`);
+    const entry: RunningJob = { ...job, done: null };
+    this.jobs.set(job.jobId, entry);
+    entry.done = (async () => {
+      let report: Pick<JobDone, 'kind' | 'outcome'>;
+      try {
+        report = await work();
+      } catch (err) {
+        const what = job.kind === 'process' ? 'Processing failed' : 'Saving to Notion failed';
+        report = { kind: job.kind, outcome: { status: 'error', error: `${what}: ${errorMessage(err)}` } } as Pick<
+          JobDone,
+          'kind' | 'outcome'
+        >;
+      }
+      entry.finished = true;
+      if (this.jobs.get(job.jobId) !== entry) return; // the document closed meanwhile
+      try {
+        // Listed until delivered, so a worker restarting meanwhile does not reset the session.
+        await sendToBackground('offscreen/job-done', { sessionId: job.sessionId, jobId: job.jobId, ...report } as JobDone);
+      } catch {
+        // No worker took it; the next one's boot sees the job gone.
+      } finally {
+        if (this.jobs.get(job.jobId) === entry) this.jobs.delete(job.jobId);
+      }
+    })();
   }
 }
 
@@ -191,16 +303,40 @@ export function setupHarness() {
       ? [{ contextType: 'OFFSCREEN_DOCUMENT', documentUrl: fakeBrowser.runtime.getURL('/offscreen.html') }]
       : []) as never);
 
+  /** Tabs with no content script listening (opened before an install or update). */
+  const noContentScript = new Set<number>();
+  const hooks: { onPush: (tabId: number, state: RecordingState | null) => void | Promise<void> } = {
+    onPush: () => undefined,
+  };
+
   // The content script's side of 'content/recording-state'.
   vi.spyOn(fakeBrowser.tabs, 'sendMessage').mockImplementation((async (tabId: number, msg: { payload: unknown }) => {
     const tab = await fakeBrowser.tabs.get(tabId);
-    if (!tab) throw new Error('Could not establish connection. Receiving end does not exist.');
-    pushes.push({ tabId, state: msg.payload as RecordingState | null });
+    if (!tab || noContentScript.has(tabId)) throw new Error('Could not establish connection. Receiving end does not exist.');
+    const state = msg.payload as RecordingState | null;
+    pushes.push({ tabId, state });
+    await hooks.onPush(tabId, state);
     return { ok: true, value: undefined };
   }) as never);
 
-  /** Keep-alive holds taken by background jobs: `held` now, `taken` in total. */
-  const keepAlive = { held: 0, taken: 0 };
+  vi.spyOn(fakeBrowser.runtime, 'getManifest').mockReturnValue({
+    manifest_version: 3,
+    name: 'Manet Meetings',
+    version: '0.0.0',
+    content_scripts: [{ matches: ['https://meet.google.com/*'], js: ['content-scripts/content.js'] }],
+  } as never);
+  const executeScript = vi.fn(async (injection: { target: { tabId: number }; files?: string[] }) => {
+    const tabId = injection.target.tabId;
+    if (!(await fakeBrowser.tabs.get(tabId))) throw new Error(`No tab with id: ${tabId}`);
+    noContentScript.delete(tabId);
+    return [];
+  });
+  vi.spyOn(fakeBrowser.scripting, 'executeScript').mockImplementation(executeScript as never);
+  const setAccessLevel = vi.fn(async (_opts: unknown) => undefined);
+  vi.spyOn(fakeBrowser.storage.local, 'setAccessLevel').mockImplementation(setAccessLevel as never);
+
+  /** The background handlers of the latest manager: one worker at a time answers. */
+  let worker: (() => void) | null = null;
 
   const windowsCreate = vi.spyOn(fakeBrowser.windows, 'create');
 
@@ -211,28 +347,37 @@ export function setupHarness() {
     getMediaStreamId,
     createDocument,
     windowsCreate,
-    keepAlive,
-    /** A session manager over the real chrome deps (fakeBrowser + stubs) and the fake clock. */
+    hooks,
+    executeScript,
+    setAccessLevel,
+    /**
+     * A session manager over the real chrome deps (fakeBrowser + stubs) and the fake
+     * clock. Like a new worker it takes over the background messages, so the offscreen
+     * document's job reports reach it. Its idle() also waits for those jobs.
+     */
     createManager(overrides: Partial<SessionManagerDeps> = {}): SessionManager {
-      return createSessionManager({
-        ...createChromeDeps(),
-        now: clock.now,
-        keepAlive: () => {
-          keepAlive.held++;
-          keepAlive.taken++;
-          return () => {
-            keepAlive.held--;
-          };
+      const manager = createSessionManager({ ...createChromeDeps(), now: clock.now, ...overrides });
+      worker?.();
+      worker = handleMessages<BackgroundProtocol>('background', backgroundHandlers(manager));
+      return {
+        ...manager,
+        async idle() {
+          do await manager.idle();
+          while (await offscreen.settle());
         },
-        ...overrides,
-      });
+      };
     },
-    /** Opens a Meet tab in the fake browser and returns its id. */
-    async openMeetTab(url = MEET_URL): Promise<number> {
+    /**
+     * Opens a Meet tab in the fake browser and returns its id. With `contentScript: false`
+     * the tab predates the install, so nothing answers 'content/recording-state' in it.
+     */
+    async openMeetTab(url = MEET_URL, opts: { contentScript?: boolean } = {}): Promise<number> {
       const tab = await fakeBrowser.tabs.create({ url });
+      if (opts.contentScript === false) noContentScript.add(tab.id!);
       return tab.id!;
     },
     badge: (): Promise<string> => fakeBrowser.action.getBadgeText({}),
+    badgeTitle: (): Promise<string> => fakeBrowser.action.getTitle({}),
     notifications: () =>
       Object.entries(fakeBrowser.notifications.getAllCreateOptions()).map(([id, o]) => ({
         id,

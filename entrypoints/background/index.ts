@@ -4,7 +4,24 @@ import { errorMessage, handleMessages, type BackgroundProtocol } from '@lib/mess
 import { createChromeDeps } from './chromeDeps';
 import { backgroundHandlers, createSessionManager } from './sessionManager';
 
+/**
+ * storage.local holds the API keys and every transcript, and by default content scripts
+ * (which share the Meet renderer) can read and write it. Nothing outside the extension's
+ * own pages needs it. Set on every worker start, not only at install, so no update or
+ * restart leaves it open.
+ */
+function restrictStorage(): void {
+  const failed = (err: unknown) => console.warn('[manet] Could not restrict storage to the extension:', errorMessage(err));
+  try {
+    browser.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }).catch(failed);
+  } catch (err) {
+    failed(err); // no such API in this browser
+  }
+}
+
 export default defineBackground(() => {
+  // Issued first; boot() below must still start in this turn so every handler waits for it.
+  restrictStorage();
   const manager = createSessionManager(createChromeDeps());
   const run = (task: Promise<unknown>) => {
     task.catch((err: unknown) => console.error('[manet]', errorMessage(err)));
@@ -23,7 +40,11 @@ export default defineBackground(() => {
   });
   browser.notifications.onClicked.addListener((id) => run(manager.onNotificationClicked(id)));
   browser.runtime.onStartup.addListener(() => run(manager.boot({ full: true })));
-  browser.runtime.onInstalled.addListener(() => run(manager.boot({ full: true })));
+  browser.runtime.onInstalled.addListener(() => {
+    run(manager.boot({ full: true }));
+    // Chrome does not add content scripts to tabs that were already open.
+    run(manager.onInstalled());
+  });
 
   run(manager.boot());
 });

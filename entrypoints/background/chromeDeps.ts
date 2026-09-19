@@ -1,17 +1,24 @@
 import { browser, type Browser } from 'wxt/browser';
-import { sendToOffscreen, sendToTab } from '@lib/messages';
+import { errorMessage, sendToOffscreen, sendToTab } from '@lib/messages';
 import { getSettings } from '@lib/settings';
 import { createOffscreenDocument } from './offscreenDocument';
-import type { SessionManagerDeps } from './sessionManager';
+import { withTimeout, type SessionManagerDeps } from './sessionManager';
 
-const KEEPALIVE_INTERVAL_MS = 20_000;
 const BADGE_COLORS = { recording: '#d93025', 'captions-only': '#e37400' } as const;
+const MEET_ORIGIN = 'https://meet.google.com/';
+/** The content script answers at once; a page that doesn't is busy or frozen. */
+const PUSH_TIMEOUT_MS = 3000;
+
+/** Files of the manifest's content scripts that run on Meet. */
+function meetContentScripts(): string[] {
+  return (browser.runtime.getManifest().content_scripts ?? [])
+    .filter((cs) => cs.matches?.some((m) => m.startsWith(MEET_ORIGIN)))
+    .flatMap((cs) => cs.js ?? []);
+}
 
 /** The session manager's dependencies, backed by the real extension APIs. */
 export function createChromeDeps(): SessionManagerDeps {
   const offscreen = createOffscreenDocument();
-  let holds = 0;
-  let timer: ReturnType<typeof setInterval> | undefined;
 
   return {
     capture: {
@@ -30,12 +37,25 @@ export function createChromeDeps(): SessionManagerDeps {
         const [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
         return tab?.id ?? null;
       },
+      async meetTabIds() {
+        const tabs = await browser.tabs.query({});
+        return tabs.flatMap((t) => (t.id !== undefined && t.url?.startsWith(MEET_ORIGIN) ? [t.id] : []));
+      },
       async pushRecordingState(tabId, state) {
         try {
-          await sendToTab(tabId, 'content/recording-state', state);
-        } catch {
-          // Closed, reloading or not injected yet: the page asks again with 'meet/joined'.
+          await withTimeout(sendToTab(tabId, 'content/recording-state', state), PUSH_TIMEOUT_MS, 'Tab push');
+          return 'delivered';
+        } catch (err) {
+          // Chrome's wording when nothing listens: no content script, or the tab is gone.
+          return /Receiving end does not exist/i.test(errorMessage(err)) ? 'no-receiver' : 'failed';
         }
+      },
+      async injectContentScript(tabId) {
+        const files = meetContentScripts();
+        if (files.length === 0) throw new Error('The manifest has no Meet content script');
+        // Paths come from the built manifest at runtime; WXT types them as its known public paths.
+        type Files = NonNullable<Parameters<typeof browser.scripting.executeScript>[0]['files']>;
+        await browser.scripting.executeScript({ target: { tabId }, files: files as Files });
       },
       async open(url) {
         await browser.tabs.create({ url });
@@ -79,23 +99,6 @@ export function createChromeDeps(): SessionManagerDeps {
       async exists(name) {
         return (await browser.alarms.get(name)) !== undefined;
       },
-    },
-    keepAlive() {
-      // Any extension API call resets the worker's 30 s idle timer (Chrome 110+), so a
-      // cheap call every 20 s keeps it alive while it waits on a long offscreen job.
-      if (holds++ === 0) {
-        timer = setInterval(() => {
-          Promise.resolve()
-            .then(() => browser.runtime.getPlatformInfo())
-            .catch(() => undefined);
-        }, KEEPALIVE_INTERVAL_MS);
-      }
-      let released = false;
-      return () => {
-        if (released) return;
-        released = true;
-        if (--holds === 0) clearInterval(timer);
-      };
     },
     getSettings,
     now: () => Date.now(),
