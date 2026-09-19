@@ -6,6 +6,7 @@
  * until a worker asks for the job status.
  */
 import { errorMessage, type JobDone } from '@lib/messages';
+import { STOPPED } from '@lib/pipeline/notes';
 
 export type JobKind = JobDone['kind'];
 export type JobOutcome<K extends JobKind> = Extract<JobDone, { kind: K }>['outcome'];
@@ -26,7 +27,8 @@ export interface JobRunnerOptions {
 export interface JobRunner {
   /**
    * Starts `work` and returns without waiting for it. Its outcome is delivered when it
-   * settles; a throw becomes { status: 'error' }. Throws if another job of the session
+   * settles; a throw becomes { status: 'error' } in Meetings' words (STOPPED), the error
+   * itself going to the console. Throws if another job of the session
    * is still running. The same job id again (a resent request) does not run twice.
    */
   start<K extends JobKind>(job: JobInfo & { kind: K }, work: () => Promise<JobOutcome<K>>): void;
@@ -40,8 +42,6 @@ export interface JobRunner {
 
 /** Wakes a stopped worker within a second; the longer waits cover an update or a stuck boot. */
 export const DELIVERY_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000, 10_000, 30_000];
-
-const FAILED: Record<JobKind, string> = { process: 'Processing failed', save: 'Saving to Notion failed' };
 
 interface Entry {
   info: JobInfo;
@@ -85,7 +85,8 @@ export function createJobRunner(opts: JobRunnerOptions): JobRunner {
     try {
       outcome = await work();
     } catch (err) {
-      outcome = { status: 'error', error: `${FAILED[entry.info.kind]}: ${errorMessage(err)}` };
+      console.warn(`[manet] ${entry.info.kind} job ${entry.info.jobId} stopped:`, err);
+      outcome = { status: 'error', error: STOPPED[entry.info.kind] };
     }
     entry.done = { ...entry.info, outcome } as JobDone;
     await deliver(entry);

@@ -37,10 +37,16 @@ describe('duplicate check notes', () => {
     const note = duplicateCheckNote(new NotionError(401, 'unauthorized', 'API token is invalid.'));
     expect(note).toBe(
       'Notion was not checked for an existing page before transcribing: ' +
-        'Notion says the token is invalid. Copy the integration secret again into the options.',
+        'Notion rejected the token. Copy it again in Settings.',
     );
     expect(isDuplicateCheckNote(note)).toBe(true);
     expect(isDuplicateCheckNote(NOTES.audioDeleted)).toBe(false);
+  });
+
+  it('keeps the words of an unexpected error out of the note', () => {
+    const note = duplicateCheckNote(new TypeError("Cannot read properties of undefined (reading 'results')"));
+    expect(note).toBe('Notion was not checked for an existing page before transcribing.');
+    expect(isDuplicateCheckNote(note)).toBe(true);
   });
 });
 
@@ -64,6 +70,20 @@ describe('audio notes', () => {
       'Audio recording stopped early at 00:20:13 (The recorder stopped responding); ' +
         'after that, the transcript relies on Meet captions.',
     );
+  });
+
+  it('embeds a cause that is a sentence without its final period', () => {
+    // The background stores whole sentences (copy.ts problems.audioStopped, tabAudioEnded).
+    expect(audioProblemNote('Chrome stopped the audio recording.', 1_213_400)).toBe(
+      'Audio recording stopped early at 00:20:13 (Chrome stopped the audio recording); ' +
+        'after that, the transcript relies on Meet captions.',
+    );
+    expect(audioProblemNote('The Meet tab’s audio ended. ')).toBe(
+      'Audio recording stopped early (The Meet tab’s audio ended); after that, the transcript relies on Meet captions.',
+    );
+    // An ellipsis from shortening is kept.
+    expect(audioProblemNote(`${'x'.repeat(400)}.`)).toMatch(/x…\); after that/);
+    expect(audioProblemNote('')).toBe('Audio recording stopped early; after that, the transcript relies on Meet captions.');
   });
 
   it('says why a transcript comes from captions only when no Gemini key is set', () => {

@@ -5,7 +5,8 @@
  * Notion skips the duplicate check, missing or untranscribable audio (or no Gemini
  * key) leaves the captions, a failed summary leaves the transcript. Each degradation
  * adds a note. Two outcomes are not final: Gemini unreachable before the last attempt
- * ('retry-later'), and an unexpected error (a bug, 'error'); the session can be retried.
+ * ('retry-later'), and an unexpected error (a bug, 'error', worded as STOPPED.process);
+ * the session can be retried.
  */
 import { webmDurationMs } from '../audio/webm';
 import { formatTranscript, mergeTranscript, type MergeInput } from '../merge';
@@ -31,6 +32,7 @@ import {
   noAudioNote,
   passNotes,
   shortError,
+  STOPPED,
   summaryFailedNote,
   transcriptionCause,
   transcriptionFailedNote,
@@ -38,11 +40,13 @@ import {
 import { databaseIdFor } from '../settingsSchema';
 import { meetingTitle, sessionAttendees, transcribeDurationMs } from './session';
 
+/** Never throws. An unexpected error (a bug) ends as STOPPED.process, its words in the console. */
 export async function processSession(job: ProcessJob, deps: PipelineDeps): Promise<ProcessOutcome> {
   try {
     return await runPipeline(job, deps);
   } catch (err) {
-    return { status: 'error', error: `Processing failed: ${shortError(err)}` };
+    console.warn('[manet] Transcribing stopped:', err);
+    return { status: 'error', error: STOPPED.process };
   }
 }
 
@@ -52,7 +56,7 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
   const notes: string[] = [];
 
   // Before spending any Gemini call: a teammate may have filed this meeting already.
-  // "Transcribe anyway" (force) means the user has seen that page and wants their own.
+  // "Save a second copy" (force) means the user has seen that page and wants their own.
   if (!job.force) {
     stage('checking-duplicate');
     try {

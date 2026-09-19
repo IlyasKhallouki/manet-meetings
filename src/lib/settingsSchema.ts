@@ -22,19 +22,24 @@ export function databaseIdFor(settings: Settings, route: Route): string {
   return route === 'team' ? settings.notionTeamDbId : settings.notionPersonalDbId;
 }
 
-/** Everything a full audio transcript needs, as user-facing strings. */
+/**
+ * Everything a full audio transcript needs, in the words of missingForSave, then
+ * "a Gemini key" (Settings asks for it last).
+ */
 export function missingSettings(settings: Settings, route: Route): string[] {
-  return [...(settings.geminiApiKey ? [] : ['Gemini API key']), ...missingForSave(settings, route)];
+  return [...missingForSave(settings, route), ...(settings.geminiApiKey.trim() ? [] : ['a Gemini key'])];
 }
 
 /**
- * What blocks filing a meeting at all. Without a Gemini key the pipeline still saves a
- * transcript built from captions.
+ * What blocks filing a meeting at all, as words that fit "Add … in Settings": "your
+ * name", "a Notion token", "the Team database" (or "the Personal database"), in the
+ * order Settings asks for them. A blank value counts as missing, as in the popup and
+ * Settings. Without a Gemini key the pipeline still saves a transcript built from captions.
  */
 export function missingForSave(settings: Settings, route: Route): string[] {
   const missing: string[] = [];
-  if (!settings.notionToken) missing.push('Notion integration token');
-  if (!databaseIdFor(settings, route)) missing.push(`Notion ${route} database id`);
-  if (!settings.displayName) missing.push('Your name');
+  if (!settings.displayName.trim()) missing.push('your name');
+  if (!settings.notionToken.trim()) missing.push('a Notion token');
+  if (!databaseIdFor(settings, route).trim()) missing.push(route === 'team' ? 'the Team database' : 'the Personal database');
   return missing;
 }

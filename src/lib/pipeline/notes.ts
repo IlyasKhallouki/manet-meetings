@@ -3,13 +3,24 @@
  * Notion page (and the dashboard) so a reader knows why a transcript is rougher
  * than usual. The merge adds its own notes about the transcript it could build.
  */
-import { explainError } from '../notion/errors';
+import { NotionError } from '../notion/client';
+import { explainError, SAVE_STOPPED } from '../notion/errors';
 import { TranscriptionError } from '../transcribe/stitch';
 import type { TranscriptionResult } from '../types';
 import { formatClock } from '../util/time';
 
 const MAX_ERROR_LENGTH = 300;
 const DUPLICATE_CHECK = 'Notion was not checked for an existing page before transcribing';
+
+/**
+ * How a job ends when something unexpected (a bug) stops it: what Meetings shows, while
+ * the error's own words go to the console. Only the save names Notion, which is how the
+ * pages tell a failed save from a failed transcription.
+ */
+export const STOPPED = {
+  process: 'Transcribing stopped before it finished. Try again.',
+  save: SAVE_STOPPED,
+} as const;
 
 export const NOTES = {
   audioDeleted: 'The audio recording had already been deleted, so it could not be transcribed.',
@@ -24,8 +35,10 @@ export function shortError(err: unknown): string {
   return line.length > MAX_ERROR_LENGTH ? `${line.slice(0, MAX_ERROR_LENGTH - 1)}…` : line;
 }
 
+/** A Notion failure says why; anything else (a bug) is logged and the note says only what was skipped. */
 export function duplicateCheckNote(err: unknown): string {
-  return `${DUPLICATE_CHECK}: ${shortError(explainError(err))}`;
+  const why = explainError(err, '');
+  return err instanceof NotionError && why ? `${DUPLICATE_CHECK}: ${shortError(why)}` : `${DUPLICATE_CHECK}.`;
 }
 
 /** The save runs its own check, so this note no longer applies once the page exists. */
@@ -42,11 +55,16 @@ export function audioReadFailedNote(err: unknown): string {
   return `The audio recording could not be read: ${shortError(err)}`;
 }
 
+/** An error as a clause inside a sentence: shortened, without its own final period. */
+function clause(err: unknown): string {
+  return shortError(err).replace(/\s*\.+$/, '');
+}
+
 /** `audioEndMs`: where the recorded audio ends, when known. The merge fills the rest from captions. */
 export function audioProblemNote(captureError: string, audioEndMs?: number): string {
   const at = audioEndMs !== undefined ? ` at ${formatClock(audioEndMs)}` : '';
-  const cause = shortError(captureError);
-  return `Audio recording stopped early${at} (${cause}); after that, the transcript relies on Meet captions.`;
+  const cause = captureError.trim() ? ` (${clause(captureError)})` : '';
+  return `Audio recording stopped early${at}${cause}; after that, the transcript relies on Meet captions.`;
 }
 
 /** Each pass's error, or null when both failed the same way (or the error is not per pass). */

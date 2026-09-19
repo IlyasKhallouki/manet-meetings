@@ -101,12 +101,12 @@ describe('saveMeeting with an invalid token (real API)', () => {
     const store = createNotionMeetingStore('ntn_this_token_is_not_valid');
     const outcome = await saveMeeting(store, '0f1e2d3c4b5a69788796a5b4c3d2e1f0', input());
     expect(outcome.status).toBe('error');
-    if (outcome.status === 'error') expect(outcome.error).toMatch(/token is invalid/i);
+    expect(outcome).toEqual({ status: 'error', error: 'Notion rejected the token. Copy it again in Settings.' });
   });
 
   it('reports an unusable database id without calling Notion', async () => {
     const store = createNotionMeetingStore('ntn_this_token_is_not_valid');
     const outcome = await saveMeeting(store, 'not a database', input());
-    expect(outcome).toEqual({ status: 'error', error: expect.stringMatching(/not a Notion database/i) });
+    expect(outcome).toEqual({ status: 'error', error: 'Paste the Notion database link or ID in Settings, then try again.' });
   });
 });

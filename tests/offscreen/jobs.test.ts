@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { handleMessages, sendToBackground, type BackgroundProtocol, type JobDone } from '@lib/messages';
 import type { ProcessOutcome, SaveOutcome } from '@lib/types';
+import { STOPPED } from '@lib/pipeline/notes';
 import { createJobRunner, type JobRunner } from '../../entrypoints/offscreen/jobs';
 
 type Background = { [K in keyof BackgroundProtocol]: BackgroundProtocol[K] };
@@ -55,7 +56,7 @@ function runner(retryDelaysMs: number[] = [RETRY_MS, RETRY_MS]): JobRunner {
   });
 }
 
-const failed: ProcessOutcome = { status: 'error', error: 'Processing failed: boom' };
+const failed: ProcessOutcome = { status: 'error', error: STOPPED.process };
 const created: SaveOutcome = { status: 'created', pageId: 'page-1', url: 'https://www.notion.so/page-1' };
 
 beforeEach(() => {
@@ -85,25 +86,30 @@ describe('createJobRunner', () => {
     expect(received).toHaveLength(1);
   });
 
-  it('turns a job that throws, even before its first await, into an error outcome', async () => {
+  it('turns a job that throws, even before its first await, into an error outcome in people’s words', async () => {
     const jobs = runner();
+    const noSettings = new Error('no settings');
+    const offline = new Error('offline');
     jobs.start({ sessionId: A, jobId: 'j1', kind: 'process' }, () => {
-      throw new Error('no settings');
+      throw noSettings;
     });
-    jobs.start({ sessionId: B, jobId: 'j2', kind: 'save' }, () => Promise.reject(new Error('offline')));
+    jobs.start({ sessionId: B, jobId: 'j2', kind: 'save' }, () => Promise.reject(offline));
     await vi.waitFor(() => expect(received).toHaveLength(2));
     expect(received).toContainEqual({
       sessionId: A,
       jobId: 'j1',
       kind: 'process',
-      outcome: { status: 'error', error: 'Processing failed: no settings' },
+      outcome: { status: 'error', error: 'Transcribing stopped before it finished. Try again.' },
     });
     expect(received).toContainEqual({
       sessionId: B,
       jobId: 'j2',
       kind: 'save',
-      outcome: { status: 'error', error: 'Saving to Notion failed: offline' },
+      outcome: { status: 'error', error: 'Saving to Notion stopped before it finished. Try again.' },
     });
+    // The error's own words go to the console only.
+    expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/j1/), noSettings);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/j2/), offline);
   });
 
   it('refuses a second job for a busy session, runs other sessions side by side, and ignores a resent job', () => {

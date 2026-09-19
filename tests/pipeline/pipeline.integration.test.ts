@@ -115,7 +115,7 @@ describe('pipeline against the real APIs with invalid credentials (network only)
     expect(text).toContain("l'autre comme domestique.");
 
     expect(transcript.notes[0]).toMatch(
-      /^Notion was not checked for an existing page before transcribing: Notion says the token is invalid/,
+      /^Notion was not checked for an existing page before transcribing: Notion rejected the token\. Copy it again in Settings\.$/,
     );
     expect(transcript.notes[1]).toMatch(/^Audio transcription failed: .*API key not valid/);
     expect(transcript.notes).toContainEqual(expect.stringMatching(/text comes from Meet captions/));
@@ -143,7 +143,7 @@ describe('pipeline against the real APIs with invalid credentials (network only)
       { meta, result, settings, route: 'personal' },
       createPipelineDeps(settings, store, (s) => stages.push(s)),
     );
-    expect(outcome).toEqual({ status: 'error', error: expect.stringMatching(/token is invalid/) });
+    expect(outcome).toEqual({ status: 'error', error: 'Notion rejected the token. Copy it again in Settings.' });
     expect(stages).toEqual(['saving']);
   }, 60_000);
 

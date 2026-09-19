@@ -35,16 +35,20 @@ describe('verifyDatabase without valid credentials (real API)', () => {
   it('explains an invalid token', async () => {
     const result = await verifyDatabase('ntn_this_token_is_not_valid', DB);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.problems.join(' ')).toMatch(/token is invalid/i);
+    expect(result).toEqual({
+      ok: false,
+      problems: ['Notion rejected this token. Copy it again from Notion.'],
+      tokenProblem: true,
+    });
   });
 
   it('explains a missing token or a bad database id', async () => {
     const noToken = await verifyDatabase('', DB);
     expect(noToken.ok).toBe(false);
-    if (!noToken.ok) expect(noToken.problems.join(' ')).toMatch(/token/i);
+    if (!noToken.ok) expect(noToken.problems).toEqual(['Paste a Notion token first.']);
     const badId = await verifyDatabase('ntn_x', 'Meetings');
     expect(badId.ok).toBe(false);
-    if (!badId.ok) expect(badId.problems.join(' ')).toMatch(/not a Notion database/i);
+    if (!badId.ok) expect(badId.problems).toEqual(['“Meetings” isn’t a link or ID. Paste the database link or ID from Notion.']);
   });
 });
 
@@ -65,11 +69,11 @@ describe('schemaProblems', () => {
     expect(schemaProblems({ ...good, Extra: 'checkbox' })).toEqual([]);
   });
 
-  it('lists missing properties and wrong types', () => {
+  it('lists missing properties and wrong types, as Notion names them', () => {
     const { Key: _key, ...withoutKey } = good;
     expect(schemaProblems({ ...withoutKey, Duration: 'rich_text' })).toEqual([
-      'Property "Duration" is rich_text; it must be number.',
-      'Missing property "Key" (type rich_text).',
+      'Change “Duration” to a Number property. It’s Text now.',
+      'Add a Text property named “Key”.',
     ]);
   });
 });
