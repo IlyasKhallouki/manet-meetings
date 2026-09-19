@@ -5,7 +5,6 @@ import {
   buildMeetingPageInput,
   meetingDurationMs,
   meetingTitle,
-  routeDatabaseId,
   sessionAttendees,
   transcribeDurationMs,
 } from '@lib/pipeline/session';
@@ -73,14 +72,6 @@ describe('meetingDurationMs', () => {
     expect(meetingDurationMs(sessionMeta({ recovered: true, durationMs: 0 }), transcript(95_500.4))).toBe(95_500);
     const empty: MeetingTranscript = { turns: [], source: 'captions-only', notes: [] };
     expect(meetingDurationMs(sessionMeta({ durationMs: undefined }), empty)).toBe(0);
-  });
-});
-
-describe('routeDatabaseId', () => {
-  it('picks the database of the route', () => {
-    const settings = testSettings({ notionTeamDbId: 'team-db', notionPersonalDbId: 'personal-db' });
-    expect(routeDatabaseId(settings, 'team')).toBe('team-db');
-    expect(routeDatabaseId(settings, 'personal')).toBe('personal-db');
   });
 });
 

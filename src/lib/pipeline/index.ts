@@ -6,7 +6,6 @@ export {
   buildMeetingPageInput,
   meetingDurationMs,
   meetingTitle,
-  routeDatabaseId,
   sessionAttendees,
   transcribeDurationMs,
 } from './session';

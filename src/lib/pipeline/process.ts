@@ -31,7 +31,8 @@ import {
   summaryFailedNote,
   transcriptionFailedNote,
 } from './notes';
-import { meetingTitle, routeDatabaseId, sessionAttendees, transcribeDurationMs } from './session';
+import { databaseIdFor } from '../settingsSchema';
+import { meetingTitle, sessionAttendees, transcribeDurationMs } from './session';
 
 export async function processSession(job: ProcessJob, deps: PipelineDeps): Promise<ProcessOutcome> {
   try {
@@ -49,7 +50,7 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
   // Before spending any Gemini call: a teammate may have filed this meeting already.
   stage('checking-duplicate');
   try {
-    const existing = await deps.store.findByKey(routeDatabaseId(settings, route), meta.idempotencyKey);
+    const existing = await deps.store.findByKey(databaseIdFor(settings, route), meta.idempotencyKey);
     if (existing) return { status: 'duplicate', existing };
   } catch (err) {
     notes.push(duplicateCheckNote(err));

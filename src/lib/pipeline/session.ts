@@ -8,21 +8,10 @@ import type {
   MeetingPageInput,
   MeetingSummary,
   MeetingTranscript,
-  Route,
   SaveJob,
   SessionMeta,
-  Settings,
 } from '../types';
 import { isDuplicateCheckNote } from './notes';
-
-/**
- * Same as databaseIdFor in settings.ts. The pipeline runs in the offscreen document,
- * which has no chrome.storage, and importing settings.ts there defines a storage item
- * that reads chrome.storage on load.
- */
-export function routeDatabaseId(settings: Settings, route: Route): string {
-  return route === 'team' ? settings.notionTeamDbId : settings.notionPersonalDbId;
-}
 
 /** Caption speakers in order of appearance, plus the local user even if they never spoke. */
 export function sessionAttendees(captions: CaptionSegment[], selfName: string): string[] {
