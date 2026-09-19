@@ -6,12 +6,14 @@
 import { explainError } from '../notion/errors';
 import { TranscriptionError } from '../transcribe/stitch';
 import type { TranscriptionResult } from '../types';
+import { formatClock } from '../util/time';
 
 const MAX_ERROR_LENGTH = 300;
 const DUPLICATE_CHECK = 'Notion was not checked for an existing page before transcribing';
 
 export const NOTES = {
   audioDeleted: 'The audio recording had already been deleted, so it could not be transcribed.',
+  noGeminiKey: 'No Gemini key is set, so this transcript comes from Meet captions only.',
 } as const;
 
 /** An error as one line of at most 300 characters. */
@@ -40,30 +42,50 @@ export function audioReadFailedNote(err: unknown): string {
   return `The audio recording could not be read: ${shortError(err)}`;
 }
 
-export function audioProblemNote(captureError: string): string {
-  return (
-    `Audio recording stopped early (${shortError(captureError)}); ` +
-    'later parts of the meeting may be missing from the transcript.'
-  );
+/** `audioEndMs`: where the recorded audio ends, when known. The merge fills the rest from captions. */
+export function audioProblemNote(captureError: string, audioEndMs?: number): string {
+  const at = audioEndMs !== undefined ? ` at ${formatClock(audioEndMs)}` : '';
+  const cause = shortError(captureError);
+  return `Audio recording stopped early${at} (${cause}); after that, the transcript relies on Meet captions.`;
+}
+
+/** Each pass's error, or null when both failed the same way (or the error is not per pass). */
+function passErrors(err: unknown): { timing: string; text: string } | null {
+  if (!(err instanceof TranscriptionError)) return null;
+  const timing = shortError(err.timingError);
+  const text = shortError(err.textError);
+  return timing === text ? null : { timing, text };
+}
+
+/** Why the transcription failed, in one line (no final period). */
+export function transcriptionCause(err: unknown): string {
+  const passes = passErrors(err);
+  if (passes) return `word-timing pass: ${passes.timing}; vocabulary pass: ${passes.text}`;
+  return shortError(err instanceof TranscriptionError ? err.timingError : err);
 }
 
 export function transcriptionFailedNote(err: unknown): string {
-  if (err instanceof TranscriptionError) {
-    const timing = shortError(err.timingError);
-    const text = shortError(err.textError);
-    if (timing === text) return `Audio transcription failed: ${timing}`;
-    return `Audio transcription failed (word-timing pass: ${timing}; vocabulary pass: ${text}).`;
-  }
-  return `Audio transcription failed: ${shortError(err)}`;
+  const cause = transcriptionCause(err);
+  return passErrors(err) ? `Audio transcription failed (${cause}).` : `Audio transcription failed: ${cause}`;
 }
 
-/** Notes for a transcription that succeeded with one pass missing. */
+/** Notes for a transcription that succeeded with a pass missing, or with failed or cut-short parts. */
 export function passNotes(result: TranscriptionResult): string[] {
   const notes: string[] = [];
-  if (!result.timingPass.ok) notes.push(`The word-timing pass failed: ${shortError(result.timingPass.error)}`);
-  if (!result.textPass.ok) {
-    const error = shortError(result.textPass.error);
+  const { timingPass, textPass } = result;
+  if (!timingPass.ok) notes.push(`The word-timing pass failed: ${shortError(timingPass.error)}`);
+  else if (timingPass.warning) {
+    const warning = shortError(timingPass.warning);
+    notes.push(`The word-timing pass was partly unavailable, so some times are approximate: ${warning}`);
+  }
+  if (!textPass.ok) {
+    const error = shortError(textPass.error);
     notes.push(`The vocabulary pass failed, so names and team terms may be misspelled: ${error}`);
+  } else if (textPass.warning) {
+    const warning = shortError(textPass.warning);
+    notes.push(
+      `The vocabulary pass was partly unavailable, so some names and team terms may be misspelled: ${warning}`,
+    );
   }
   return notes;
 }

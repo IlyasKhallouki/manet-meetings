@@ -10,6 +10,7 @@ import {
   passNotes,
   shortError,
   summaryFailedNote,
+  transcriptionCause,
   transcriptionFailedNote,
 } from '@lib/pipeline/notes';
 import { TranscriptionError } from '@lib/transcribe/stitch';
@@ -55,9 +56,18 @@ describe('audio notes', () => {
     expect(audioReadFailedNote(new DOMException('file changed', 'NotReadableError'))).toBe(
       'The audio recording could not be read: file changed',
     );
+    // The merge fills the rest from captions, so the note no longer says it is missing.
     expect(audioProblemNote('track ended')).toBe(
-      'Audio recording stopped early (track ended); later parts of the meeting may be missing from the transcript.',
+      'Audio recording stopped early (track ended); after that, the transcript relies on Meet captions.',
     );
+    expect(audioProblemNote('The recorder stopped responding', 1_213_400)).toBe(
+      'Audio recording stopped early at 00:20:13 (The recorder stopped responding); ' +
+        'after that, the transcript relies on Meet captions.',
+    );
+  });
+
+  it('says why a transcript comes from captions only when no Gemini key is set', () => {
+    expect(NOTES.noGeminiKey).toBe('No Gemini key is set, so this transcript comes from Meet captions only.');
   });
 });
 
@@ -80,6 +90,15 @@ describe('transcription notes', () => {
     );
   });
 
+  it('gives the cause alone, for a retry message', () => {
+    const unreachable = 'Could not reach Gemini (connect ECONNREFUSED 127.0.0.1:9)';
+    expect(transcriptionCause(new TranscriptionError(unreachable, unreachable, true))).toBe(unreachable);
+    expect(transcriptionCause(new TranscriptionError('timeout', 'quota'))).toBe(
+      'word-timing pass: timeout; vocabulary pass: quota',
+    );
+    expect(transcriptionCause(new Error('boom\n  again'))).toBe('boom again');
+  });
+
   it('notes a single failed pass', () => {
     const ok = { ok: true } as const;
     expect(passNotes({ words: [], text: '', timingPass: ok, textPass: ok })).toEqual([]);
@@ -88,6 +107,22 @@ describe('transcription notes', () => {
     ]);
     expect(passNotes({ words: [], text: 'x', timingPass: ok, textPass: { ok: false, error: 'quota' } })).toEqual([
       'The vocabulary pass failed, so names and team terms may be misspelled: quota',
+    ]);
+  });
+
+  it('notes the parts a pass lost or that came back cut short', () => {
+    const timingPass = { ok: true, warning: 'timing pass part 2 (25:00–55:00) failed: Gemini API error 500' } as const;
+    const textPass = { ok: true, warning: 'text pass part 2 (54:30–1:50:00) was cut short' } as const;
+    expect(passNotes({ words: [], text: 'x', timingPass, textPass })).toEqual([
+      'The word-timing pass was partly unavailable, so some times are approximate: ' +
+        'timing pass part 2 (25:00–55:00) failed: Gemini API error 500',
+      'The vocabulary pass was partly unavailable, so some names and team terms may be misspelled: ' +
+        'text pass part 2 (54:30–1:50:00) was cut short',
+    ]);
+    expect(passNotes({ words: [], text: 'x', timingPass: { ok: false, error: 'boom' }, textPass })).toEqual([
+      'The word-timing pass failed: boom',
+      'The vocabulary pass was partly unavailable, so some names and team terms may be misspelled: ' +
+        'text pass part 2 (54:30–1:50:00) was cut short',
     ]);
   });
 });

@@ -8,13 +8,21 @@ import { NotionClient, type NotionPage } from '@lib/notion/client';
 import { sameNotionId } from '@lib/notion/ids';
 import { createNotionMeetingStore } from '@lib/notion/store';
 import { createPipelineDeps, processSession, saveSession, type PipelineDeps } from '@lib/pipeline';
-import { NOTES } from '@lib/pipeline/notes';
+import { isDuplicateCheckNote, NOTES } from '@lib/pipeline/notes';
 import { createGeminiMeetingAI } from '@lib/transcribe/ai';
-import type { CaptionSegment, JobStage, ProcessJob, SessionMeta, SessionResult, Settings } from '@lib/types';
+import {
+  MAX_TRANSCRIBE_ATTEMPTS,
+  type CaptionSegment,
+  type JobStage,
+  type ProcessJob,
+  type SessionMeta,
+  type SessionResult,
+  type Settings,
+} from '@lib/types';
 import { createFileAudioStore } from '../helpers/fileAudioStore';
-import { seedAudio, SPEECH_MIXED, SPEECH_MIXED_SWITCH_MS } from '../helpers/fixtures';
-import { MEET_CODE, mixedSpeechCaptions, SELF_NAME, sessionMeta, testSettings } from '../helpers/meeting';
-import { countingFetch, eventually } from '../helpers/network';
+import { seedAudio, SPEECH_EN, SPEECH_MIXED, SPEECH_MIXED_SWITCH_MS } from '../helpers/fixtures';
+import { MEET_CODE, mixedSpeechCaptions, revisions, SELF_NAME, sessionMeta, testSettings } from '../helpers/meeting';
+import { countingFetch, eventually, refusedBaseUrl } from '../helpers/network';
 
 const GEMINI_KEY = process.env.GOOGLE_API_KEY ?? '';
 const NOTION_TOKEN = process.env.NOTION_TOKEN ?? '';
@@ -235,6 +243,98 @@ describe('pipeline against the real APIs with invalid credentials (network only)
     ]);
   }, 60_000);
 
+  it('skips the Notion check when the user chose to transcribe anyway', async () => {
+    const { store } = await audioStore();
+    const meta = uniqueMeta();
+    await seedAudio(store, meta.id, SPEECH_MIXED);
+    const settings = invalidSettings();
+    const stages: JobStage[] = [];
+    const deps = createPipelineDeps(settings, store, (s) => stages.push(s));
+
+    const result = processed(
+      await processSession({ ...job(meta, mixedSpeechCaptions(), settings), force: true }, deps),
+    );
+
+    expect(stages).toEqual(['loading-audio', 'transcribing-timing', 'merging', 'summarizing']);
+    expect(result.transcript.notes.some(isDuplicateCheckNote)).toBe(false);
+    expect(result.transcript.notes[0]).toMatch(/^Audio transcription failed: .*API key not valid/);
+  }, 60_000);
+
+  it('asks to try again later while Gemini is unreachable, and files the captions on the last attempt', async () => {
+    const { store } = await audioStore();
+    const meta = uniqueMeta();
+    await seedAudio(store, meta.id, SPEECH_MIXED);
+    const settings = invalidSettings({ geminiApiKey: 'manet-test-key' });
+    const stages: JobStage[] = [];
+    const deps: PipelineDeps = {
+      // A refused connection: a real network failure, as when a laptop wakes up offline.
+      ai: createGeminiMeetingAI(settings.geminiApiKey, { rest: { baseUrl: await refusedBaseUrl(), retries: 0 } }),
+      store: createNotionMeetingStore(settings.notionToken),
+      audio: store,
+      onStage: (s) => stages.push(s),
+    };
+    const attempt = (n?: number) =>
+      processSession({ ...job(meta, mixedSpeechCaptions(), settings), ...(n ? { attempt: n } : {}) }, deps);
+
+    const unreachable = /^Could not reach Gemini/;
+    expect(await attempt()).toEqual({ status: 'retry-later', error: expect.stringMatching(unreachable) });
+    expect(stages).toEqual(['checking-duplicate', 'loading-audio', 'transcribing-timing']);
+    expect(await attempt(MAX_TRANSCRIBE_ATTEMPTS - 1)).toEqual({
+      status: 'retry-later',
+      error: expect.stringMatching(unreachable),
+    });
+
+    const last = processed(await attempt(MAX_TRANSCRIBE_ATTEMPTS));
+    expect(last.transcript.source).toBe('captions-only');
+    expect(last.transcription?.timingPass).toEqual({ ok: false, error: expect.stringMatching(unreachable) });
+    expect(last.transcript.notes[1]).toMatch(/^Audio transcription failed: Could not reach Gemini/);
+    expect(last.transcript.notes.at(-1)).toMatch(/^The summary could not be generated: Could not reach Gemini/);
+  }, 60_000);
+
+  it('files the captions without calling Gemini when no Gemini key is set', async () => {
+    const { store } = await audioStore();
+    const meta = uniqueMeta();
+    await seedAudio(store, meta.id, SPEECH_MIXED);
+    const settings = invalidSettings({ geminiApiKey: '' });
+    const { fetch, counts } = countingFetch();
+    const stages: JobStage[] = [];
+    const deps: PipelineDeps = {
+      ai: gemini(settings.geminiApiKey, fetch),
+      store: createNotionMeetingStore(settings.notionToken),
+      audio: store,
+      onStage: (s) => stages.push(s),
+    };
+
+    const result = processed(await processSession(job(meta, mixedSpeechCaptions(), settings), deps));
+
+    expect(counts.requests).toBe(0);
+    expect(stages).toEqual(['checking-duplicate', 'merging']);
+    expect(result.transcription).toBeNull();
+    expect(result.summary).toBeNull();
+    expect(result.title).toBe('Weekly sync');
+    expect(result.transcript.source).toBe('captions-only');
+    expect(result.transcript.notes[1]).toBe(NOTES.noGeminiKey);
+    expect(result.transcript.turns.map((t) => t.text).join(' ')).toContain("l'autre comme domestique.");
+  }, 60_000);
+
+  it('says when the audio stopped, measured from the recording', async () => {
+    const { store } = await audioStore();
+    const meta = uniqueMeta();
+    meta.audio.error = 'The recorder stopped responding';
+    await seedAudio(store, meta.id, SPEECH_EN); // 40.2 s of an 80.4 s call
+    const settings = invalidSettings();
+
+    const result = processed(
+      await processSession(job(meta, mixedSpeechCaptions(), settings), createPipelineDeps(settings, store)),
+    );
+
+    expect(result.transcript.notes[1]).toBe(
+      'Audio recording stopped early at 00:00:40 (The recorder stopped responding); ' +
+        'after that, the transcript relies on Meet captions.',
+    );
+    expect(result.transcript.source).toBe('captions-only');
+  }, 60_000);
+
   it('keeps going when the progress callback throws or rejects', async () => {
     const { store } = await audioStore();
     const meta = uniqueMeta();
@@ -322,7 +422,22 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
 
     const savedAgain = await saveSession({ meta, result, settings, route: 'team' }, deps());
     expect(savedAgain.status).toBe('duplicate');
-  }, 180_000);
+
+    // "Transcribe anyway", then "Save anyway": the user saw that page and wants theirs filed too.
+    const forcedStages: JobStage[] = [];
+    const forcedJob = { ...job(meta, mixedSpeechCaptions(), settings), force: true };
+    const forced = processed(await processSession(forcedJob, deps(countingFetch(), forcedStages)));
+    expect(forcedStages[0]).toBe('loading-audio');
+    const savedAnyway = await saveSession({ meta, result: forced, settings, route: 'team', force: true }, deps());
+    expect(savedAnyway.status).toBe('created');
+    if (savedAnyway.status !== 'created') return;
+    expect(sameNotionId(savedAnyway.pageId, saved.pageId)).toBe(false);
+    const pages = await eventually(
+      () => notion.listByKey(NOTION_DB, meta.idempotencyKey),
+      (v) => v.length === 2,
+    );
+    expect(pages.map((p) => p.pageId).some((id) => sameNotionId(id, savedAnyway.pageId))).toBe(true);
+  }, 240_000);
 });
 
 describe.skipIf(!GEMINI_KEY)(
@@ -391,6 +506,45 @@ describe.skipIf(!GEMINI_KEY)(
       }
       // Vocabulary spelling from the text pass.
       expect([...camille, ...self]).toContain('librivox');
+    }, 300_000);
+
+    it('keeps what only captions have: the recorder without a mic, and the call after the audio stopped', async () => {
+      const { store } = await audioStore();
+      const early = uniqueMeta({
+        audio: {
+          mimeType: 'audio/webm;codecs=opus',
+          chunkCount: 0,
+          bytes: 0,
+          micIncluded: false,
+          error: 'The recorder stopped responding',
+        },
+      });
+      // 40.2 s of English, then the recorder died while the call went on in French.
+      await seedAudio(store, early.id, SPEECH_EN);
+      const selfLine = 'Merci Camille, on passe au budget.';
+      const jeanLine = 'Chapitre premier du Tour du monde en quatre-vingts jours, de Jules Verne.';
+      const captions = [
+        ...mixedSpeechCaptions().filter((c) => !c.self),
+        // In the pause after Camille's first block; the tab audio never has the recorder's voice.
+        ...revisions('s1', 'You', 31_500, 33_800, [selfLine], true),
+        ...revisions('j1', 'Jean Dupont', 45_000, 58_000, ['Chapitre premier', jeanLine]),
+      ];
+
+      const out = processed(await processSession(job(early, captions, settings), createPipelineDeps(settings, store)));
+
+      expect(out.transcript.source).toBe('audio+captions');
+      const { turns, notes } = out.transcript;
+      const tokensBy = (speaker: string) =>
+        tokensOf(turns.filter((t) => t.speaker === speaker).map((t) => t.text).join(' '));
+      expect(tokensBy(SELF_NAME)).toEqual(tokensOf(selfLine));
+      expect(tokensBy('Jean Dupont')).toEqual(tokensOf(jeanLine));
+      expect(tokensBy('Camille Martin')).toContain('holmes');
+      expect(notes).toContain(
+        'Audio recording stopped early at 00:00:40 (The recorder stopped responding); ' +
+          'after that, the transcript relies on Meet captions.',
+      );
+      expect(notes).toContainEqual(expect.stringMatching(new RegExp(`^${SELF_NAME}'s microphone was not recorded`)));
+      expect(notes).toContainEqual(expect.stringMatching(/^Where the audio had no transcript \(00:00:4/));
     }, 300_000);
 
     it.skipIf(!HAS_NOTION)('saves the transcribed meeting to Notion', async () => {

@@ -2,21 +2,24 @@
  * Turns a recorded session into a speaker-labelled transcript and a summary.
  *
  * Every stage degrades instead of failing, so a meeting is never lost: an unreachable
- * Notion skips the duplicate check, missing or untranscribable audio leaves the
- * captions, a failed summary leaves the transcript. Each degradation adds a note. Only
- * an unexpected error (a bug) ends in 'error', and the session can then be retried.
+ * Notion skips the duplicate check, missing or untranscribable audio (or no Gemini
+ * key) leaves the captions, a failed summary leaves the transcript. Each degradation
+ * adds a note. Two outcomes are not final: Gemini unreachable before the last attempt
+ * ('retry-later'), and an unexpected error (a bug, 'error'); the session can be retried.
  */
-import { formatTranscript, mergeTranscript } from '../merge';
+import { webmDurationMs } from '../audio/webm';
+import { formatTranscript, mergeTranscript, type MergeInput } from '../merge';
 import { buildVocabulary } from '../transcribe/requests';
 import { TranscriptionError } from '../transcribe/stitch';
-import type {
-  AudioStore,
-  MeetingSummary,
-  ProcessJob,
-  ProcessOutcome,
-  SessionMeta,
-  SessionResult,
-  TranscriptionResult,
+import {
+  MAX_TRANSCRIBE_ATTEMPTS,
+  type AudioStore,
+  type MeetingSummary,
+  type ProcessJob,
+  type ProcessOutcome,
+  type SessionMeta,
+  type SessionResult,
+  type TranscriptionResult,
 } from '../types';
 import { localDate } from '../util/ids';
 import { stageReporter, type PipelineDeps } from './deps';
@@ -29,6 +32,7 @@ import {
   passNotes,
   shortError,
   summaryFailedNote,
+  transcriptionCause,
   transcriptionFailedNote,
 } from './notes';
 import { databaseIdFor } from '../settingsSchema';
@@ -48,51 +52,57 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
   const notes: string[] = [];
 
   // Before spending any Gemini call: a teammate may have filed this meeting already.
-  stage('checking-duplicate');
-  try {
-    const existing = await deps.store.findByKey(databaseIdFor(settings, route), meta.idempotencyKey);
-    if (existing) return { status: 'duplicate', existing };
-  } catch (err) {
-    notes.push(duplicateCheckNote(err));
+  // "Transcribe anyway" (force) means the user has seen that page and wants their own.
+  if (!job.force) {
+    stage('checking-duplicate');
+    try {
+      const existing = await deps.store.findByKey(databaseIdFor(settings, route), meta.idempotencyKey);
+      if (existing) return { status: 'duplicate', existing };
+    } catch (err) {
+      notes.push(duplicateCheckNote(err));
+    }
   }
 
   const selfName = settings.displayName.trim();
   const attendees = sessionAttendees(captions, selfName);
-
-  stage('loading-audio');
-  const audio = await loadAudio(meta, deps.audio, notes);
+  const hasGemini = settings.geminiApiKey.trim() !== '';
 
   let transcription: TranscriptionResult | null = null;
   let passes: SessionResult['transcription'] = null;
-  if (audio) {
-    const durationMs = transcribeDurationMs(meta);
-    try {
-      transcription = await deps.ai.transcribe(audio, {
-        customVocabulary: buildVocabulary(settings.customVocabulary, attendees),
-        languageCodes: settings.languageCodes,
-        ...(durationMs !== undefined ? { durationMs } : {}),
-        onProgress: stage,
-      });
-      passes = { timingPass: transcription.timingPass, textPass: transcription.textPass };
-      notes.push(...passNotes(transcription));
-    } catch (err) {
-      passes = failedPasses(err);
-      notes.push(transcriptionFailedNote(err));
+  let audioEnd: number | undefined;
+  if (!hasGemini) {
+    notes.push(NOTES.noGeminiKey);
+  } else {
+    stage('loading-audio');
+    const audio = await loadAudio(meta, deps.audio, notes);
+    if (audio) {
+      audioEnd = await audioEndMs(meta, audio);
+      if (meta.audio.error) notes.push(audioProblemNote(meta.audio.error, audioEnd));
+      const durationMs = audioEnd ?? transcribeDurationMs(meta);
+      try {
+        transcription = await deps.ai.transcribe(audio, {
+          customVocabulary: buildVocabulary(settings.customVocabulary, attendees),
+          languageCodes: settings.languageCodes,
+          ...(durationMs !== undefined ? { durationMs } : {}),
+          onProgress: stage,
+        });
+        passes = { timingPass: transcription.timingPass, textPass: transcription.textPass };
+        notes.push(...passNotes(transcription));
+      } catch (err) {
+        // Gemini unreachable is worth another try later; captions only would be final.
+        if (retryLater(err, job.attempt)) return { status: 'retry-later', error: transcriptionCause(err) };
+        passes = failedPasses(err);
+        notes.push(transcriptionFailedNote(err));
+      }
     }
   }
 
   stage('merging');
-  const merged = mergeTranscript({
-    words: transcription?.words ?? [],
-    text: transcription?.text ?? '',
-    captions,
-    selfName,
-    notes,
-  });
+  const merged = mergeTranscript(mergeInputFor(job, transcription, audioEnd, notes));
 
   let summary: MeetingSummary | null = null;
   const summaryNotes: string[] = [];
-  if (merged.turns.length > 0) {
+  if (hasGemini && merged.turns.length > 0) {
     stage('summarizing');
     try {
       summary = await deps.ai.summarize(formatTranscript(merged), {
@@ -117,6 +127,51 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
   };
 }
 
+/**
+ * What the merge needs to know about the recording besides the words: whether the
+ * recorder's mic is in it, which ranges no transcription part covered, and where the
+ * audio ends when it stopped early. Captions fill in all three.
+ */
+export function mergeInputFor(
+  job: Pick<ProcessJob, 'meta' | 'captions' | 'settings'>,
+  transcription: TranscriptionResult | null,
+  audioEnd: number | undefined,
+  notes: string[],
+): MergeInput {
+  return {
+    words: transcription?.words ?? [],
+    text: transcription?.text ?? '',
+    captions: job.captions,
+    selfName: job.settings.displayName.trim(),
+    notes,
+    micIncluded: job.meta.audio.micIncluded,
+    ...(transcription?.gaps?.length ? { gaps: transcription.gaps } : {}),
+    ...(audioEnd !== undefined ? { audioEndMs: audioEnd } : {}),
+  };
+}
+
+/**
+ * Where the recorded audio ends (ms from recording start) when the recorder stopped
+ * before the meeting did, else undefined. Measured from the WebM; if that cannot be
+ * parsed, the time of the last persisted chunk.
+ */
+export async function audioEndMs(meta: SessionMeta, audio: Blob): Promise<number | undefined> {
+  if (!meta.audio.error) return undefined;
+  try {
+    const measured = webmDurationMs(new Uint8Array(await audio.arrayBuffer()));
+    if (measured > 0) return measured;
+  } catch {
+    // Not a parsable WebM: fall back to the chunk heartbeat.
+  }
+  const last = meta.audio.lastChunkAt;
+  return last !== undefined && last > meta.startedAt ? last - meta.startedAt : undefined;
+}
+
+/** A transient Gemini failure before the last attempt. */
+function retryLater(err: unknown, attempt = 1): boolean {
+  return err instanceof TranscriptionError && err.transient && attempt < MAX_TRANSCRIBE_ATTEMPTS;
+}
+
 /** The recording, or null (with a note saying why) when there is none to transcribe. */
 async function loadAudio(meta: SessionMeta, store: AudioStore, notes: string[]): Promise<Blob | null> {
   if (meta.audio.deletedAt !== undefined) {
@@ -134,7 +189,6 @@ async function loadAudio(meta: SessionMeta, store: AudioStore, notes: string[]):
     notes.push(noAudioNote(meta.audio.error));
     return null;
   }
-  if (meta.audio.error) notes.push(audioProblemNote(meta.audio.error));
   return audio;
 }
 

@@ -2,6 +2,7 @@
  * Network helpers for integration tests. Nothing here intercepts or fakes a
  * response: every request goes to the real service.
  */
+import { createServer } from 'node:net';
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -26,4 +27,17 @@ export async function eventually<T>(read: () => Promise<T>, done: (v: T) => bool
     if (done(value) || Date.now() > deadline) return value;
     await sleep(1000);
   }
+}
+
+/**
+ * A loopback base URL whose port was just freed, so connecting is refused: a real
+ * network failure. (fetch blocks well-known ports such as 9 before connecting.)
+ */
+export async function refusedBaseUrl(): Promise<string> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (!address || typeof address === 'string') throw new Error('no port');
+  return `http://127.0.0.1:${address.port}`;
 }
