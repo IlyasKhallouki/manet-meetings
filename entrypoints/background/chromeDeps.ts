@@ -1,4 +1,4 @@
-import { browser } from 'wxt/browser';
+import { browser, type Browser } from 'wxt/browser';
 import { sendToOffscreen, sendToTab } from '@lib/messages';
 import { getSettings } from '@lib/settings';
 import { createOffscreenDocument } from './offscreenDocument';
@@ -70,7 +70,8 @@ export function createChromeDeps(): SessionManagerDeps {
     },
     alarms: {
       async create(name, info) {
-        await browser.alarms.create(name, info);
+        // The dep takes one flat shape; Chrome's typings split it into when|delay variants.
+        await browser.alarms.create(name, info as Browser.alarms.AlarmCreateInfo);
       },
       async clear(name) {
         await browser.alarms.clear(name);

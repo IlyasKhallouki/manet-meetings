@@ -64,7 +64,7 @@ describe('background entrypoint', () => {
     await vi.waitFor(async () => expect(await statusOf(id)).toBe('awaiting-route'));
     expect(h.windowsCreate).toHaveBeenCalledTimes(1);
 
-    await fakeBrowser.alarms.onAlarm.trigger({ name: `route:${id}`, scheduledTime: Date.now() });
+    await fakeBrowser.alarms.onAlarm.trigger({ name: `route:${id}`, scheduledTime: Date.now(), persistAcrossSessions: false });
     await vi.waitFor(async () => expect(await statusOf(id)).toBe('saved'));
     expect((await getSession(id))?.route).toBe('team');
 

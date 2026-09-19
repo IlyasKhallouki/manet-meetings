@@ -70,7 +70,7 @@ describe('webm with real Chrome MediaRecorder output', () => {
     full = await decode(rec.bytes);
   }, 40_000);
 
-  it('records live WebM: unknown-size Segment and one unknown-size Cluster per timeslice', () => {
+  it('records live WebM: unknown-size Segment and about one unknown-size Cluster per timeslice', () => {
     expect([...rec.bytes.subarray(36, 48)]).toEqual(SEGMENT_UNKNOWN);
     let clusters = 0;
     let at = indexOfBytes(rec.bytes, CLUSTER_UNKNOWN);
@@ -78,7 +78,10 @@ describe('webm with real Chrome MediaRecorder output', () => {
       clusters++;
       at = indexOfBytes(rec.bytes, CLUSTER_UNKNOWN, at + 1);
     }
-    expect(clusters).toBe(rec.chunkCount);
+    // The splitter cuts on clusters, so it needs them about one timeslice long. The
+    // exact count varies: the flush on stop may or may not open a cluster of its own.
+    expect(clusters).toBeGreaterThanOrEqual(rec.chunkCount - 1);
+    expect(clusters).toBeLessThanOrEqual(rec.chunkCount + 1);
   });
 
   it('measures the recorded length', () => {
