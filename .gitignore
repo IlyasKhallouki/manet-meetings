@@ -31,3 +31,6 @@ web-ext.config.ts
 
 # Vitest browser-mode screenshots
 .vitest/
+
+# Screenshot gallery output (pnpm shots)
+.shots/
