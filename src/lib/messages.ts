@@ -46,7 +46,7 @@ export interface BackgroundProtocol {
   'session/save': { req: { sessionId: string }; res: void };
   'session/delete': { req: { sessionId: string }; res: void };
 
-  /** Offscreen: a chunk was persisted (heartbeat). */
+  /** Offscreen: chunk `index` was persisted (heartbeat). `bytes` is the session's running total. */
   'offscreen/recorder-chunk': { req: { sessionId: string; index: number; bytes: number }; res: void };
   /** Offscreen: recording ended for a reason other than a stop request, or after one. */
   'offscreen/recorder-stopped': {
@@ -85,7 +85,8 @@ export interface ContentProtocol {
   'content/recording-state': { req: RecordingState | null; res: void };
 }
 
-type Protocol = Record<string, { req: unknown; res: unknown }>;
+/** Any protocol interface: each message type maps to its request and response. */
+type Protocol<P> = { [K in keyof P]: { req: unknown; res: unknown } };
 export type Target = 'background' | 'offscreen' | 'content';
 
 export interface Envelope {
@@ -99,7 +100,7 @@ type Reply = { ok: true; value: unknown } | { ok: false; error: string };
 
 export type MessageSender = Browser.runtime.MessageSender;
 
-export type Handlers<P extends Protocol> = {
+export type Handlers<P extends Protocol<P>> = {
   [K in keyof P]?: (payload: P[K]['req'], sender: MessageSender) => P[K]['res'] | Promise<P[K]['res']>;
 };
 
@@ -146,7 +147,7 @@ export async function sendToTab<K extends keyof ContentProtocol & string>(
  * Registers handlers for one target. Returns an unsubscribe function.
  * Uses the sendResponse + `return true` form, which every Chrome version supports.
  */
-export function handleMessages<P extends Protocol>(target: Target, handlers: Handlers<P>): () => void {
+export function handleMessages<P extends Protocol<P>>(target: Target, handlers: Handlers<P>): () => void {
   const listener = (
     msg: unknown,
     sender: MessageSender,

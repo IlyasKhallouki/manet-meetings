@@ -1,8 +1,8 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
-import { errorMessage, handleMessages } from '@lib/messages';
+import { errorMessage, handleMessages, type BackgroundProtocol } from '@lib/messages';
 import { createChromeDeps } from './chromeDeps';
-import { backgroundHandlers, createSessionManager, type BackgroundMessages } from './sessionManager';
+import { backgroundHandlers, createSessionManager } from './sessionManager';
 
 export default defineBackground(() => {
   const manager = createSessionManager(createChromeDeps());
@@ -12,7 +12,7 @@ export default defineBackground(() => {
 
   // Registered synchronously: Chrome only delivers the event that woke the worker to
   // listeners added during its first turn.
-  handleMessages<BackgroundMessages>('background', backgroundHandlers(manager));
+  handleMessages<BackgroundProtocol>('background', backgroundHandlers(manager));
   browser.tabs.onRemoved.addListener((tabId) => run(manager.onTabRemoved(tabId)));
   browser.tabs.onUpdated.addListener((tabId, change) => {
     if (change.url) run(manager.onTabUrlChanged(tabId, change.url));

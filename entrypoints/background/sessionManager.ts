@@ -104,12 +104,6 @@ export interface SessionManagerDeps {
 
 type Req<K extends keyof BackgroundProtocol> = BackgroundProtocol[K]['req'];
 
-/**
- * BackgroundProtocol as a mapped type. messages.ts constrains protocols to
- * Record<string, …>, which an interface does not satisfy (no implicit index signature).
- */
-export type BackgroundMessages = { [K in keyof BackgroundProtocol]: BackgroundProtocol[K] };
-
 export interface SessionManager {
   /**
    * Recovery: orphaned recordings, interrupted jobs, lost alarms, retention, and (on the
@@ -863,7 +857,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const now = deps.now();
       await updateSession(sessionId, (m) => ({
         ...m,
-        audio: { ...m.audio, chunkCount: Math.max(m.audio.chunkCount, index + 1), bytes: m.audio.bytes + bytes },
+        audio: {
+          ...m.audio,
+          chunkCount: Math.max(m.audio.chunkCount, index + 1),
+          // Cumulative total from the recorder; max() tolerates out-of-order delivery.
+          bytes: Math.max(m.audio.bytes, bytes),
+        },
         ...(m.status === 'recording' ? { lastHeartbeat: now } : {}),
       }));
     },
@@ -922,7 +921,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 }
 
 /** Maps BackgroundProtocol messages onto the manager. The tab of content messages comes from the sender. */
-export function backgroundHandlers(manager: SessionManager): Handlers<BackgroundMessages> {
+export function backgroundHandlers(manager: SessionManager): Handlers<BackgroundProtocol> {
   return {
     'meet/joined': (req, sender) => manager.onMeetJoined(sender.tab?.id, req),
     'meet/left': (req, sender) => manager.onMeetLeft(sender.tab?.id, req),

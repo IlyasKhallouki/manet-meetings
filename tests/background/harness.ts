@@ -82,8 +82,6 @@ export function resultFor(job: ProcessJob, createdAt: number): SessionResult {
 }
 
 type Call = { [K in keyof OffscreenProtocol]: { type: K; payload: OffscreenProtocol[K]['req'] } }[keyof OffscreenProtocol];
-/** OffscreenProtocol as a mapped type, which satisfies handleMessages' Record constraint. */
-type OffscreenMessages = { [K in keyof OffscreenProtocol]: OffscreenProtocol[K] };
 
 export class FakeOffscreen {
   open = false;
@@ -121,7 +119,7 @@ export class FakeOffscreen {
     this.open = true;
     const log = <K extends keyof OffscreenProtocol>(type: K, payload: OffscreenProtocol[K]['req']) =>
       this.calls.push({ type, payload } as Call);
-    this.unsubscribe = handleMessages<OffscreenMessages>('offscreen', {
+    this.unsubscribe = handleMessages<OffscreenProtocol>('offscreen', {
       'offscreen/recorder-start': async (req) => {
         log('offscreen/recorder-start', req);
         const res = await this.recorderStart(req);

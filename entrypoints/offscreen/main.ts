@@ -37,12 +37,8 @@ function pipelineDeps(sessionId: string, settings: Settings): PipelineDeps {
   return createPipelineDeps(settings, store, (stage) => notify('offscreen/job-progress', { sessionId, stage }));
 }
 
-// handleMessages constrains P to an index signature, which interfaces lack; a mapped
-// copy of the interface has one implicitly.
-type Offscreen = { [K in keyof OffscreenProtocol]: OffscreenProtocol[K] };
-
 // Required: a message without a handler is a type error here, not a hang at runtime.
-const handlers: Required<Handlers<Offscreen>> = {
+const handlers: Required<Handlers<OffscreenProtocol>> = {
   'offscreen/recorder-start': (req) => capture.start(req),
   'offscreen/recorder-stop': ({ sessionId }) => capture.stop(sessionId),
   'offscreen/recorder-status': () => ({ recordingSessionIds: capture.sessionIds() }),
@@ -52,4 +48,4 @@ const handlers: Required<Handlers<Offscreen>> = {
   'offscreen/audio-delete': ({ sessionId }) => capture.deleteAudio(sessionId),
 };
 
-handleMessages<Offscreen>('offscreen', handlers);
+handleMessages<OffscreenProtocol>('offscreen', handlers);

@@ -4,10 +4,6 @@ import { MeetController } from './controller';
 
 const TICK_MS = 1000;
 
-// Pick turns the interface into a plain object type, which satisfies handleMessages'
-// Record<string, …> constraint (interfaces carry no implicit index signature).
-type ContentMessages = Pick<ContentProtocol, keyof ContentProtocol>;
-
 export default defineContentScript({
   matches: ['https://meet.google.com/*'],
   main(ctx) {
@@ -17,7 +13,7 @@ export default defineContentScript({
       send: sendToBackground,
     });
 
-    const unlisten = handleMessages<ContentMessages>('content', {
+    const unlisten = handleMessages<ContentProtocol>('content', {
       'content/recording-state': (state) => controller.setRecording(state),
     });
     ctx.onInvalidated(() => {

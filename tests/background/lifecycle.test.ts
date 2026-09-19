@@ -75,7 +75,7 @@ describe('recording lifecycle', () => {
     h.clock.advance(5000);
     await m.onRecorderChunk({ sessionId: ID, index: 0, bytes: 4000 });
     h.clock.advance(5000);
-    await m.onRecorderChunk({ sessionId: ID, index: 1, bytes: 4200 });
+    await m.onRecorderChunk({ sessionId: ID, index: 1, bytes: 8200 });
     await m.onCaptions({ sessionId: ID, segments: [seg('c1', 'Alice', 1000, 'Bonjour'), seg('c2', 'Bob', 4000, 'Hi all')] });
     await m.onCaptions({ sessionId: ID, segments: [seg('c1', 'Alice', 1000, 'Bonjour à tous', 1)] });
     expect(await getSession(ID)).toMatchObject({
