@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { MeetingPageInput, MeetingSummary, TranscriptTurn } from '@lib/types';
+import { buildTranscriptBlocks } from '@lib/notion/blocks';
 import { NotionClient, type NotionBlock, type NotionPage, type NotionRichText } from '@lib/notion/client';
 import { sameNotionId } from '@lib/notion/ids';
 import { saveMeeting } from '@lib/notion/save';
@@ -95,7 +96,8 @@ describe.skipIf(!token || !databaseId)('notion integration (needs NOTION_TOKEN +
     const turns = longTurns();
     const expected = turns.map((t) => `[${formatClock(t.start)}] ${t.speaker}: ${t.text.trim()}`);
     expect(expected.join('').length).toBeGreaterThan(30_000);
-    expect(expected.length).toBeGreaterThan(100);
+    const built = buildTranscriptBlocks(turns);
+    expect(built.length).toBeGreaterThan(1);
     const input = meeting(key, {
       source: 'captions-only',
       transcript: { turns, source: 'captions-only', notes: ['Timing pass failed: test', 'Text pass failed: test'] },
@@ -133,7 +135,7 @@ describe.skipIf(!token || !databaseId)('notion integration (needs NOTION_TOKEN +
     expect((child?.child_page as { title: string } | undefined)?.title).toBe('Transcript');
 
     const blocks = await client.listBlockChildren(child!.id);
-    expect(blocks.length).toBe(expected.length);
+    expect(blocks.length).toBe(built.length);
     const got: string[] = [];
     for (const block of blocks) {
       expect(block.type).toBe('paragraph');
@@ -145,7 +147,7 @@ describe.skipIf(!token || !databaseId)('notion integration (needs NOTION_TOKEN +
       }
       got.push(items.map((r) => r.plain_text).join(''));
     }
-    expect(got).toEqual(expected);
+    expect(got.join('\n\n')).toBe(expected.join('\n\n'));
   }, 180_000);
 
   it('finds a saved meeting by key with who recorded it', async () => {

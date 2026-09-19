@@ -9,6 +9,8 @@ import {
   MAX_BATCH_BYTES,
   type BlockRequest,
 } from '@lib/notion/blocks';
+import { richText } from '@lib/notion/richText';
+import { formatClock } from '@lib/util/time';
 
 const summary: MeetingSummary = {
   title: 'Point hebdo',
@@ -131,9 +133,9 @@ describe('buildTranscriptBlocks', () => {
     { speaker: 'Camille', start: 3_723_000, end: 3_730_000, text: 'Hi everyone, quick update.' },
   ];
 
-  it('writes one paragraph per turn with a bold "[hh:mm:ss] Speaker:" prefix', () => {
+  it('packs consecutive turns into one paragraph, each with a bold "[hh:mm:ss] Speaker:" label', () => {
     const blocks = buildTranscriptBlocks(turns);
-    expect(types(blocks)).toEqual(['paragraph', 'paragraph']);
+    expect(types(blocks)).toEqual(['paragraph']);
     const first = blocks[0];
     if (first?.type !== 'paragraph') throw new Error('expected paragraph');
     expect(first.paragraph.rich_text[0]).toEqual({
@@ -141,7 +143,30 @@ describe('buildTranscriptBlocks', () => {
       text: { content: '[00:00:00] Ilyas:' },
       annotations: { bold: true },
     });
-    expect(texts(blocks)).toEqual(['[00:00:00] Ilyas: Bonjour à tous.', '[01:02:03] Camille: Hi everyone, quick update.']);
+    expect(first.paragraph.rich_text[2]).toEqual({
+      type: 'text',
+      text: { content: '\n\n[01:02:03] Camille:' },
+      annotations: { bold: true },
+    });
+    expect(texts(blocks)).toEqual(['[00:00:00] Ilyas: Bonjour à tous.\n\n[01:02:03] Camille: Hi everyone, quick update.']);
+  });
+
+  it('keeps an hour-long meeting to a handful of blocks (Free workspaces cap lifetime blocks)', () => {
+    const hour: TranscriptTurn[] = Array.from({ length: 400 }, (_, i) => ({
+      speaker: i % 2 ? 'Camille' : 'Ilyas',
+      start: i * 9_000,
+      end: i * 9_000 + 8_000,
+      text: 'on avance sur le projet et the roadmap looks good '.repeat(4).trim(),
+    }));
+    const blocks = buildTranscriptBlocks(hour);
+    expect(blocks.length).toBeLessThanOrEqual(12);
+    for (const b of blocks) {
+      if (b.type !== 'paragraph') throw new Error('expected paragraph');
+      expect(b.paragraph.rich_text.length).toBeLessThanOrEqual(100);
+      for (const item of b.paragraph.rich_text) expect(item.text.content.length).toBeLessThanOrEqual(2000);
+    }
+    const all = texts(blocks).join('\n\n');
+    for (const t of hour) expect(all).toContain(`[${formatClock(t.start)}] ${t.speaker}: ${t.text}`);
   });
 
   it('says so when there are no turns', () => {
@@ -165,10 +190,10 @@ describe('buildTranscriptBlocks', () => {
 });
 
 describe('batchBlocks', () => {
+  const paragraph = (text: string): BlockRequest => ({ object: 'block', type: 'paragraph', paragraph: { rich_text: richText(text) } });
+
   it('batches at most 100 blocks per request', () => {
-    const blocks = buildTranscriptBlocks(
-      Array.from({ length: 250 }, (_, i) => ({ speaker: 'S', start: i * 1000, end: i * 1000 + 900, text: `turn ${i}` })),
-    );
+    const blocks = Array.from({ length: 250 }, (_, i) => paragraph(`turn ${i}`));
     const batches = batchBlocks(blocks);
     expect(batches.map((b) => b.length)).toEqual([100, 100, 50]);
     expect(batches.flat()).toEqual(blocks);
@@ -177,9 +202,7 @@ describe('batchBlocks', () => {
 
   it('also caps the request body size', () => {
     const text = 'é'.repeat(1999);
-    const blocks = buildTranscriptBlocks(
-      Array.from({ length: 100 }, (_, i) => ({ speaker: 'S', start: i, end: i, text: `${text} ${text} ${text}` })),
-    );
+    const blocks = Array.from({ length: 100 }, () => paragraph(`${text} ${text} ${text}`));
     const batches = batchBlocks(blocks, 100, 200_000);
     expect(batches.length).toBeGreaterThan(1);
     for (const batch of batches) expect(bytes({ children: batch })).toBeLessThanOrEqual(200_000);

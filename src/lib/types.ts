@@ -169,6 +169,7 @@ export interface MeetingStore {
    * races between two teammates who both recorded the same meeting.
    */
   listByKey(databaseId: string, key: string): Promise<(ExistingMeeting & { createdAt: string })[]>;
+  /** Moves a page to Notion's trash (restorable for 30 days). */
   archivePage(pageId: string): Promise<void>;
 }
 

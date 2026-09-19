@@ -6,7 +6,7 @@
  */
 import type { ActionItem, MeetingPageInput, TranscriptTurn } from '../types';
 import { formatClock } from '../util/time';
-import { richText, type RichTextItem } from './richText';
+import { MAX_RICH_TEXT_ITEMS, MAX_TEXT_LENGTH, richText, type RichTextItem } from './richText';
 
 /**
  * Items per block. Half the API's 100 so one block stays ≤ ~300 KB of JSON even for
@@ -127,14 +127,51 @@ export function buildMeetingBody(input: MeetingPageInput): BlockRequest[] {
   return blocks;
 }
 
-/** One paragraph per turn: bold "[hh:mm:ss] Speaker:" then the text. */
+/**
+ * Characters per transcript paragraph. Many turns share a paragraph because Free
+ * workspaces with several members cap internal integrations at 1,000 lifetime blocks,
+ * and one block per turn would use that up within a few meetings.
+ */
+const MAX_TRANSCRIPT_BLOCK_CHARS = 12_000;
+
+/**
+ * Turns packed into paragraphs, each turn a bold "[hh:mm:ss] Speaker:" label and its
+ * text, separated by blank lines. A turn too long for one paragraph spills into more.
+ */
 export function buildTranscriptBlocks(turns: readonly TranscriptTurn[]): BlockRequest[] {
   if (turns.length === 0) return muted('No speech was captured in this meeting.');
-  return turns.flatMap((turn) => {
-    const prefix = richText(`[${formatClock(turn.start)}] ${turn.speaker}:`, { bold: true });
+  const blocks: BlockRequest[] = [];
+  let items: RichTextItem[] = [];
+  let chars = 0;
+  const flush = () => {
+    // Packed paragraphs are bounded by the character cap, so they may use the API's full
+    // item limit; only a single oversized turn goes through the generic splitter.
+    if (items.length && items.length <= MAX_RICH_TEXT_ITEMS && chars <= MAX_TRANSCRIPT_BLOCK_CHARS) {
+      blocks.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: items } });
+    } else if (items.length) {
+      blocks.push(...simple('paragraph', items));
+    }
+    items = [];
+    chars = 0;
+  };
+  for (const turn of turns) {
+    const label = `[${formatClock(turn.start)}] ${turn.speaker}:`;
     const text = turn.text.trim();
-    return simple('paragraph', [...prefix, ...(text ? richText(` ${text}`) : [])]);
-  });
+    const turnItems = [...richText(label, { bold: true }), ...(text ? richText(` ${text}`) : [])];
+    const turnChars = label.length + text.length + 3;
+    if (items.length && (items.length + turnItems.length + 1 > MAX_RICH_TEXT_ITEMS || chars + turnChars > MAX_TRANSCRIPT_BLOCK_CHARS)) {
+      flush();
+    }
+    if (items.length) {
+      const first = turnItems[0]!;
+      if (first.text.content.length + 2 <= MAX_TEXT_LENGTH) first.text.content = `\n\n${first.text.content}`;
+      else turnItems.unshift(...richText('\n\n'));
+    }
+    items.push(...turnItems);
+    chars += turnChars;
+  }
+  flush();
+  return blocks;
 }
 
 /**
