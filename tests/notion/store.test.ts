@@ -1,0 +1,75 @@
+import { describe, expect, it } from 'vitest';
+import { NotionError } from '@lib/notion/client';
+import { createNotionMeetingStore } from '@lib/notion/store';
+import { schemaProblems, verifyDatabase } from '@lib/notion/verify';
+
+const DB = 'https://www.notion.so/lumind/Meetings-0f1e2d3c4b5a69788796a5b4c3d2e1f0?v=aaaaaaaabbbbccccddddeeeeeeeeeeee';
+
+// Real network, no secret needed: how each entry point surfaces Notion's rejection.
+describe('Notion store with an invalid token (real API)', () => {
+  const store = createNotionMeetingStore('ntn_this_token_is_not_valid');
+
+  it('rejects lookups with a NotionError', async () => {
+    const error = await store.findByKey(DB, 'abc-defg-hij-2026-09-19').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NotionError);
+    expect((error as NotionError).status).toBe(401);
+    expect((error as NotionError).code).toBe('unauthorized');
+  });
+
+  it('rejects archiving with a NotionError', async () => {
+    const error = await store.archivePage('0f1e2d3c4b5a69788796a5b4c3d2e1f0').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NotionError);
+    expect((error as NotionError).status).toBe(401);
+  });
+
+  it('rejects an unparseable database id before any request', async () => {
+    const error = await store.listByKey('meetings', 'k').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NotionError);
+    expect((error as NotionError).code).toBe('invalid_database_id');
+    const empty = await store.findByKey('  ', 'k').catch((e: unknown) => e);
+    expect((empty as NotionError).message).toMatch(/no Notion database/i);
+  });
+});
+
+describe('verifyDatabase without valid credentials (real API)', () => {
+  it('explains an invalid token', async () => {
+    const result = await verifyDatabase('ntn_this_token_is_not_valid', DB);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problems.join(' ')).toMatch(/token is invalid/i);
+  });
+
+  it('explains a missing token or a bad database id', async () => {
+    const noToken = await verifyDatabase('', DB);
+    expect(noToken.ok).toBe(false);
+    if (!noToken.ok) expect(noToken.problems.join(' ')).toMatch(/token/i);
+    const badId = await verifyDatabase('ntn_x', 'Meetings');
+    expect(badId.ok).toBe(false);
+    if (!badId.ok) expect(badId.problems.join(' ')).toMatch(/not a Notion database/i);
+  });
+});
+
+describe('schemaProblems', () => {
+  const good = {
+    Nom: 'title',
+    Date: 'date',
+    Duration: 'number',
+    Attendees: 'multi_select',
+    'Meet code': 'rich_text',
+    'Recorded by': 'rich_text',
+    Source: 'select',
+    Key: 'rich_text',
+  };
+
+  it('accepts the schema whatever the title property is called', () => {
+    expect(schemaProblems(good)).toEqual([]);
+    expect(schemaProblems({ ...good, Extra: 'checkbox' })).toEqual([]);
+  });
+
+  it('lists missing properties and wrong types', () => {
+    const { Key: _key, ...withoutKey } = good;
+    expect(schemaProblems({ ...withoutKey, Duration: 'rich_text' })).toEqual([
+      'Property "Duration" is rich_text; it must be number.',
+      'Missing property "Key" (type rich_text).',
+    ]);
+  });
+});
