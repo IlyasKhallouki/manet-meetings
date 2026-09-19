@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { AudioStore } from '@lib/types';
 import { createMixer } from '../../entrypoints/offscreen/mixer';
 import {
   startRecording,
@@ -44,6 +45,17 @@ async function record(opts: Omit<RecordingOptions, 'onChunk' | 'onStop'>) {
   });
   cleanups.push(() => rec.stop());
   return { rec, chunks, stops, stopped };
+}
+
+/**
+ * The audio runs from between the start() call and the 'start' event (startedAt), which
+ * can lag by a few hundred ms under load, to the stop request, give or take a frame.
+ * When stop() resolves (after the final commit) is not part of it.
+ */
+function expectSpan(decoded: AudioBuffer, span: { calledAt: number; startedAt: number; stopAt: number }): void {
+  const ms = decoded.duration * 1000;
+  expect(ms).toBeGreaterThan(span.stopAt - span.startedAt - 300);
+  expect(ms).toBeLessThan(span.stopAt - span.calledAt + 300);
 }
 
 describe('startRecording', () => {
@@ -94,31 +106,35 @@ describe('startRecording', () => {
     const mixer = createMixer({ tabStream: tab.stream, micStream: mic.stream });
     cleanups.push(() => mixer.close());
     const { store: audio } = await store();
+    const calledAt = Date.now();
     const { rec } = await record({ sessionId: SESSION, stream: mixer.stream, store: audio, timesliceMs: 500 });
     await sleep(2200);
+    const stopAt = Date.now();
     await rec.stop();
-    const elapsedMs = Date.now() - rec.startedAt;
 
     const blob = await audio.readAudio(SESSION);
     expect(blob).not.toBeNull();
     const decoded = await decode(blob!);
     expect(decoded.numberOfChannels).toBe(1);
-    expect(Math.abs(decoded.duration * 1000 - elapsedMs)).toBeLessThan(300);
+    expectSpan(decoded, { calledAt, startedAt: rec.startedAt, stopAt });
   });
 
-  it('persists the final partial chunk before stop() resolves', async () => {
+  it('persists the final partial chunk before stop() resolves, however slow the write', async () => {
     const t = await source();
-    const { store: audio } = await store();
+    const { store: opfs } = await store();
+    // A loaded machine: every OPFS commit takes 400 ms longer.
+    const audio: AudioStore = { ...opfs, writeChunk: (...args) => sleep(400).then(() => opfs.writeChunk(...args)) };
+    const calledAt = Date.now();
     const { rec, stops } = await record({ sessionId: SESSION, stream: t.stream, store: audio, timesliceMs: 1000 });
     await sleep(1700);
+    const stopAt = Date.now();
     const result = await rec.stop();
-    const elapsedMs = Date.now() - rec.startedAt;
 
     expect(stops).toEqual([result]);
     expect(await audio.stat(SESSION)).toEqual({ chunkCount: result.chunkCount, bytes: result.bytes });
     const decoded = await decode((await audio.readAudio(SESSION))!);
     // Only whole timeslices would give 1 s; the flushed tail brings it to ~1.7 s.
-    expect(Math.abs(decoded.duration * 1000 - elapsedMs)).toBeLessThan(300);
+    expectSpan(decoded, { calledAt, startedAt: rec.startedAt, stopAt });
     expect(await rec.stop()).toBe(result);
     expect(stops).toHaveLength(1);
   });
@@ -193,9 +209,10 @@ describe('startRecording', () => {
 
     const result = await stopped;
     expect(result.reason).toBe('error');
-    expect(result.error).toMatch(new RegExp(`chunk ${saved}\\b.*NotFoundError`));
-    expect(result.chunkCount).toBe(saved);
-    expect(chunks).toHaveLength(saved);
+    // A write already under way while the root goes can still land, so count from the result.
+    expect(result.chunkCount).toBeGreaterThanOrEqual(saved);
+    expect(result.error).toMatch(new RegExp(`chunk ${result.chunkCount}\\b.*NotFoundError`));
+    expect(chunks).toHaveLength(result.chunkCount);
     expect(await rec.stop()).toBe(result);
   });
 

@@ -2,6 +2,7 @@
  * Synthetic audio for the offscreen tests: oscillator MediaStreams stand in for the
  * tab and the mic, so everything runs in real Chrome without devices.
  */
+import { vi } from 'vitest';
 import { createOpfsAudioStore } from '@lib/storage/opfsAudioStore';
 import type { AudioStore } from '@lib/types';
 
@@ -114,6 +115,20 @@ export async function listen(stream: MediaStream): Promise<{ analyser: AnalyserN
 export const AUDIBLE_DB = -40;
 /** A leaked tone would sit around -20 dB. */
 export const SILENT_DB = -60;
+
+/**
+ * Records every connection made straight to an AudioDestinationNode (the speakers) from
+ * here on; call the returned function to read them. Headless Chrome gives no way to
+ * listen to the real output, so the wiring is observed instead: connect() still runs.
+ * Undo with vi.restoreAllMocks().
+ */
+export function speakerFeeds(): () => { node: AudioNode; speakers: AudioDestinationNode }[] {
+  const connect = vi.spyOn(AudioNode.prototype, 'connect');
+  return () =>
+    connect.mock.calls.flatMap(([target], i) =>
+      target instanceof AudioDestinationNode ? [{ node: connect.mock.contexts[i] as AudioNode, speakers: target }] : [],
+    );
+}
 
 export function decode(blob: Blob): Promise<AudioBuffer> {
   return blob.arrayBuffer().then((buf) => new OfflineAudioContext(1, 1, 48_000).decodeAudioData(buf));

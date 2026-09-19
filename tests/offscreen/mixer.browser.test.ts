@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMixer, type Mixer } from '../../entrypoints/offscreen/mixer';
-import { AUDIBLE_DB, SILENT_DB, audibleLevel, decode, levelDb, listen, sleep, tone } from './helpers';
+import { AUDIBLE_DB, SILENT_DB, audibleLevel, decode, levelDb, listen, sleep, speakerFeeds, tone } from './helpers';
 
 const TAB_HZ = 440;
 // Not a harmonic of TAB_HZ.
@@ -9,6 +9,7 @@ const MIC_HZ = 1000;
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
 afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn();
+  vi.restoreAllMocks();
 });
 
 function track(mixer: Mixer): Mixer {
@@ -97,6 +98,19 @@ describe('createMixer', () => {
     const audio = await recordMs(mixer.stream, 1000);
     expect(audio.numberOfChannels).toBe(1);
     expect(rms(audio.getChannelData(0))).toBeGreaterThan(0.05);
+  });
+
+  it("plays the tab, and only the tab, through its own context's speakers by default", async () => {
+    // Tab capture mutes the tab: without this route the user hears nothing of the meeting.
+    const { tab, mic } = await sources({ mic: true });
+    const fed = speakerFeeds();
+    const mixer = track(createMixer({ tabStream: tab.stream, micStream: mic!.stream }));
+    const feeds = fed();
+    expect(feeds).toHaveLength(1);
+    const { node, speakers } = feeds[0]!;
+    expect(node).toBeInstanceOf(MediaStreamAudioSourceNode);
+    expect((node as MediaStreamAudioSourceNode).mediaStream).toBe(tab.stream);
+    expect(speakers).toBe(mixer.context.destination);
   });
 
   it('plays back through its own context by default and closes it on close()', async () => {

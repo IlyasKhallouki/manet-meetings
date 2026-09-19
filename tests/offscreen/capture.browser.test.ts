@@ -6,7 +6,7 @@ import {
   type CaptureDeps,
   type CaptureHost,
 } from '../../entrypoints/offscreen/capture';
-import { endable, sleep, testStore, tone, type EndableStream } from './helpers';
+import { endable, sleep, speakerFeeds, testStore, tone, type EndableStream } from './helpers';
 
 const SESSION = 'abc-defg-hij_20260919T101500Z';
 const OTHER = 'xyz-abcd-efg_20260919T111500Z';
@@ -131,6 +131,22 @@ describe('createCaptureHost', () => {
     await host.stop(SESSION);
     expect(deps.openMicStream).toHaveBeenCalledTimes(1);
     expect(mic.track.readyState).toBe('ended');
+  });
+
+  it('plays the captured tab back to the speakers, but never the mic', async () => {
+    // Tab capture mutes the tab: without this route the user hears nothing of the meeting.
+    const mic = await tone(1000);
+    cleanups.push(() => mic.close());
+    const { host, tabs } = await setup({ openMicStream: vi.fn(async () => mic.stream) });
+    const fed = speakerFeeds();
+    expect(await host.start(startReq())).toMatchObject({ ok: true, micIncluded: true });
+    const feeds = fed();
+    expect(feeds).toHaveLength(1);
+    const { node, speakers } = feeds[0]!;
+    expect(node).toBeInstanceOf(MediaStreamAudioSourceNode);
+    expect((node as MediaStreamAudioSourceNode).mediaStream).toBe(tabs[0]?.stream);
+    expect(speakers).toBe(node.context.destination);
+    await host.stop(SESSION);
   });
 
   it('does not touch the mic when the user turned it off', async () => {

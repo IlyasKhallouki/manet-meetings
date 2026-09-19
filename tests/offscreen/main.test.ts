@@ -2,14 +2,14 @@
  * The offscreen entry script over WXT's fake chrome.runtime and the real messages.ts.
  * Node has no getUserMedia and no OPFS, so capture fails cleanly and the pipeline runs
  * captions-only: what is checked is that each message reaches the right code and that
- * progress flows back to the background. Recording itself is covered in real Chrome by
- * the *.browser.test.ts files next to this one.
+ * progress and job outcomes flow back to the background. Recording itself is covered in
+ * real Chrome by the *.browser.test.ts files next to this one.
  *
  * Notion and Gemini are called for real with deliberately invalid credentials.
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { handleMessages, sendToOffscreen, type BackgroundProtocol } from '@lib/messages';
+import { handleMessages, sendToOffscreen, type BackgroundProtocol, type JobDone } from '@lib/messages';
 import { DEFAULT_SETTINGS } from '@lib/settings';
 import type { CaptionSegment, JobStage, SessionMeta, Settings } from '@lib/types';
 
@@ -50,20 +50,61 @@ const captions: CaptionSegment[] = [
 ];
 
 const progress: { sessionId: string; stage: JobStage }[] = [];
+const done: JobDone[] = [];
 
-beforeAll(async () => {
-  fakeBrowser.reset();
-  handleMessages<Background>('background', {
+/** The service worker's listener; stopping it is what a worker restart looks like here. */
+let stopWorker: (() => void) | null = null;
+
+function startWorker(): void {
+  stopWorker?.();
+  stopWorker = handleMessages<Background>('background', {
     'offscreen/job-progress': (p) => {
       progress.push(p);
     },
+    'offscreen/job-done': (d) => {
+      done.push(d);
+    },
   });
+}
+
+async function outcomeOf(jobId: string): Promise<JobDone> {
+  return vi.waitFor(
+    () => {
+      const d = done.find((x) => x.jobId === jobId);
+      if (!d) throw new Error(`no outcome for ${jobId} yet`);
+      return d;
+    },
+    { timeout: 20_000, interval: 50 },
+  );
+}
+
+async function processed(jobId: string) {
+  expect(await sendToOffscreen('offscreen/process', { jobId, meta, captions, settings, route: 'team' })).toEqual({
+    accepted: true,
+  });
+  const d = await outcomeOf(jobId);
+  if (d.kind !== 'process' || d.outcome.status !== 'processed') throw new Error(`process failed: ${JSON.stringify(d)}`);
+  return d.outcome.result;
+}
+
+beforeAll(async () => {
+  fakeBrowser.reset();
+  startWorker();
   await import('@/entrypoints/offscreen/main');
 });
 
 beforeEach(() => {
   progress.length = 0;
+  done.length = 0;
+  startWorker();
 });
+
+afterEach(async () => {
+  // A job left running would take the session for the next test.
+  await vi.waitFor(async () => expect((await sendToOffscreen('offscreen/job-status', {})).jobs).toEqual([]), {
+    timeout: 20_000,
+  });
+}, 25_000);
 
 describe('offscreen document messaging', () => {
   it('reports no recordings before any start', async () => {
@@ -80,30 +121,89 @@ describe('offscreen document messaging', () => {
     expect(res).toEqual({ ok: false, error: expect.stringMatching(/^Tab audio capture failed: /) });
     expect(await sendToOffscreen('offscreen/recorder-status', {})).toEqual({ recordingSessionIds: [] });
   });
+});
 
-  it('runs a process job and reports its stages for the job session', async () => {
-    const outcome = await sendToOffscreen('offscreen/process', { meta, captions, settings, route: 'team' });
-    expect(outcome.status).toBe('processed');
-    if (outcome.status !== 'processed') return;
-    // No audio can be read here, so the captions carry the meeting.
-    expect(outcome.result.transcript.source).toBe('captions-only');
-    expect(outcome.result.transcript.turns.map((t) => t.speaker)).toEqual(['Ana']);
-    await vi.waitFor(() => {
-      expect(progress).toContainEqual({ sessionId: SESSION, stage: 'checking-duplicate' });
-      expect(progress).toContainEqual({ sessionId: SESSION, stage: 'loading-audio' });
+describe('offscreen jobs', () => {
+  it('accepts a process job at once and sends its outcome as offscreen/job-done', async () => {
+    const reply = await sendToOffscreen('offscreen/process', { jobId: 'p-1', meta, captions, settings, route: 'team' });
+    expect(reply).toEqual({ accepted: true });
+    // The reply does not wait for the job: Notion has not even answered yet.
+    expect(done).toEqual([]);
+    expect(await sendToOffscreen('offscreen/job-status', {})).toEqual({
+      jobs: [{ sessionId: SESSION, jobId: 'p-1', kind: 'process' }],
     });
+
+    const d = await outcomeOf('p-1');
+    expect(d).toMatchObject({ sessionId: SESSION, jobId: 'p-1', kind: 'process', outcome: { status: 'processed' } });
+    if (d.kind !== 'process' || d.outcome.status !== 'processed') return;
+    // No audio can be read here, so the captions carry the meeting.
+    expect(d.outcome.result.transcript.source).toBe('captions-only');
+    expect(d.outcome.result.transcript.turns.map((t) => t.speaker)).toEqual(['Ana']);
+    expect(progress).toContainEqual({ sessionId: SESSION, stage: 'checking-duplicate' });
+    expect(progress).toContainEqual({ sessionId: SESSION, stage: 'loading-audio' });
     expect(progress.every((p) => p.sessionId === SESSION)).toBe(true);
+    expect(done).toHaveLength(1);
+    expect(await sendToOffscreen('offscreen/job-status', {})).toEqual({ jobs: [] });
   });
 
-  it('runs a save job and reports the saving stage', async () => {
-    const processed = await sendToOffscreen('offscreen/process', { meta, captions, settings, route: 'team' });
-    if (processed.status !== 'processed') throw new Error(`process failed: ${processed.status}`);
+  it('accepts a save job and sends its outcome as offscreen/job-done', async () => {
+    const result = await processed('p-2');
     progress.length = 0;
 
-    const job = { meta, result: processed.result, settings, route: 'team' } as const;
-    const outcome = await sendToOffscreen('offscreen/save', job);
-    // The token is invalid, so Notion refuses it; the answer still comes back as an outcome.
-    expect(outcome).toEqual({ status: 'error', error: expect.stringMatching(/\S/) });
-    await vi.waitFor(() => expect(progress).toContainEqual({ sessionId: SESSION, stage: 'saving' }));
+    const reply = await sendToOffscreen('offscreen/save', { jobId: 's-2', meta, result, settings, route: 'team' });
+    expect(reply).toEqual({ accepted: true });
+    // The token is invalid, so Notion refuses it; that still comes back as an outcome.
+    expect(await outcomeOf('s-2')).toEqual({
+      sessionId: SESSION,
+      jobId: 's-2',
+      kind: 'save',
+      outcome: { status: 'error', error: expect.stringMatching(/\S/) },
+    });
+    expect(progress).toContainEqual({ sessionId: SESSION, stage: 'saving' });
+  });
+
+  it('delivers the outcome to whichever worker is alive when the job ends', async () => {
+    // The worker that sent the job is stopped right after (Chrome's 5-minute cap, an update, a crash).
+    const reply = sendToOffscreen('offscreen/process', { jobId: 'p-3', meta, captions, settings, route: 'team' });
+    stopWorker?.();
+    stopWorker = null;
+    expect(await reply).toEqual({ accepted: true });
+
+    // A new worker instance, woken later, still learns the outcome.
+    await new Promise((r) => setTimeout(r, 300));
+    startWorker();
+    const d = await outcomeOf('p-3');
+    expect(d).toMatchObject({ sessionId: SESSION, kind: 'process', outcome: { status: 'processed' } });
+  });
+
+  it('refuses a second job for a session whose job is still running', async () => {
+    await sendToOffscreen('offscreen/process', { jobId: 'p-4', meta, captions, settings, route: 'team' });
+    await expect(
+      sendToOffscreen('offscreen/process', { jobId: 'p-5', meta, captions, settings, route: 'team' }),
+    ).rejects.toThrow(`Session ${SESSION} already has a process job running (p-4)`);
+    // The same job sent again (its reply was lost) is not run twice.
+    const resent = await sendToOffscreen('offscreen/process', { jobId: 'p-4', meta, captions, settings, route: 'team' });
+    expect(resent).toEqual({ accepted: true });
+    await outcomeOf('p-4');
+    await vi.waitFor(async () => expect((await sendToOffscreen('offscreen/job-status', {})).jobs).toEqual([]));
+    expect(done.map((d) => d.jobId)).toEqual(['p-4']);
+  });
+
+  it('rejects a malformed job instead of accepting it', async () => {
+    const bad = [
+      { meta, captions, settings, route: 'team' },
+      { jobId: '', meta, captions, settings, route: 'team' },
+      { jobId: 'x', meta: { ...meta, id: undefined }, captions, settings, route: 'team' },
+      { jobId: 'x', meta, captions: undefined, settings, route: 'team' },
+      { jobId: 'x', meta, captions, settings: undefined, route: 'team' },
+      { jobId: 'x', meta, captions, settings, route: 'everyone' },
+    ];
+    for (const job of bad) {
+      await expect(sendToOffscreen('offscreen/process', job as never)).rejects.toThrow(/^Invalid process job: /);
+    }
+    await expect(
+      sendToOffscreen('offscreen/save', { jobId: 'x', meta, settings, route: 'team' } as never),
+    ).rejects.toThrow(/^Invalid save job: result/);
+    expect(await sendToOffscreen('offscreen/job-status', {})).toEqual({ jobs: [] });
   });
 });
