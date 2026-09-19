@@ -9,12 +9,6 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      # Integration tests run only when these repository secrets are configured.
-      # A skipped integration test is reported, not counted as a pass.
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-      NOTION_TEST_DB_ID: ${{ secrets.NOTION_TEST_DB_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +30,14 @@ jobs:
 
       - name: Test
         # Browser tests use the Google Chrome preinstalled on ubuntu-latest.
+        # Integration tests run only when these secrets are configured; a skipped
+        # integration test is reported, not counted as a pass. Secrets are scoped to this
+        # step so install, build and third-party actions never see them. Notion writes
+        # count against the workspace's block allowance, so they run on pushes to main only.
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          NOTION_TOKEN: ${{ github.event_name == 'push' && secrets.NOTION_TOKEN || '' }}
+          NOTION_TEST_DB_ID: ${{ github.event_name == 'push' && secrets.NOTION_TEST_DB_ID || '' }}
         run: pnpm test
 
       - name: Build and pack

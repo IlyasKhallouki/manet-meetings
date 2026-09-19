@@ -34,13 +34,17 @@ export default defineConfig({
           name: 'browser',
           include: ['tests/**/*.browser.test.ts'],
           testTimeout: 60_000,
+          // Real-time audio (MediaRecorder, AudioContext) is timing-sensitive: files
+          // competing for CPU produce gappy recordings and late chunks.
+          fileParallelism: false,
           browser: {
             enabled: true,
             headless: true,
             provider: playwright({
               launchOptions: {
                 channel: 'chrome',
-                args: ['--autoplay-policy=no-user-gesture-required'],
+                // A fake capture device lets the mic tests run on machines without one.
+                args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-device-for-media-stream'],
               },
             }),
             instances: [{ browser: 'chromium' }],
