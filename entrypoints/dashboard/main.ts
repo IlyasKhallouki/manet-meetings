@@ -2,12 +2,13 @@ import '@lib/ui/styles.css';
 import { browser } from 'wxt/browser';
 import { errorMessage, sendToBackground } from '@lib/messages';
 import { getSettings, settingsItem, updateSettings } from '@lib/settings';
+import { getResult } from '@lib/storage/resultStore';
 import { listSessions, watchSessions } from '@lib/storage/sessionStore';
-import type { SessionMeta } from '@lib/types';
+import type { Route, SessionMeta } from '@lib/types';
 import { createDashboardView } from '@lib/ui/dashboardView';
-import { listResultIds, watchResultIds } from '@lib/ui/extension';
-import { setupProblems } from '@lib/ui/settingsForm';
-import { audioBytesOnDisk, storageEstimate } from '@lib/ui/storageInfo';
+import { listResultIds, openSettings as openSettingsPage, watchResultIds } from '@lib/ui/extension';
+import { setupProblems, type FieldName } from '@lib/ui/settingsForm';
+import { audioBytesOnDisk } from '@lib/ui/storageInfo';
 
 const DISK_REFRESH_MS = 15_000;
 
@@ -17,17 +18,22 @@ const resultIds = new Set<string>();
 /** Ids changed by events before the initial read finished: the events are newer. */
 const touchedSessions = new Set<string>();
 const touchedResults = new Set<string>();
+/** Bylines of meetings recorded before speakers were kept: the transcript's attendees. */
+const attendees = new Map<string, readonly string[]>();
+const attendeesAsked = new Set<string>();
 let audioOnDisk: Map<string, number> | null = null;
-let estimate: { usage: number; quota: number } | null = null;
 let missing: string[] = [];
 let geminiKeyMissing = false;
+let defaultRoute: Route = 'team';
 let autoTranscribe = true;
+let retentionDays = 7;
+let pinHint = false;
 let loaded = false;
 
-const openSettings = () => {
-  browser.runtime.openOptionsPage().catch(report);
+const openSettings = (field?: FieldName) => {
+  openSettingsPage(field).catch(report);
 };
-document.getElementById('open-settings')?.addEventListener('click', openSettings);
+document.getElementById('open-settings')?.addEventListener('click', () => openSettings());
 
 const view = createDashboardView(root, {
   stop: (sessionId) => sendToBackground('session/stop', { sessionId }),
@@ -58,16 +64,38 @@ function render(): void {
     sessions: [...sessions.values()],
     resultIds,
     audioOnDisk,
-    estimate,
+    attendees,
     missing,
     geminiKeyMissing,
+    defaultRoute,
     autoTranscribe,
+    retentionDays,
+    pinHint,
     now: Date.now(),
   });
+  void fetchAttendees();
+}
+
+/** Reads the stored transcript's attendees once for each meeting that has no speakers. */
+async function fetchAttendees(): Promise<void> {
+  const wanted = [...sessions.values()].filter(
+    (s) => !s.speakers?.length && resultIds.has(s.id) && !attendeesAsked.has(s.id),
+  );
+  if (wanted.length === 0) return;
+  for (const s of wanted) attendeesAsked.add(s.id);
+  let found = false;
+  for (const s of wanted) {
+    const result = await getResult(s.id).catch(() => null);
+    if (result?.attendees.length) {
+      attendees.set(s.id, result.attendees);
+      found = true;
+    }
+  }
+  if (found) render();
 }
 
 async function refreshDisk(): Promise<void> {
-  [audioOnDisk, estimate] = await Promise.all([audioBytesOnDisk(), storageEstimate()]);
+  audioOnDisk = await audioBytesOnDisk();
   render();
 }
 
@@ -82,12 +110,25 @@ async function refreshSettings(): Promise<void> {
   const problems = setupProblems(settings, settings.defaultRoute);
   missing = problems.blocking;
   geminiKeyMissing = problems.geminiKeyMissing;
+  defaultRoute = settings.defaultRoute;
   autoTranscribe = settings.autoTranscribe;
+  retentionDays = settings.retentionDays;
+  render();
+}
+
+/** The empty state says how to pin the toolbar button while it isn't pinned. */
+async function refreshPinHint(): Promise<void> {
+  try {
+    const settings = await browser.action.getUserSettings();
+    pinHint = settings.isOnToolbar === false;
+  } catch {
+    pinHint = false;
+  }
   render();
 }
 
 async function load(): Promise<void> {
-  const [list, ids] = await Promise.all([listSessions(), listResultIds(), refreshSettings(), refreshDisk()]);
+  const [list, ids] = await Promise.all([listSessions(), listResultIds(), refreshSettings(), refreshDisk(), refreshPinHint()]);
   for (const meta of list) if (!touchedSessions.has(meta.id)) sessions.set(meta.id, meta);
   for (const id of ids) if (!touchedResults.has(id)) resultIds.add(id);
   loaded = true;
@@ -95,6 +136,8 @@ async function load(): Promise<void> {
 }
 
 // Listeners first, so no change between the initial read and the first render is missed.
+// A meeting's default-destination time (routeDeadline) is on its meta: a pause or a resume
+// in the routing window arrives here as a session write.
 watchSessions((id, meta) => {
   if (!loaded) touchedSessions.add(id);
   const before = sessions.get(id);
@@ -110,14 +153,20 @@ watchResultIds((id, present) => {
   render();
 });
 settingsItem.watch(() => void refreshSettings().catch(report));
+// Pinning happens in Chrome's menu, outside the page: check again when the page comes back.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void refreshPinHint();
+});
 
+const TICKING = new Set<SessionMeta['status']>(['recording', 'processing', 'saving']);
 setInterval(() => {
-  // Only recording rows change with time.
-  if ([...sessions.values()].some((s) => s.status === 'recording')) render();
+  // The recording clock and its problems ("No audio for 20 s"), and "running for 3 min"
+  // change with time.
+  if ([...sessions.values()].some((s) => TICKING.has(s.status))) render();
 }, 1000);
 setInterval(() => void refreshDisk().catch(report), DISK_REFRESH_MS);
 
 load().catch((err: unknown) => {
   report(err);
-  root.textContent = `Could not load recordings: ${errorMessage(err)}`;
+  root.textContent = `Couldn’t load meetings: ${errorMessage(err)}`;
 });
