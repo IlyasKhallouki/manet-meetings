@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { playwright } from '@vitest/browser-playwright';
 import { loadEnv } from 'vite';
 import { defineConfig, type TestProjectInlineConfiguration } from 'vitest/config';
-import type { BrowserCommand } from 'vitest/node';
+import type { BrowserCommand, BrowserCommandContext } from 'vitest/node';
 import { WxtVitest } from 'wxt/testing/vitest-plugin';
 
 // Integration keys (GOOGLE_API_KEY, NOTION_TOKEN, NOTION_TEST_DB_ID) come from the
@@ -11,11 +11,27 @@ const env = loadEnv('test', process.cwd(), '');
 
 const alias = { '@lib': resolve(import.meta.dirname, 'src/lib') };
 
+/** The Playwright page behind a browser command (only the playwright provider has one). */
+function playwrightPage(ctx: BrowserCommandContext, command: string) {
+  if (ctx.provider.name !== 'playwright') throw new Error(`${command} needs the Playwright provider`);
+  return (ctx as unknown as { page: { emulateMedia(o: MediaEmulation): Promise<void> } }).page;
+}
+
 const setColorScheme: BrowserCommand<['light' | 'dark']> = async (ctx, scheme) => {
-  if (ctx.provider.name !== 'playwright') throw new Error('setColorScheme needs the Playwright provider');
-  await (ctx as unknown as { page: { emulateMedia(o: { colorScheme: string }): Promise<void> } }).page.emulateMedia({
-    colorScheme: scheme,
-  });
+  await playwrightPage(ctx, 'setColorScheme').emulateMedia({ colorScheme: scheme });
+};
+
+/** The media features a screenshot can emulate; null restores the browser's own value. */
+interface MediaEmulation {
+  colorScheme?: 'light' | 'dark' | 'no-preference' | null;
+  reducedMotion?: 'reduce' | 'no-preference' | null;
+  forcedColors?: 'active' | 'none' | null;
+  contrast?: 'more' | 'no-preference' | null;
+}
+
+/** page.emulateMedia: forced colours (Windows High Contrast), reduced motion, more contrast. */
+const emulateMedia: BrowserCommand<[MediaEmulation]> = async (ctx, media) => {
+  await playwrightPage(ctx, 'emulateMedia').emulateMedia(media);
 };
 
 // Screenshot gallery of every page for design review; only with `pnpm shots`.
@@ -28,7 +44,7 @@ const visual: TestProjectInlineConfiguration[] = process.env.UI_SHOTS
         server: { fs: { allow: [import.meta.dirname, shotsDir] } },
         test: {
           name: 'visual',
-          include: ['tests/visual/**/*.shots.ts'],
+          include: ['tests/**/*.shots.ts'],
           testTimeout: 60_000,
           provide: { shotsDir },
           browser: {
@@ -36,7 +52,7 @@ const visual: TestProjectInlineConfiguration[] = process.env.UI_SHOTS
             headless: true,
             provider: playwright({ launchOptions: { channel: 'chrome' } }),
             instances: [{ browser: 'chromium' }],
-            commands: { setColorScheme },
+            commands: { setColorScheme, emulateMedia },
             screenshotFailures: false,
           },
         },

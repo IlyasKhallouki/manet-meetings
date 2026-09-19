@@ -1,0 +1,151 @@
+/* permission.css — layout and one-off pieces for the microphone page (permissionView.ts, entrypoints/permission).
+ *
+ * Imported by ../styles.css into the `surface` cascade layer, so these rules beat the
+ * shared components without !important. Every page loads every surface file: scope each
+ * rule under body.page-permission (or a class only this surface uses).
+ *
+ * One column (560 including padding, from the shell), 12vh from the top, text on the
+ * left edge: tile → 16 → headline → 8 → why (15/22, 60ch) → 12 → what's next (13/18) →
+ * 24 → the one button → 12 → a hint or a ▲ line.
+ *
+ * CONTRAST (light / dark): 24 px tile glyphs on --surface-2 — mic (--label-2) 6.50 / 6.16,
+ * ✓ (--done) 4.81 / 7.82, ▲ (--caution) 5.74 / 8.48; ▲ line text on --bg 6.16 / 10.99.
+ */
+
+body.page-permission .page-body {
+  padding-block-start: 12vh;
+}
+
+body.page-permission .perm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-inline-size: 0;
+}
+
+/* A glyph in a well, not a logo: the mic, then ✓ or ▲ once Chrome has answered. */
+body.page-permission .perm-tile {
+  display: grid;
+  place-items: center;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: 10px; /* a quarter of the tile, as in the mock */
+  background: var(--surface-2);
+}
+
+/* 24 px on the 16-unit grid: the mic draws about 17 × 21, the ✓ disc 21, the ▲ 20, the
+ * weight the mock's 22 px mic has in its 40 px tile. At 20 px they read as a bullet. */
+body.page-permission .perm-tile > .glyph {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+}
+
+body.page-permission .perm h1 {
+  margin-block-start: var(--s4);
+}
+
+/* 15/22: the reason is the page's body copy, one step above the 14 px UI text. */
+body.page-permission .perm-lead {
+  max-inline-size: 60ch;
+  text-wrap: pretty; /* fewer one-word last lines */
+  margin-block-start: var(--s2);
+  font: 400 0.9375rem/1.375rem var(--font);
+  letter-spacing: var(--ls-hero);
+  color: var(--label);
+}
+
+body.page-permission .perm-note {
+  max-inline-size: 60ch;
+  margin-block-start: var(--s3);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+body.page-permission .perm-steps {
+  display: grid;
+  gap: var(--s1);
+  max-inline-size: 60ch;
+  margin-block-start: var(--s3);
+  padding-inline-start: 1.5rem;
+  font: 400 0.9375rem/1.375rem var(--font);
+  letter-spacing: var(--ls-hero);
+}
+
+body.page-permission .perm-steps > li {
+  padding-inline-start: var(--s1);
+}
+
+body.page-permission .perm-steps > li::marker {
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+
+body.page-permission .perm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-block-start: var(--s6);
+}
+
+body.page-permission .perm-actions > .btn {
+  min-inline-size: 7.5rem;
+}
+
+body.page-permission .perm-hint,
+body.page-permission .perm-alert,
+body.page-permission .perm-url {
+  max-inline-size: 60ch;
+  margin-block-start: var(--s3);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+body.page-permission .perm-alert {
+  display: flex;
+  gap: var(--s2);
+  color: var(--caution);
+}
+
+/* No button name left alone on the last line ("Continue."). */
+body.page-permission .perm-alert > span {
+  text-wrap: pretty;
+}
+
+body.page-permission .perm-alert > .glyph {
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin-block-start: 1px; /* centred on the first 18 px line */
+}
+
+/* The fallback address: mono, selected whole in one click. It wraps at any character, so
+ * lines fill to the edge and no break lands on a hyphen that reads as part of the address
+ * ("chrome-" / "extension"), which invites a mistyped paste. */
+body.page-permission .perm-url {
+  margin-block-start: var(--s4);
+}
+
+body.page-permission .perm-url code {
+  color: var(--label);
+  word-break: break-all;
+  hyphens: none;
+  user-select: all;
+}
+
+/* Only if the check takes longer than 300 ms (loading.md): usually it never shows. */
+body.page-permission .perm-checking {
+  color: var(--label-2);
+  animation: perm-reveal 1ms linear 300ms both;
+}
+
+@keyframes perm-reveal {
+  from {
+    visibility: hidden;
+  }
+
+  to {
+    visibility: visible;
+  }
+}

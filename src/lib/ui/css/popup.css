@@ -1,0 +1,356 @@
+/* popup.css — layout and one-off pieces for the toolbar popup (popupView.ts, entrypoints/popup).
+ *
+ * Imported by ../styles.css into the `surface` cascade layer, so these rules beat the
+ * shared components without !important. Every page loads every surface file: scope each
+ * rule under body.popup (or a class only this surface uses).
+ *
+ * Use the tokens (--label-2, --s4, --t-callout…) and shared components (.btn, .field,
+ * .segmented, .facts, .status-line, .group…) documented at the top of styles.css; adjust
+ * layout here, don't restyle the components. Needs a new shared component or token? Ask
+ * the foundation owner rather than adding it here.
+ *
+ * The popup (360 wide, 16 px padding, 16 px between blocks — see .popup-root in styles.css):
+ *   section.state      h1.headline (17/22 600; --live while recording) + .clock (17/22 500,
+ *                      tabular) / .state-sub (13/18 --label-2, one line) / dl.facts
+ *   .hero-block        the one 40 px button, the ▲ error under it, the hint + kbd (13/18)
+ *   callout | note     one setup block at most
+ *   section.recent     not on a call only: .section-header + two-line rows,
+ *                      glyph · title (… Open in Notion) / status · step · when · length
+ *   nav.popup-foot     Meetings (· N needs you) … Settings; sticky once the body scrolls
+ * At most 600 px tall (Chrome's cap): past it the body scrolls, not the window.
+ * Signature: the roll (.roll) — names in --label-2, the speaker in --label with a 2 px
+ * underline. Colour + underline only, so a speaker change never re-flows the line.
+ */
+
+@keyframes popup-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---- Chrome's 800 × 600 cap ------------------------------------------------------------
+ * Past 600 px Chrome scrolls the window, and its scrollbar would eat into the fixed 360 px
+ * body and add a sideways scrollbar. So the body is the scroller, at most 600 tall: its
+ * scrollbar sits inside the 360 px, and the footer stays pinned at the bottom. */
+html:has(> body.popup) {
+  overflow: hidden; /* not visible: body's own overflow then applies to the body */
+}
+
+body.popup {
+  position: relative; /* visually hidden text (position: absolute) scrolls with the body */
+  max-block-size: 600px;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scroll-padding-block-end: 3rem; /* a focused control never lands under the footer */
+}
+
+body.popup .popup-root {
+  padding-block-end: 0;
+}
+
+body.popup .popup-foot {
+  position: sticky;
+  inset-block-end: 0;
+  padding-block-end: var(--s2);
+  background: var(--surface);
+}
+
+/* ---- State: headline, sub line, facts ------------------------------------------------ */
+body.popup .state {
+  display: grid;
+  gap: var(--s4);
+  min-inline-size: 0;
+}
+
+/* The one orchestrated moment: idle ⇄ recording cross-fades (opacity only, 200 ms). */
+body.popup .state.is-entering {
+  animation: popup-fade-in var(--dur) var(--ease);
+}
+
+body.popup .state-head-block {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+body.popup .state-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  min-inline-size: 0;
+}
+
+body.popup .headline {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+body.popup .headline.is-live {
+  color: var(--live);
+}
+
+/* 10 px dot on the 17 px line: a steady dot, no pulse (nothing loops). */
+body.popup .headline > .glyph {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+}
+
+/* A long Meet title wraps once, then ends in an ellipsis. */
+body.popup .headline.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+body.popup .clock {
+  flex: none;
+  margin-inline-start: auto;
+  font: var(--t-title3);
+  font-weight: 500;
+  letter-spacing: var(--ls-title3);
+  color: var(--label);
+}
+
+body.popup .state-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-inline-size: 0;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+body.popup .state-sub-text {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.popup .state-sub-text.is-elsewhere {
+  display: flex;
+}
+
+body.popup .state-sub-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.popup .state-sub-where {
+  flex: none;
+  white-space: pre;
+}
+
+body.popup .state-sub.is-wrapping {
+  display: block;
+}
+
+/* "Go to call" sits on the 18 px sub line without growing it; its text lines up with the
+ * clock's right edge. */
+body.popup .go-to-call {
+  flex: none;
+  margin-block: calc((1.125rem - var(--h-plain)) / 2);
+  margin-inline-end: calc(-1 * var(--s2));
+}
+
+body.popup .state-loading {
+  color: var(--label-2);
+}
+
+/* The Speakers value is the roll; other values keep the fact list's --label. */
+body.popup .facts > dd {
+  overflow-wrap: anywhere;
+}
+
+/* ▲ No captions for 6 min — under the roll, set like every other caution value (14/20,
+ * 14 px ▲ centred on the first line); its explanation lines up with the words. */
+body.popup .fact-warning {
+  display: flex;
+  gap: var(--s2);
+  margin-block-start: 2px; /* clears the speaker's 2 px underline */
+  font: var(--t-body);
+  letter-spacing: var(--ls-body);
+  color: var(--caution);
+}
+
+body.popup .fact-warning > .glyph {
+  flex: none;
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  margin-block-start: 3px;
+}
+
+body.popup .fact-warning-detail {
+  display: block;
+  padding-inline-start: calc(0.875rem + var(--s2));
+}
+
+/* "Allow microphone…" / "Fix in Chrome…" on a line of its own under the explanation: 4 px
+ * above it hold the 2 px ring at 2 px offset clear of the descenders of the line above. */
+body.popup .fact-action {
+  display: block;
+  inline-size: fit-content;
+  margin-block-start: var(--s1);
+}
+
+/* ---- The roll ------------------------------------------------------------------------ */
+body.popup .roll {
+  display: block;
+  color: var(--label-2);
+}
+
+/* A name and its "·" never part; lines break between names. */
+body.popup .roll-item {
+  white-space: nowrap;
+}
+
+body.popup .roll-item.is-new {
+  animation: popup-fade-in var(--dur-thumb) var(--ease);
+}
+
+body.popup .roll-name.is-speaking {
+  color: var(--label);
+  text-decoration: underline 2px;
+  text-underline-offset: 4px;
+  text-decoration-skip-ink: none;
+}
+
+body.popup .roll-more {
+  white-space: nowrap;
+}
+
+/* ---- Hero ---------------------------------------------------------------------------- */
+body.popup .hero-block {
+  display: grid;
+  gap: var(--s2);
+}
+
+/* Record → Stop: navy to red in place, over the same 200 ms as the state cross-fade. */
+body.popup .hero-btn {
+  transition-duration: var(--dur);
+}
+
+body.popup .hero-error {
+  display: flex;
+  gap: var(--s2);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--caution);
+}
+
+body.popup .hero-error:empty {
+  display: none;
+}
+
+body.popup .hero-error > .glyph {
+  flex: none;
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  margin-block-start: 2px;
+}
+
+body.popup .hero-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+body.popup .hero-shortcut {
+  flex: none;
+}
+
+/* ---- Recent -------------------------------------------------------------------------- */
+body.popup .recent .section-header {
+  margin-block-end: var(--s1);
+}
+
+body.popup .recent-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body.popup .recent-row {
+  display: grid;
+  grid-template-columns: 0.875rem minmax(0, 1fr);
+  column-gap: var(--s2);
+  padding-block: var(--s2);
+}
+
+body.popup .recent-row + .recent-row {
+  border-block-start: 1px solid var(--separator);
+}
+
+body.popup .recent-row > .glyph {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  margin-block-start: 3px; /* centred on the 20 px title line */
+}
+
+body.popup .recent-body {
+  display: grid;
+  min-inline-size: 0;
+}
+
+/* Line 1: the title (one line, ellipsis) and, once saved, Open in Notion. */
+body.popup .recent-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  min-inline-size: 0;
+}
+
+body.popup .recent-title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+body.popup .recent-action {
+  flex: none;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  white-space: nowrap;
+}
+
+/* Line 2, the same rhythm on every row: the status word (--label) first, then
+ * " · detail" items (--label-2). Exactly one line tall: an item that doesn't fit wraps
+ * onto the clipped second line, so details drop out whole, from the end, and are still
+ * read by screen readers. A status too long for the line ends in an ellipsis. */
+body.popup .recent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  block-size: 1lh;
+  overflow: hidden;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+body.popup .recent-status {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--label);
+}
+
+body.popup .recent-detail {
+  flex: none;
+  white-space: pre;
+}

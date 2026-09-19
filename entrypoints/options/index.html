@@ -3,15 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icon/16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon/32.png" />
     <meta name="manifest.open_in_tab" content="true" />
-    <title>Manet Meetings · Settings</title>
+    <title>Manet Meetings Settings</title>
   </head>
-  <body class="page">
-    <header class="page-head narrow">
+  <body class="page page-settings">
+    <header class="page-head">
       <h1>Settings</h1>
-      <nav><button type="button" class="link" id="open-dashboard">Recordings</button></nav>
+      <nav aria-label="Pages"><button type="button" class="btn plain" id="open-dashboard">Meetings</button></nav>
     </header>
-    <main id="app" class="page-body narrow"></main>
+    <main id="app" class="page-body"></main>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

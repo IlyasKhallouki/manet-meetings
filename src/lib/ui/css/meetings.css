@@ -1,0 +1,397 @@
+/* meetings.css — layout and one-off pieces for the Meetings page (dashboardView.ts, sessionView.ts, menu.ts, entrypoints/dashboard).
+ *
+ * Imported by ../styles.css into the `surface` cascade layer, so these rules beat the
+ * shared components without !important. Every page loads every surface file: each rule
+ * here is scoped under .meetings (the view's root, main#app) or a .meeting-* class only
+ * this surface uses.
+ *
+ * LAYOUT
+ *   .meetings (flex column, 24 px apart): notices · auto-transcribe group · sections ·
+ *   empty state · storage footnote. It is the size container for the rows.
+ *
+ *   A row (li.group-row.meeting > .meeting-main) is one grid with three layouts, chosen
+ *   by the list's width in rem, so 150 % text reflows instead of squeezing the titles.
+ *   .meeting-status is display: contents, so its lines are grid items of the row.
+ *
+ *   ≥ 55rem (880 px at 100 %; a ≥ 928 px window, so titles get ≥ 240 px)
+ *     52 | title + byline 1fr | 76 length | 236 status | 176 actions, 16 px gaps
+ *     (76 for the time in the Needs you group, which dates its rows)
+ *     15:40  Pricing call with Acme            12:48  ● Recording        [Stop recording] ⋯
+ *            Marie Curie, Tom Martin, you · qrs…       ▲ No audio for 20 s
+ *                                                        Captions are still being saved. If
+ *                                                        audio doesn’t resume, …
+ *     Lines under the status run on under the action column, which is empty below its
+ *     first line; the first line under a button keeps to the status column.
+ *   < 55rem (down to 390 px)
+ *     title (full width) / head + actions / the status lines (full width)
+ *   < 20rem (390 px at 150 % text): ⋯ stays on the status line, the next step goes last
+ *     Pricing call with Acme
+ *     15:40 · Marie Curie, Tom Martin, you · qrs-tuvw-xyz
+ *     ● Recording 12:48                                                          ⋯
+ *     [Stop recording]
+ *
+ *   The status lines line up on the word, not the glyph (14 px glyph + 8 px gap); so do
+ *   ▲ lines, as in the popup's facts.
+ */
+
+.meetings {
+  container: meetings / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+}
+
+.meetings-notices {
+  display: grid;
+  gap: var(--s3);
+}
+
+.meetings .menu:focus-visible {
+  outline: none; /* the menu itself holds focus only between highlights */
+}
+
+/* ---- Auto-transcribe ---------------------------------------------------------------- */
+.meetings-auto-error {
+  margin-block-start: var(--s2);
+}
+
+/* ---- Status parts ------------------------------------------------------------------- */
+.meetings .status-head {
+  align-items: flex-start; /* a wrapped word keeps its glyph on the first line */
+}
+
+.meetings .status-head > .glyph {
+  margin-block-start: 3px; /* 14 px glyph centred on the 20 px line */
+}
+
+.meeting-caution {
+  display: flex;
+  gap: var(--s2);
+  color: var(--caution);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+}
+
+.meeting-caution > .glyph {
+  flex: none;
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  margin-block-start: 2px; /* centred on the 18 px line */
+}
+
+/* ---- Rows --------------------------------------------------------------------------- */
+/* Wide: row 1 holds the first line of every column; the lines under the status word
+ * (.meeting-line) take rows 2–10, one each (hidden ones take none). Time, title and length span every row, and
+ * the last row (1fr) absorbs whatever height they need beyond the status lines, so they
+ * never pull the status lines apart. */
+.meeting-main {
+  /* One width for every group, so titles line up whether or not the time has a date under it. */
+  --time-col: 4.75rem;
+  display: grid;
+  grid-template-columns: [time] var(--time-col) [title] minmax(0, 1fr) [length] 4.75rem [status] 14.75rem [actions] 11rem [end];
+  grid-template-rows: repeat(10, auto) 1fr;
+  column-gap: var(--s4);
+  align-items: start;
+}
+
+.meeting-time {
+  grid-column: time;
+  grid-row: 1 / -1;
+  color: var(--label-2);
+}
+
+.meeting-time > time {
+  display: grid;
+}
+
+.meeting-date {
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout); /* "Wed 16 Sep" fits 76 px; another year wraps under it */
+}
+
+.meeting-title {
+  grid-column: title;
+  grid-row: 1 / -1;
+  min-inline-size: 0;
+}
+
+.meeting-name {
+  overflow: hidden;
+  font: var(--t-headline);
+  letter-spacing: var(--ls-body);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.meeting-name.mono {
+  font-family: var(--mono);
+  font-size: calc(0.9 * 0.875rem); /* .mono's 0.9 em of the 14 px title, as in the popup */
+  letter-spacing: 0;
+}
+
+.meeting-byline {
+  /* Two lines before cutting: who spoke and how much audio is kept both matter. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+.meeting-when {
+  display: none;
+}
+
+.meeting-clock {
+  display: none; /* the length column has it */
+  font-weight: 400;
+  color: var(--label-2);
+}
+
+.meeting-code {
+  white-space: nowrap; /* a Meet code never breaks at its hyphens */
+}
+
+.meeting-length {
+  grid-column: length;
+  grid-row: 1 / -1;
+  color: var(--label-2);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.meeting-status {
+  display: contents; /* its lines are grid items: they can run on under the action column */
+}
+
+.meeting-head {
+  grid-column: status;
+  grid-row: 1;
+  min-inline-size: 0;
+}
+
+/* Text lines run on under the action column (empty below its first line); the controls
+ * and the first line under a button keep to the status column. */
+.meeting-line {
+  grid-column: status / end;
+  min-inline-size: 0;
+}
+
+.meeting-line.is-under-button,
+.meeting-route,
+.meeting-progress {
+  grid-column: status;
+}
+
+.meeting-detail {
+  margin-block-start: 2px;
+}
+
+.meeting-route {
+  margin-block-start: var(--s2);
+  padding-inline-start: calc(0.875rem + var(--s2));
+}
+
+.meeting-route-note {
+  margin-block-start: var(--s1);
+}
+
+.meeting-step {
+  display: block;
+}
+
+.meeting-extra {
+  display: grid;
+  gap: 2px;
+  margin-block-start: 2px;
+}
+
+.meeting-health {
+  display: contents; /* its ▲ lines and details are lines of the row */
+}
+
+.meeting-health > .meeting-caution {
+  margin-block-start: var(--s1);
+  padding-inline-start: calc(0.875rem + var(--s2)); /* on the status word, like every line */
+}
+
+/* What a recording problem means, under the words of its ▲ line. */
+.meeting-health > .meeting-health-detail {
+  padding-inline-start: calc(2 * (0.875rem + var(--s2)));
+}
+
+.meeting-error {
+  color: var(--label);
+}
+
+.meeting-actions {
+  grid-column: actions;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+  margin-block: -6px; /* 32 px buttons centred on the 20 px first line */
+}
+
+/* ---- Inline confirm (replaces the row's content) ------------------------------------ */
+.meeting-confirm {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  column-gap: var(--s4);
+  align-items: center;
+}
+
+.section[data-section='needs-you'] .meeting-confirm {
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+}
+
+.meeting-confirm-time {
+  color: var(--label-2);
+}
+
+.meeting-confirm-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+  min-inline-size: 0;
+}
+
+.meeting-question {
+  flex: 1 1 16rem;
+  overflow-wrap: anywhere; /* a long unbroken title can't push the buttons out */
+}
+
+.meeting-confirm-buttons {
+  display: flex;
+  gap: var(--s2);
+}
+
+/* ---- Narrow: title on top, status + actions below ----------------------------------- */
+@container meetings (width < 55rem) {
+  .meeting-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: none;
+    column-gap: var(--s3);
+  }
+
+  .meeting-time,
+  .meeting-length {
+    display: none;
+  }
+
+  .meeting-title {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    margin-block-end: var(--s2);
+  }
+
+  .meeting-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+  }
+
+  .meeting-byline {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    white-space: normal;
+  }
+
+  .meeting-when,
+  .meeting-clock {
+    display: inline;
+  }
+
+  .meeting-head {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: center;
+  }
+
+  .meeting-actions {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+    margin-block: 0;
+  }
+
+  /* Every line under the status runs the full width, indented to the status word. */
+  .meeting-line,
+  .meeting-line.is-under-button {
+    grid-column: 1 / -1;
+  }
+
+  .meeting-confirm,
+  .section[data-section='needs-you'] .meeting-confirm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .meeting-confirm-time {
+    display: none;
+  }
+
+  .meeting-confirm-box {
+    justify-content: flex-start;
+  }
+}
+
+/* ---- Very narrow (large text on a phone-width window): ⋯ stays on the status line, the
+ * next step goes last, on its own line. */
+@container meetings (width < 20rem) {
+  .meeting-actions {
+    display: contents;
+  }
+
+  .meeting-more {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    margin-block: calc((1.25rem - var(--h-control)) / 2); /* centred on the word's first line */
+  }
+
+  .meeting-open,
+  .meeting-primary {
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-block-start: var(--s2);
+  }
+}
+
+/* ---- Empty state and footnote ------------------------------------------------------- */
+.meetings-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--s2);
+  padding: var(--s12) var(--s6);
+  color: var(--label-2);
+  text-align: center;
+}
+
+.meetings-empty:focus-visible {
+  outline-offset: -2px;
+}
+
+.meetings-empty > p {
+  max-inline-size: 26rem;
+  text-wrap: balance;
+}
+
+.meetings-empty-title {
+  font: var(--t-title3);
+  letter-spacing: var(--ls-title3);
+  color: var(--label);
+}
+
+.meetings-footnote {
+  margin: calc(-1 * var(--s2)) var(--s1) 0; /* 16 px under the last group */
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}

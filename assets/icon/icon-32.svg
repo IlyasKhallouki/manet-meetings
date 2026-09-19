@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Hand-fitted for the 2x toolbar: bars on whole pixel rows, 3 px margins inside the tile. -->
+  <rect x="2" y="2" width="28" height="28" rx="7" fill="#032A4A"/>
+  <circle cx="11" cy="10" r="3.5" fill="none" stroke="#FFFFFF" stroke-width="3"/>
+  <rect x="6" y="17" width="20" height="4" rx="2" fill="#FFFFFF"/>
+  <rect x="6" y="23" width="12" height="4" rx="2" fill="#FFFFFF"/>
+</svg>

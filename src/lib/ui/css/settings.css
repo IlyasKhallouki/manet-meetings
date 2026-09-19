@@ -1,0 +1,173 @@
+/* settings.css — layout and one-off pieces for Settings (optionsView.ts, settingsForm.ts, entrypoints/options).
+ *
+ * Imported by ../styles.css into the `surface` cascade layer, so these rules beat the
+ * shared components without !important. Every page loads every surface file: every rule
+ * here is scoped under body.page-settings.
+ *
+ * The page is the shared grouped look (.section / .group.roomy / .field / .switch-row /
+ * .segmented); this file only places things:
+ *   .settings-lede     "Changes are saved as you make them." under the title
+ *   .setup             the checklist while meetings can't be saved to Notion (amber, like
+ *                      .callout) → a quiet confirmation once everything is in
+ *   .settings-action   "Check both databases" label + hint, with its button trailing
+ *   .settings-days     the Keep audio number field and its unit
+ *   .settings-mic      the microphone status line under the switch
+ *   .settings-privacy  the closing footnote
+ * Page-level grey text (lede, footnote) shares the section headers' 4 px inset.
+ */
+
+body.page-settings .settings-lede {
+  margin: calc(-1 * var(--s3)) var(--s1) var(--s6);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+/* ---- Setup checklist ------------------------------------------------------------------ */
+body.page-settings .setup {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  column-gap: var(--s2);
+  row-gap: var(--s1);
+  margin-block-end: var(--s6);
+  padding: var(--s3) var(--s4) var(--s2) var(--s3);
+  border: 1px solid transparent;
+  border-radius: var(--r-group);
+  background: var(--caution-weak);
+  color: var(--label);
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+body.page-settings .setup[data-state='complete'] {
+  border-color: var(--separator);
+  background: var(--surface);
+}
+
+body.page-settings .setup-glyph {
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin-block-start: 2px; /* centred on the 20 px title line */
+}
+
+body.page-settings .setup-title {
+  font: var(--t-headline);
+  letter-spacing: var(--ls-body);
+}
+
+/* Chips without borders: glyph + the field's name, wrapping at narrow widths. */
+body.page-settings .setup-list {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s5);
+  margin: 0;
+  padding: 0;
+}
+
+body.page-settings .setup-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: var(--h-plain); /* 28 px: the link's hit area, not just its text */
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+}
+
+body.page-settings .setup-item > .glyph {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+}
+
+body.page-settings .setup-item > .link {
+  padding-block: var(--s1);
+}
+
+body.page-settings .setup-optional {
+  color: var(--label-2);
+}
+
+/* ---- Rows ----------------------------------------------------------------------------- */
+body.page-settings .settings-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+}
+
+body.page-settings .settings-action-text {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+body.page-settings .settings-action > .btn {
+  flex: none;
+}
+
+body.page-settings .settings-days {
+  flex: none;
+  inline-size: 5rem;
+}
+
+body.page-settings .settings-days-unit {
+  min-inline-size: 0;
+}
+
+/* Switch rows: their message slots sit in a 2 px-gap grid, not a field's 4 px one. */
+body.page-settings .switch-row-text > .field-msg:empty {
+  margin: 0;
+}
+
+body.page-settings .switch-row-text > .field-msg:not(:empty) {
+  margin-block-start: var(--s1);
+}
+
+body.page-settings .settings-privacy {
+  margin: var(--s6) var(--s1) 0;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label-2);
+}
+
+/* Secret rows (input + Show + Check): the buttons move under the input before it gets
+ * narrower than 8rem, which only happens with large text on a narrow window. */
+body.page-settings .settings-secret {
+  flex-wrap: wrap;
+}
+
+body.page-settings .settings-secret > .input {
+  flex: 1 1 8rem;
+}
+
+body.page-settings .settings-secret-buttons {
+  display: flex;
+  gap: var(--s2);
+}
+
+/* Check → Checking… without resizing the row: the button is always as wide as the
+ * longer label (a hidden second row of 0 height carries it). */
+body.page-settings .settings-check {
+  display: inline-grid;
+  grid-template-columns: max-content;
+  justify-items: center;
+  align-content: center;
+  row-gap: 0;
+}
+
+body.page-settings .settings-check::after {
+  content: 'Checking…';
+  block-size: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+/* "✓ Saved" on the label's baseline: its text, not the glyph's bottom edge, sets it. */
+body.page-settings .field-head > .saved {
+  align-items: baseline;
+}
+
+body.page-settings .field-head > .saved > .glyph {
+  align-self: center;
+}

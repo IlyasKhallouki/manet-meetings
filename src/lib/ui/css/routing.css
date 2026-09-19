@@ -1,0 +1,233 @@
+/* routing.css — layout and one-off pieces for the routing window (routingView.ts, entrypoints/routing).
+ *
+ * Imported by ../styles.css into the `surface` cascade layer, so these rules beat the
+ * shared components without !important. Every page loads every surface file: scope each
+ * rule under body.routing (or a class only this surface uses).
+ *
+ * The window is 380 wide and fitted to this content's height (main.ts), so nothing here
+ * may depend on the viewport height. At 100% text the choose state is 20 + 22 + 2 + 18
+ * + 16 + 18 + 8 + 48 + 12 + 28 + 16 = 208 px tall (226 with a two-line byline).
+ *
+ * The one surface-specific control state is the default destination: a navy segment
+ * (--prominent, "the main thing to do here") carrying the 3 px countdown bar, shown only
+ * while nothing is chosen. Style, not size, marks it (buttons.md › Style). A choice takes
+ * the shared pressed look from the click on (not the grey busy look; see .is-chosen).
+ *
+ * CONTRAST (light / dark): label + subtitle on the default 14.64 / 7.60; drain bar vs the
+ * fill 8.80 / 4.96; focus ring vs its 2 px surface gap 5.53 / 8.58; ▲ error text on
+ * surface 6.79 / 9.85; a choice being sent (--accent on --accent-weak) 4.83 / 7.57, its
+ * subtitle 6.71 / 6.32; the inert other segment (--label-2 on surface) 7.69 / 7.15.
+ */
+
+body.routing .routing-root {
+  min-inline-size: 0;
+}
+
+/* ---- Meeting ------------------------------------------------------------------------ */
+body.routing .route-head {
+  display: grid;
+  gap: 2px;
+  margin-block-end: var(--s4);
+  min-inline-size: 0;
+}
+
+body.routing .route-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+body.routing .route-byline {
+  color: var(--label-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---- The choice --------------------------------------------------------------------- */
+body.routing .route-body {
+  display: grid;
+  gap: var(--s2);
+  min-inline-size: 0;
+}
+
+body.routing .route-question {
+  color: var(--label-2);
+}
+
+/* Two equal halves; subtitles wrap at large text instead of widening the window. */
+body.routing .route-choice {
+  inline-size: auto;
+  min-inline-size: 0;
+}
+
+/* 12 px sides: "Shared with the team" fits on one line in a 169 px half at 100% text;
+ * the ✓ of a pressed segment (8 px in, 11 px wide) still clears the centred label.
+ * Block padding is 5 px + the 3 px drain below, in rem so it grows with the text: at 100%
+ * 5 + 33 (label 15, gap 2, subtitle 16) + 8 = 46, so min-block-size keeps the 48 px; at
+ * 150% it is 7.5 above and 10.5 below, clear of the focus ring's 2 px gap and the drain. */
+body.routing .route-choice .segment {
+  min-inline-size: 0;
+  padding: 0.3125rem var(--s3) calc(0.3125rem + 3px);
+}
+
+body.routing .route-choice .segment-label,
+body.routing .route-choice .segment-sub {
+  max-inline-size: 100%;
+  white-space: normal;
+  text-align: center;
+}
+
+/* The default: navy fill, the countdown drains along its bottom edge. */
+body.routing .segment.is-default {
+  overflow: hidden; /* clips the drain bar to the segment's corners */
+  background: var(--prominent);
+  color: var(--on-prominent);
+}
+
+body.routing .segment.is-default > .segment-sub {
+  color: var(--on-prominent);
+}
+
+body.routing .segment.is-default:hover:not([aria-disabled='true']) {
+  background: var(--prominent-hover);
+}
+
+body.routing .segment.is-default:active:not([aria-disabled='true']) {
+  background: var(--prominent-pressed);
+}
+
+/* The accent ring hugs the segment (offset 0); on a fill of the same hue (dark mode:
+ * #8AC0F2 on #8AC0F2) it would vanish, so a 2 px surface gap separates ring and fill. */
+body.routing .segment.is-default:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+
+body.routing .segment.is-default:focus-visible > .route-drain {
+  inset-inline: 2px;
+  inset-block-end: 2px;
+}
+
+/* Linear on purpose: it is a determinate progress indicator (progress-indicators.md). */
+body.routing .route-drain {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: 3px;
+  background: var(--on-prominent);
+  opacity: 0.75; /* 8.80:1 against the fill (judges: ≥ 3:1) */
+  transform-origin: left center;
+  pointer-events: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  body.routing .route-drain {
+    opacity: 0.8; /* 4.96:1 */
+  }
+}
+
+/* The choice being sent, then "✓ Team": the shared pressed look (accent-weak, 1 px accent
+ * ring, ✓) at full strength from the click on, while the other segment turns --label-2.
+ * Not the grey busy look of rows: the send takes milliseconds and the window closes
+ * 400 ms later, so a grey step before the blue one would only flash. */
+body.routing .segment.is-chosen[aria-pressed='true'] {
+  background: var(--accent-weak);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+body.routing .route-error {
+  display: flex;
+  gap: var(--s2);
+  margin-block-start: var(--s1);
+  color: var(--caution);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+}
+
+/* Two or three short lines: balanced, so no "Meetings." or "2 minutes." sits alone. */
+body.routing .route-error > span,
+body.routing .route-foot > p {
+  text-wrap: balance;
+}
+
+body.routing .route-error > .glyph {
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin-block-start: 1px; /* centred on the first 18 px line */
+}
+
+/* ---- Countdown and Pause ------------------------------------------------------------ */
+body.routing .route-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  min-block-size: var(--h-plain); /* the same height with or without the Pause button */
+  margin-block-start: var(--s3);
+  color: var(--label-2);
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+}
+
+body.routing .route-foot > .btn {
+  flex: none;
+  margin-inline-end: calc(-1 * var(--s2)); /* the label, not the hit area, meets the edge */
+}
+
+/* ---- Handled and missing ------------------------------------------------------------ */
+body.routing .route-status {
+  margin-block-end: var(--s4);
+}
+
+body.routing .route-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+body.routing .route-title + .route-actions {
+  margin-block-start: var(--s4);
+}
+
+/* Windows high contrast: a Highlight fill means pressed (styles.css), so the default,
+ * which is not chosen yet, is ButtonFace inside a 2 px Highlight frame, and the drain is a
+ * Highlight bar 1 px above the frame's bottom edge. Focus is a CanvasText ring outside it. */
+@media (forced-colors: active) {
+  body.routing .segment.is-default {
+    forced-color-adjust: none;
+    background: ButtonFace;
+    color: ButtonText;
+    box-shadow: inset 0 0 0 2px Highlight;
+  }
+
+  body.routing .segment.is-default > .segment-sub {
+    color: ButtonText;
+  }
+
+  body.routing .segment.is-default:focus-visible {
+    outline-color: CanvasText;
+    box-shadow: inset 0 0 0 2px Highlight;
+  }
+
+  /* A pressed segment is a Highlight fill (styles.css); its subtitle follows, and the
+   * choice being sent keeps that fill rather than the accent override above. */
+  body.routing .segment.is-chosen[aria-pressed='true'] {
+    background: Highlight;
+    color: HighlightText;
+    box-shadow: none;
+  }
+
+  body.routing .segment[aria-pressed='true'] > .segment-sub {
+    color: HighlightText;
+  }
+
+  body.routing .route-drain,
+  body.routing .segment.is-default:focus-visible > .route-drain {
+    inset-inline: 2px;
+    inset-block-end: 3px;
+    background: Highlight;
+    opacity: 1;
+  }
+}
