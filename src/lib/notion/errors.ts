@@ -10,6 +10,7 @@ export function explainError(err: unknown): string {
       return 'Notion says the token is invalid. Copy the integration secret again into the options.';
     case 'invalid_database_id':
     case 'no_data_source':
+    case 'schema_mismatch':
       return err.message;
     case 'object_not_found':
       return `Notion could not find the database or page. Open the database in Notion, then ••• → Connections → add your integration. (${err.message})`;

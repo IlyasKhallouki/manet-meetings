@@ -4,6 +4,7 @@ import {
   buildMeetingProperties,
   durationMinutes,
   isoWithOffset,
+  keyProperty,
   sanitizeMultiSelect,
 } from '@lib/notion/properties';
 import { databaseSchemaPayload, MEETING_DB_SCHEMA, MEETING_PROPS, SOURCE_OPTIONS } from '@lib/notion/schema';
@@ -105,7 +106,7 @@ describe('sanitizeMultiSelect', () => {
 });
 
 describe('buildMeetingProperties', () => {
-  it('fills every schema property', () => {
+  it('fills every schema property but Key', () => {
     const props = buildMeetingProperties(input({ attendees: ['Ilyas', 'Martin, Camille', 'ilyas'] }), 'Name', 120);
     expect(props).toEqual({
       Name: { title: [{ type: 'text', text: { content: 'Point hebdo produit' } }] },
@@ -115,6 +116,12 @@ describe('buildMeetingProperties', () => {
       'Meet code': { rich_text: [{ type: 'text', text: { content: 'abc-defg-hij' } }] },
       'Recorded by': { rich_text: [{ type: 'text', text: { content: 'Ilyas' } }] },
       Source: { select: { name: 'audio+captions' } },
+    });
+  });
+
+  it('leaves the Key to the commit write, so a half-written page never matches the key', () => {
+    expect(buildMeetingProperties(input(), 'Name', 0)).not.toHaveProperty(MEETING_PROPS.key);
+    expect(keyProperty('abc-defg-hij-2026-09-19')).toEqual({
       Key: { rich_text: [{ type: 'text', text: { content: 'abc-defg-hij-2026-09-19' } }] },
     });
   });

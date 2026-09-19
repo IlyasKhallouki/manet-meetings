@@ -10,7 +10,7 @@ import type { ExistingMeeting, MeetingPageInput, MeetingStore } from '../types';
 import { batchBlocks, buildMeetingBody, buildTranscriptBlocks } from './blocks';
 import { NotionClient, NotionError, type NotionDatabase, type NotionDataSource, type NotionPage } from './client';
 import { compareByCreation, parseNotionId } from './ids';
-import { buildMeetingProperties } from './properties';
+import { buildMeetingProperties, keyProperty } from './properties';
 import { plainText, richText } from './richText';
 import { MEETING_PROPS } from './schema';
 
@@ -70,6 +70,11 @@ function isLive(page: NotionPage): boolean {
   return !page.in_trash && !page.is_archived;
 }
 
+/** Notion answered and refused, so the write did not happen (unlike a timeout or a 5xx). */
+function refused(err: unknown): boolean {
+  return err instanceof NotionError && err.status >= 400 && err.status < 500;
+}
+
 const cache = new Map<string, Promise<ResolvedDatabase>>();
 
 export function createNotionMeetingStore(token: string): MeetingStore {
@@ -124,8 +129,26 @@ export function createNotionMeetingStore(token: string): MeetingStore {
 
     listByKey,
 
+    /**
+     * Creates the row without its Key, writes the rest of the body and the Transcript
+     * child page, then PATCHes the Key on. The Key marks the page complete: findByKey
+     * and listByKey never see a half-written page.
+     */
     async createMeeting(databaseId: string, input: MeetingPageInput) {
-      const db = await resolve(databaseId);
+      let db = await resolve(databaseId);
+      // Checked up front: without it every block below would be written for nothing.
+      // The cached schema may predate a fix, so look again before refusing.
+      if (db.properties[MEETING_PROPS.key] !== 'rich_text') {
+        forget(databaseId);
+        db = await resolve(databaseId);
+      }
+      if (db.properties[MEETING_PROPS.key] !== 'rich_text') {
+        throw new NotionError(
+          400,
+          'schema_mismatch',
+          `The Notion database "${db.title}" needs a text property named "${MEETING_PROPS.key}". Check the database in the options.`,
+        );
+      }
       const [body = [], ...moreBody] = batchBlocks(buildMeetingBody(input));
       let page: NotionPage;
       try {
@@ -139,6 +162,7 @@ export function createNotionMeetingStore(token: string): MeetingStore {
         if (err instanceof NotionError && err.status === 404) forget(databaseId);
         throw err;
       }
+      let committing = false;
       try {
         for (const batch of moreBody) await client.appendBlockChildren(page.id, batch);
         const [transcript = [], ...moreTranscript] = batchBlocks(buildTranscriptBlocks(input.transcript.turns));
@@ -149,9 +173,14 @@ export function createNotionMeetingStore(token: string): MeetingStore {
           children: transcript,
         });
         for (const batch of moreTranscript) await client.appendBlockChildren(child.id, batch);
+        committing = true;
+        // Idempotent, so the client retries it through server and network errors.
+        await client.updatePage(page.id, { properties: keyProperty(input.key) });
       } catch (err) {
-        // A half-written page must not satisfy findByKey: trash it so a retry starts clean.
-        await client.updatePage(page.id, { in_trash: true }).catch(() => undefined);
+        // An unkeyed page can't block a retry, but would linger as a stray row: trash it
+        // (best effort). A Key write that may have landed is left alone: that page is
+        // complete, and a teammate's settle may already have deferred to it.
+        if (!committing || refused(err)) await client.updatePage(page.id, { in_trash: true }).catch(() => undefined);
         throw err;
       }
       return { pageId: page.id, url: page.url };

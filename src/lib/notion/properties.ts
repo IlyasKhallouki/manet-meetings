@@ -50,8 +50,9 @@ export function sanitizeMultiSelect(names: readonly string[]): string[] {
 }
 
 /**
- * `properties` for POST /v1/pages under the meetings data source. `titleProperty` is
- * the data source's actual title property name (a French workspace calls it "Nom").
+ * `properties` for POST /v1/pages under the meetings data source, all but the Key
+ * (see keyProperty). `titleProperty` is the data source's actual title property name
+ * (a French workspace calls it "Nom").
  */
 export function buildMeetingProperties(
   input: MeetingPageInput,
@@ -68,6 +69,14 @@ export function buildMeetingProperties(
     [MEETING_PROPS.meetCode]: { rich_text: richText(input.meetCode) },
     [MEETING_PROPS.recordedBy]: { rich_text: richText(input.recordedBy) },
     [MEETING_PROPS.source]: { select: { name: input.source } },
-    [MEETING_PROPS.key]: { rich_text: richText(input.key) },
   };
+}
+
+/**
+ * The idempotency Key, written by a PATCH once the body and transcript are in place:
+ * findByKey only matches keyed pages, so a save that dies half-way leaves nothing a
+ * retry or a teammate would take for the saved meeting.
+ */
+export function keyProperty(key: string): Record<string, unknown> {
+  return { [MEETING_PROPS.key]: { rich_text: richText(key) } };
 }
