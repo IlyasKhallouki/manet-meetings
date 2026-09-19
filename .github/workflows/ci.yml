@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Integration tests run only when these repository secrets are configured.
+      # A skipped integration test is reported, not counted as a pass.
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_TEST_DB_ID: ${{ secrets.NOTION_TEST_DB_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install ffmpeg (audio fixture checks)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        # Browser tests use the Google Chrome preinstalled on ubuntu-latest.
+        run: pnpm test
+
+      - name: Build and pack
+        run: pnpm zip
+
+      - name: Upload extension zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: manet-meetings-chrome
+          path: .output/*-chrome.zip
+          if-no-files-found: error
