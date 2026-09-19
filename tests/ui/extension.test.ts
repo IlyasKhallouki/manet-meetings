@@ -9,6 +9,7 @@ import {
   listResultIds,
   loadPopupInput,
   openExtensionPage,
+  openSettings,
   siteSettingsUrl,
   startRecording,
   watchResultIds,
@@ -57,6 +58,44 @@ describe('openExtensionPage', () => {
     expect(await browser.tabs.query({ url })).toHaveLength(1);
     const [active] = await browser.tabs.query({ active: true });
     expect(active?.id).toBe(existing.id);
+  });
+
+  it('opens Settings on a field: options.html#<field>', async () => {
+    await openExtensionPage('/options.html#geminiApiKey');
+    const [tab] = await browser.tabs.query({ active: true });
+    expect(tab?.url).toBe(browser.runtime.getURL('/options.html') + '#geminiApiKey');
+  });
+
+  it('moves a Settings tab that is already open to the field, without opening another', async () => {
+    const base = browser.runtime.getURL('/options.html');
+    const existing = await browser.tabs.create({ url: base, active: false });
+    await browser.tabs.create({ url: 'https://example.com/', active: true });
+    await openExtensionPage('/options.html#notionToken');
+    const tabs = (await browser.tabs.query({})).filter((t) => t.url?.startsWith(base));
+    expect(tabs.map((t) => t.id)).toEqual([existing.id]);
+    const [active] = await browser.tabs.query({ active: true });
+    expect(active).toMatchObject({ id: existing.id, url: `${base}#notionToken` });
+  });
+});
+
+describe('openSettings', () => {
+  it('opens Settings, on a field when one is named', async () => {
+    const base = browser.runtime.getURL('/options.html');
+    await openSettings();
+    expect((await browser.tabs.query({ active: true }))[0]?.url).toBe(base);
+    await openSettings('geminiApiKey');
+    expect((await browser.tabs.query({})).filter((t) => t.url?.startsWith(base))).toHaveLength(1);
+    expect((await browser.tabs.query({ active: true }))[0]?.url).toBe(`${base}#geminiApiKey`);
+  });
+
+  it('only brings an open Settings tab forward when no field is named: its page is not reloaded', async () => {
+    const base = browser.runtime.getURL('/options.html');
+    const existing = await browser.tabs.create({ url: base, active: false });
+    const updates: object[] = [];
+    browser.tabs.onUpdated.addListener((_id, info) => void updates.push(info));
+    await openSettings();
+    expect((await browser.tabs.query({ active: true }))[0]?.id).toBe(existing.id);
+    expect(updates.some((u) => 'url' in u)).toBe(false);
   });
 });
 

@@ -3,17 +3,27 @@ import { browser } from 'wxt/browser';
 import { sendToBackground } from '../messages';
 import { getActiveRecording, getSession } from '../storage/sessionStore';
 import type { PopupInput } from './popupView';
+import type { FieldName } from './settingsForm';
 
 const RESULT_PREFIX = 'result:';
 
-export type PagePath = '/dashboard.html' | '/permission.html';
+/** A page, or Settings opened on one field: '/options.html#geminiApiKey' focuses the key. */
+export type PagePath = '/dashboard.html' | '/permission.html' | '/options.html' | `/options.html#${FieldName}`;
 
-/** Focuses a tab that already shows the page, or opens a new one. */
+/**
+ * Focuses a tab that already shows the page, or opens a new one. With a #field, an open
+ * Settings tab moves to the field in place (a fragment change: no reload, edits kept);
+ * without one it is only brought forward.
+ */
 export async function openExtensionPage(path: PagePath): Promise<void> {
   const url = browser.runtime.getURL(path);
+  const hash = url.indexOf('#');
+  const base = hash < 0 ? url : url.slice(0, hash);
+  const field = hash >= 0 && hash < url.length - 1;
   let existing: { id?: number; windowId?: number } | undefined;
   try {
-    [existing] = await browser.tabs.query({ url });
+    // Chrome ignores the tab's #fragment when matching, so the bare page finds it.
+    [existing] = await browser.tabs.query({ url: base });
   } catch {
     existing = undefined;
   }
@@ -21,8 +31,16 @@ export async function openExtensionPage(path: PagePath): Promise<void> {
     await browser.tabs.create({ url, active: true });
     return;
   }
-  await browser.tabs.update(existing.id, { active: true });
+  await browser.tabs.update(existing.id, field ? { active: true, url } : { active: true });
   if (existing.windowId !== undefined) await browser.windows.update(existing.windowId, { focused: true });
+}
+
+/**
+ * Opens Settings, on `field` when given (Settings focuses the field the link names). For
+ * the pages' "Open settings" and "Add key" buttons: openSettings('geminiApiKey').
+ */
+export function openSettings(field?: FieldName): Promise<void> {
+  return openExtensionPage(field ? `/options.html#${field}` : '/options.html');
 }
 
 /** Chrome's per-site settings for this extension, where a blocked microphone is unblocked. */
