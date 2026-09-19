@@ -24,7 +24,12 @@ export default defineBackground(() => {
   restrictStorage();
   const manager = createSessionManager(createChromeDeps());
   const run = (task: Promise<unknown>) => {
-    task.catch((err: unknown) => console.error('[manet]', errorMessage(err)));
+    task.catch((err: unknown) => {
+      const message = errorMessage(err);
+      // Tabs closing with the browser: storage is gone and boot recovery takes over next start.
+      if (/browser is shutting down/i.test(message)) return;
+      console.error('[manet]', message);
+    });
   };
 
   // Registered synchronously: Chrome only delivers the event that woke the worker to

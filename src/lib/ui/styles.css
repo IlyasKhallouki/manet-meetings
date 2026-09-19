@@ -351,6 +351,9 @@ label.switch {
 }
 
 .table-wrap {
+  /* Contains absolutely positioned children (the visually hidden header), which would
+     otherwise escape the scroll box and widen the page. */
+  position: relative;
   overflow-x: auto;
 }
 

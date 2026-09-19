@@ -96,7 +96,8 @@ export function createRoutingView(
         { class: 'muted' },
         title === meta.meetCode ? null : [h('code', null, meta.meetCode), ' · '],
         formatDateTime(meta.startedAt, format),
-        duration === undefined ? null : ` · ${formatDuration(duration)}`,
+        // Non-breaking space so the narrow prompt window never splits "32m 00s".
+        duration === undefined ? null : ` · ${formatDuration(duration).replace(' ', '\u00a0')}`,
       ),
     );
   }

@@ -112,6 +112,21 @@ describe('background entrypoint', () => {
     await vi.waitFor(async () => expect(await statusOf(second)).toBe('awaiting-route'));
   });
 
+  it('stays quiet about work the browser cuts off while shutting down', async () => {
+    await startWorker();
+    const tabId = await h.openMeetTab();
+    for (const l of commands) l('toggle-recording', { id: tabId });
+    await vi.waitFor(async () => expect(await getActiveRecording()).toMatchObject({ tabId }));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const shuttingDown = () => Promise.reject(new Error('The browser is shutting down.'));
+    vi.spyOn(fakeBrowser.storage.session, 'get').mockImplementation(shuttingDown as never);
+    vi.spyOn(fakeBrowser.storage.session, 'remove').mockImplementation(shuttingDown as never);
+
+    await fakeBrowser.tabs.onRemoved.trigger(tabId, { isWindowClosing: true, windowId: 0 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(errors).not.toHaveBeenCalled();
+  });
+
   it('sends handler errors back to the caller', async () => {
     await startWorker();
     await expect(sendToBackground('session/route', { sessionId: 'nope', route: 'team' })).rejects.toThrow(
