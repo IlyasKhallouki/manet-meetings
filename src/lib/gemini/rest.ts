@@ -10,7 +10,7 @@ export interface RestOptions {
   signal?: AbortSignal;
   /** Per HTTP request, including reading the body. */
   timeoutMs?: number;
-  /** Extra attempts after the first for 429, 5xx and connection failures. */
+  /** Extra attempts after the first for 408, 429, 5xx and connection failures. */
   retries?: number;
   retryBaseDelayMs?: number;
   fetch?: typeof fetch;
@@ -69,7 +69,8 @@ export interface GeminiFile {
 // Errors and retries
 // ---------------------------------------------------------------------------
 
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+// The documented transient errors: 408, 429 and 5xx (troubleshooting guide).
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_RETRIES = 4;
 const DEFAULT_BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_DELAY_MS = 30_000;
@@ -80,6 +81,7 @@ const INTERACTION_TIMEOUT_MS = 20 * 60_000;
 const UPLOAD_TIMEOUT_MS = 15 * 60_000;
 const SMALL_REQUEST_TIMEOUT_MS = 60_000;
 const VERIFY_TIMEOUT_MS = 15_000;
+const ACTIVE_TIMEOUT_MS = 5 * 60_000;
 
 export interface GeminiErrorInit {
   /** HTTP status; 0 when no response arrived (connection failure, timeout). */
@@ -90,6 +92,8 @@ export interface GeminiErrorInit {
   apiMessage?: string;
   retryAfterMs?: number;
   retryable?: boolean;
+  /** Worth running the job again later; defaults to `retryable`. Timeouts are transient but not retried in place. */
+  transient?: boolean;
 }
 
 export class GeminiError extends Error {
@@ -98,6 +102,8 @@ export class GeminiError extends Error {
   readonly apiMessage: string;
   readonly retryAfterMs: number | undefined;
   readonly retryable: boolean;
+  /** Network, timeout, 408/429/5xx: the same request may well work later. */
+  readonly transient: boolean;
 
   constructor(message: string, init: GeminiErrorInit) {
     super(message);
@@ -107,7 +113,13 @@ export class GeminiError extends Error {
     this.apiMessage = init.apiMessage ?? message;
     this.retryAfterMs = init.retryAfterMs;
     this.retryable = init.retryable ?? RETRYABLE_STATUS.has(init.status);
+    this.transient = init.transient ?? this.retryable;
   }
+}
+
+/** True for a GeminiError that may succeed if the whole job runs again later. */
+export function isTransientError(err: unknown): boolean {
+  return err instanceof GeminiError && err.transient;
 }
 
 interface RpcError {
@@ -263,6 +275,7 @@ async function exchange(
       throw new GeminiError(`Gemini request timed out after ${Math.round(timeoutMs / 1000)} s`, {
         status,
         retryable: false,
+        transient: true,
       });
     }
     throw new GeminiError(`Could not reach Gemini (${describeNetworkError(err)})`, { status: 0, retryable: true });
@@ -276,6 +289,12 @@ function retryAfterHint(header: string | null, body: string): { retryAfterMs?: n
 
 function apiUrl(opts: RestOptions, path: string): string {
   return `${opts.baseUrl ?? GEMINI_BASE_URL}/${path}`;
+}
+
+/** Same transport without the caller's signal: cleanup must run even after an abort. */
+function withoutSignal(opts: RestOptions): RestOptions {
+  const { signal: _signal, ...rest } = opts;
+  return rest;
 }
 
 function retryOptions(opts: RestOptions): RetryOptions {
@@ -330,13 +349,16 @@ export async function createInteraction(
 // Files
 // ---------------------------------------------------------------------------
 
-export interface UploadOptions extends RestOptions {
+export interface WaitOptions extends RestOptions {
+  pollIntervalMs?: number;
+  /** How long to wait for the file to become ACTIVE. */
+  activeTimeoutMs?: number;
+}
+
+export interface UploadOptions extends WaitOptions {
   /** Plain MIME type without parameters, e.g. "audio/webm". */
   mimeType: string;
   displayName?: string;
-  pollIntervalMs?: number;
-  /** How long to wait for a PROCESSING file to become ACTIVE. */
-  activeTimeoutMs?: number;
 }
 
 function asFile(json: unknown, what: string): GeminiFile {
@@ -348,11 +370,29 @@ function asFile(json: unknown, what: string): GeminiFile {
 }
 
 /**
+ * A fresh resource name per attempt (the File resource accepts one on create): an
+ * attempt whose response was lost may still have created its file, and only a known
+ * name can be deleted.
+ */
+function newFileName(): string {
+  return `files/manet-${crypto.randomUUID().replaceAll('-', '')}`;
+}
+
+async function deleteAll(apiKey: string, names: readonly string[], opts: RestOptions): Promise<void> {
+  await Promise.all(names.map((name) => deleteFile(apiKey, name, withoutSignal(opts))));
+}
+
+/**
  * Uploads with the Files API resumable protocol (start, then upload+finalize in one
- * request) and waits until the file is ACTIVE. Files expire after 48 hours.
+ * request) and waits until the file is ACTIVE. Files expire after 48 hours, but
+ * meeting audio should not linger: whatever this call may have created is deleted,
+ * best effort, when it fails, and so are earlier attempts of a retried upload.
  */
 export async function uploadFile(apiKey: string, blob: Blob, opts: UploadOptions): Promise<GeminiFile> {
+  // Attempts whose bytes went out: each may exist on the server.
+  const sent: string[] = [];
   const uploadOnce = async (): Promise<GeminiFile> => {
+    const name = newFileName();
     const start = await exchange(
       apiUrl(opts, `upload/${GEMINI_API_VERSION}/files`),
       {
@@ -365,7 +405,7 @@ export async function uploadFile(apiKey: string, blob: Blob, opts: UploadOptions
           'X-Goog-Upload-Header-Content-Type': opts.mimeType,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ file: { display_name: opts.displayName ?? 'manet-audio' } }),
+        body: JSON.stringify({ file: { name, display_name: opts.displayName ?? 'manet-audio' } }),
       },
       opts,
       SMALL_REQUEST_TIMEOUT_MS,
@@ -374,6 +414,7 @@ export async function uploadFile(apiKey: string, blob: Blob, opts: UploadOptions
     if (!uploadUrl) {
       throw new GeminiError('Gemini upload did not return an upload URL', { status: 200, retryable: true });
     }
+    sent.push(name);
     const done = await exchange(
       uploadUrl,
       {
@@ -387,25 +428,52 @@ export async function uploadFile(apiKey: string, blob: Blob, opts: UploadOptions
     return asFile(done.json, 'upload');
   };
 
-  let file = await withRetry(uploadOnce, retryOptions(opts));
-  const deadline = Date.now() + (opts.activeTimeoutMs ?? 5 * 60_000);
-  while (file.state === 'PROCESSING') {
-    if (Date.now() > deadline) {
-      throw new GeminiError(`Gemini file ${file.name} is still processing`, { status: 0, retryable: false });
+  let file: GeminiFile;
+  try {
+    file = await withRetry(uploadOnce, retryOptions(opts));
+  } catch (err) {
+    await deleteAll(apiKey, sent, opts);
+    throw err;
+  }
+  await deleteAll(apiKey, sent.slice(0, -1), opts);
+  return waitUntilActive(apiKey, file, opts);
+}
+
+/**
+ * Polls until the file is ACTIVE. A missing or unspecified state counts as still
+ * processing, as in the Files API docs. When the file FAILED, the wait times out, a
+ * poll fails or the caller aborts, the file is deleted (best effort) and the error
+ * rethrown.
+ */
+export async function waitUntilActive(apiKey: string, file: GeminiFile, opts: WaitOptions = {}): Promise<GeminiFile> {
+  const deadline = Date.now() + (opts.activeTimeoutMs ?? ACTIVE_TIMEOUT_MS);
+  let current = file;
+  try {
+    for (;;) {
+      if (current.state === 'ACTIVE') return current;
+      if (current.state === 'FAILED') {
+        const apiMessage = current.error?.message ?? 'processing failed';
+        throw new GeminiError(`Gemini could not process the uploaded audio: ${apiMessage}`, {
+          status: 200,
+          apiStatus: 'FAILED',
+          apiMessage,
+          retryable: false,
+        });
+      }
+      if (Date.now() > deadline) {
+        throw new GeminiError(`Gemini file ${file.name} is still processing`, {
+          status: 0,
+          retryable: false,
+          transient: true,
+        });
+      }
+      await sleep(opts.pollIntervalMs ?? 1000, opts.signal);
+      current = await getFile(apiKey, file.name, opts);
     }
-    await sleep(opts.pollIntervalMs ?? 1000, opts.signal);
-    file = await getFile(apiKey, file.name, opts);
+  } catch (err) {
+    await deleteAll(apiKey, [file.name], opts);
+    throw err;
   }
-  if (file.state === 'FAILED') {
-    const apiMessage = file.error?.message ?? 'processing failed';
-    throw new GeminiError(`Gemini could not process the uploaded audio: ${apiMessage}`, {
-      status: 200,
-      apiStatus: 'FAILED',
-      apiMessage,
-      retryable: false,
-    });
-  }
-  return file;
 }
 
 export async function getFile(apiKey: string, name: string, opts: RestOptions = {}): Promise<GeminiFile> {

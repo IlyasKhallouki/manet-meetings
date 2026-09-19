@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { baseMimeType, createLimiter, partKey, toBlob } from '@lib/transcribe/transcribe';
+import { TranscriptionError } from '@lib/transcribe/stitch';
+import { baseMimeType, createLimiter, partKey, toBlob, transcribeParts } from '@lib/transcribe/transcribe';
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -63,5 +64,24 @@ describe('toBlob', () => {
   it('passes a Blob through', () => {
     const blob = new Blob(['x'], { type: 'audio/webm' });
     expect(toBlob(blob, 'audio/webm')).toBe(blob);
+  });
+});
+
+describe('transcribeParts when Gemini is unreachable', () => {
+  // Port 9 (discard) on loopback refuses connections: a real network failure.
+  it('throws a TranscriptionError marked transient, for a later retry', async () => {
+    const part = { data: new Uint8Array(64), startMs: 0, endMs: 5000 };
+    const other = { data: new Uint8Array(64), startMs: 4000, endMs: 9000 };
+    const err = await transcribeParts('some-key', [part, other], [part], {
+      mimeType: 'audio/webm',
+      customVocabulary: [],
+      languageCodes: [],
+      rest: { baseUrl: 'http://127.0.0.1:9', retries: 0 },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TranscriptionError);
+    const e = err as TranscriptionError;
+    expect(e.transient).toBe(true);
+    expect(e.timingError).toMatch(/Could not reach Gemini/);
+    expect(e.textError).toMatch(/Could not reach Gemini/);
   });
 });

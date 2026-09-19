@@ -2,15 +2,26 @@
  * Runs both gemini-3.5-transcribe passes over pre-cut audio parts.
  *
  * Each distinct part is uploaded once and shared by the passes that need it (a
- * recording that fits one timing part is uploaded once for both). The passes run
- * side by side and independently: a failing pass cancels its own remaining
- * requests, never the other pass. Uploads are deleted at the end, best effort.
+ * recording that fits one timing part is uploaded once for both). The passes and
+ * their parts run side by side and independently: a failed part costs only its own
+ * span, never its siblings or the other pass. Uploads are deleted at the end (and
+ * by uploadFile itself when an upload fails), best effort.
  */
-import { createInteraction, deleteFile, uploadFile, type GeminiFile, type InteractionRequest, type RestOptions } from '../gemini/rest';
+import {
+  createInteraction,
+  deleteFile,
+  isTransientError,
+  uploadFile,
+  type GeminiFile,
+  type InteractionRequest,
+  type RestOptions,
+} from '../gemini/rest';
 import { outputText, timedWords, type Interaction } from '../gemini/response';
-import type { JobStage, TranscriptionResult } from '../types';
+import type { JobStage, TimedWord, TranscriptionResult } from '../types';
 import { textPassRequest, timingPassRequest, type UploadedAudio } from './requests';
-import { combinePasses, stitchTimingParts, type PartSpan, type PassResult, type TextPart, type TimedPart } from './stitch';
+import { combinePasses, type PartOutcome, type PartSpan } from './stitch';
+
+export { TranscriptionError } from './stitch';
 
 export interface AudioPart extends PartSpan {
   /** A standalone audio file whose time 0 is `startMs` in the recording. */
@@ -79,19 +90,20 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function runPass<T>(
-  outer: AbortSignal | undefined,
-  parts: readonly AudioPart[],
-  fn: (signal: AbortSignal) => Promise<T>,
-): Promise<PassResult<T>> {
-  if (parts.length === 0) return { ok: false, error: 'no audio to transcribe' };
-  const ctrl = new AbortController();
-  const signal = outer ? AbortSignal.any([outer, ctrl.signal]) : ctrl.signal;
+/** Runs one part to an outcome; an 'incomplete' interaction is kept, flagged. */
+async function runPart<T>(
+  part: AudioPart,
+  request: () => Promise<Interaction>,
+  read: (interaction: Interaction) => T,
+): Promise<PartOutcome<T>> {
+  const span = { startMs: part.startMs, endMs: part.endMs };
   try {
-    return { ok: true, value: await fn(signal) };
+    const interaction = await request();
+    // 'incomplete' (e.g. an output cap): the partial output is kept and the pass warns.
+    const incomplete = interaction.status === 'incomplete';
+    return { ...span, ok: true, value: read(interaction), ...(incomplete ? { incomplete } : {}) };
   } catch (err) {
-    ctrl.abort(err);
-    return { ok: false, error: errorMessage(err) };
+    return { ...span, ok: false, error: errorMessage(err), transient: isTransientError(err) };
   }
 }
 
@@ -99,8 +111,9 @@ async function runPass<T>(
  * Transcribes a recording given as timing-pass parts (≤ 30 min each, word
  * timestamps) and text-pass parts (≤ 60 min each, custom vocabulary). Parts of a
  * pass must cover the recording with overlaps; they may be the same objects.
- * Resolves with degraded results when one pass fails, throws a TranscriptionError
- * when both do, and rethrows the abort reason when `signal` aborts.
+ * Resolves with degraded results (pass warnings, `gaps`) when parts or a whole pass
+ * fail, throws a TranscriptionError when every part of both passes failed, and
+ * rethrows the abort reason when `signal` aborts.
  */
 export async function transcribeParts(
   apiKey: string,
@@ -134,63 +147,54 @@ export async function transcribeParts(
   const transcribePart = async (
     part: AudioPart,
     build: (audio: UploadedAudio) => InteractionRequest,
-    signal: AbortSignal,
   ): Promise<Interaction> => {
     const file = await upload(part);
     return requestSlots(() => {
-      signal.throwIfAborted();
-      return createInteraction(apiKey, build({ uri: file.uri, mimeType }), { ...rest, signal });
+      opts.signal?.throwIfAborted();
+      return createInteraction(apiKey, build({ uri: file.uri, mimeType }), rest);
     });
   };
 
   const emit = (stage: JobStage) => opts.onProgress?.(stage);
   emit('transcribing-timing');
   try {
-    const timing = runPass(opts.signal, timingParts, async (signal) => {
-      const parts = await Promise.all(
-        timingParts.map(
-          async (part): Promise<TimedPart> => ({
-            startMs: part.startMs,
-            endMs: part.endMs,
-            words: timedWords(
-              await transcribePart(part, (a) => timingPassRequest(a, { languageCodes: opts.languageCodes }), signal),
-            ),
-          }),
+    const timing = Promise.all(
+      timingParts.map((part) =>
+        runPart<TimedWord[]>(
+          part,
+          () => transcribePart(part, (a) => timingPassRequest(a, { languageCodes: opts.languageCodes })),
+          timedWords,
         ),
-      );
-      return stitchTimingParts(parts);
-    });
-    const text = runPass(opts.signal, textParts, (signal) =>
-      Promise.all(
-        textParts.map(
-          async (part): Promise<TextPart> => ({
-            startMs: part.startMs,
-            endMs: part.endMs,
-            text: outputText(
-              await transcribePart(
-                part,
-                (a) =>
-                  textPassRequest(a, { languageCodes: opts.languageCodes, customVocabulary: opts.customVocabulary }),
-                signal,
-              ),
+      ),
+    );
+    const text = Promise.all(
+      textParts.map((part) =>
+        runPart<string>(
+          part,
+          () =>
+            transcribePart(part, (a) =>
+              textPassRequest(a, { languageCodes: opts.languageCodes, customVocabulary: opts.customVocabulary }),
             ),
-          }),
+          outputText,
         ),
       ),
     );
 
-    // The stage names what is still being waited on.
+    // The stage names what is still being waited on. Checked a task later: when a
+    // shared upload fails, both passes settle in the same microtask flush.
     let textSettled = false;
     void text.then(() => {
       textSettled = true;
     });
-    void timing.then(() => {
-      if (!textSettled) emit('transcribing-text');
-    });
+    void timing.then(() =>
+      setTimeout(() => {
+        if (!textSettled) emit('transcribing-text');
+      }, 0),
+    );
 
     const [timingResult, textResult] = await Promise.all([timing, text]);
     opts.signal?.throwIfAborted();
-    if (timingResult.ok || textResult.ok) emit('aligning');
+    if ([...timingResult, ...textResult].some((p) => p.ok)) emit('aligning');
     return combinePasses(timingResult, textResult);
   } finally {
     await Promise.allSettled(

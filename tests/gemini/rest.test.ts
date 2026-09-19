@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GeminiError, parseApiError, retryAfterMs, withRetry } from '@lib/gemini/rest';
+import { GeminiError, isTransientError, parseApiError, retryAfterMs, withRetry } from '@lib/gemini/rest';
 
 // Bodies captured from the real API with an invalid key (September 2026). The
 // interactions endpoint wraps the error object in an array; the others do not.
@@ -76,13 +76,29 @@ describe('retryAfterMs', () => {
 });
 
 describe('GeminiError', () => {
-  it('marks 429 and 5xx as retryable and other 4xx as final', () => {
-    for (const status of [429, 500, 502, 503, 504]) {
+  it('marks 408, 429 and 5xx as retryable and other 4xx as final', () => {
+    for (const status of [408, 429, 500, 502, 503, 504]) {
       expect(new GeminiError('x', { status }).retryable, String(status)).toBe(true);
     }
     for (const status of [400, 401, 403, 404, 413]) {
       expect(new GeminiError('x', { status }).retryable, String(status)).toBe(false);
     }
+  });
+
+  it('is transient when retryable unless told otherwise', () => {
+    expect(new GeminiError('x', { status: 503 }).transient).toBe(true);
+    expect(new GeminiError('x', { status: 0, retryable: true }).transient).toBe(true);
+    expect(new GeminiError('x', { status: 400 }).transient).toBe(false);
+    // A timeout is not retried in place but may work later.
+    expect(new GeminiError('timed out', { status: 0, retryable: false, transient: true }).transient).toBe(true);
+    expect(new GeminiError('failed', { status: 200, apiStatus: 'failed', retryable: false }).transient).toBe(false);
+  });
+
+  it('isTransientError is true only for transient GeminiErrors', () => {
+    expect(isTransientError(new GeminiError('x', { status: 429 }))).toBe(true);
+    expect(isTransientError(new GeminiError('x', { status: 401 }))).toBe(false);
+    expect(isTransientError(new Error('bug'))).toBe(false);
+    expect(isTransientError(new DOMException('stop', 'AbortError'))).toBe(false);
   });
 });
 
@@ -98,6 +114,17 @@ describe('withRetry', () => {
     }, { retries: 4, ...fast });
     expect(result).toBe('ok');
     expect(attempts).toBe(3);
+  });
+
+  it('retries a 408 request timeout', async () => {
+    let attempts = 0;
+    const result = await withRetry(async () => {
+      attempts++;
+      if (attempts === 1) throw new GeminiError('Request Timeout', { status: 408 });
+      return 'ok';
+    }, { retries: 2, ...fast });
+    expect(result).toBe('ok');
+    expect(attempts).toBe(2);
   });
 
   it('never retries other 4xx', async () => {

@@ -116,4 +116,34 @@ describe('transferTimes', () => {
   it('returns nothing without timing to transfer', () => {
     expect(transferTimes(splitWords('hello'), [])).toEqual([]);
   });
+
+  it('drops target words the source left out unless asked to keep them', () => {
+    const target = timed('we ship on friday and paul owns the notes');
+    expect(transferTimes(splitWords('We ship on Friday.'), target).map((w) => w.text)).toEqual([
+      'We',
+      'ship',
+      'on',
+      'Friday.',
+    ]);
+    const out = transferTimes(splitWords('We ship on Friday.'), target, { keepSkippedTarget: 5 });
+    expect(out.map((w) => w.text)).toEqual(['We', 'ship', 'on', 'Friday.', 'and', 'paul', 'owns', 'the', 'notes']);
+    expect(out.slice(4)).toEqual(target.slice(4));
+  });
+
+  it('keeps a long skipped run between matches, not a short rewording', () => {
+    const target = timed("so we ship oui c'est bon on verra demain then the budget is twenty six million");
+    const out = transferTimes(splitWords('So we ship, then the budget is 26M$.'), target, { keepSkippedTarget: 5 });
+    expect(out.map((w) => w.text).join(' ')).toBe("So we ship, oui c'est bon on verra demain then the budget is 26M$.");
+    for (let k = 1; k < out.length; k++) expect(out[k]!.start).toBeGreaterThanOrEqual(out[k - 1]!.start);
+  });
+
+  it('spreads source words past the last match at the target pace, within maxMs', () => {
+    // Target words every 1 s up to 9 s; the source goes on for 10 more words.
+    const target = timed('a b c d e f g h i j', 1000);
+    const source = splitWords('a b c d e f g h i j k l m n o p q r s t');
+    const out = transferTimes(source, target, { maxMs: 30_000 });
+    expect(out).toHaveLength(20);
+    expect(out.at(-1)!.start).toBeGreaterThan(17_000);
+    expect(transferTimes(source, target, { maxMs: 12_000 }).at(-1)!.end).toBeLessThanOrEqual(12_000);
+  });
 });

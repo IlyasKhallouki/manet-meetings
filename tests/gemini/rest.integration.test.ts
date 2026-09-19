@@ -9,6 +9,7 @@ import {
   getFile,
   uploadFile,
   verifyApiKey,
+  waitUntilActive,
   type GeminiFile,
 } from '@lib/gemini/rest';
 
@@ -28,6 +29,18 @@ function countingFetch(): { fetch: typeof fetch; calls: () => number } {
       return fetch(input, init);
     },
     calls: () => n,
+  };
+}
+
+/** Real fetch that records "METHOD path" of every request. */
+function observingFetch(): { fetch: typeof fetch; seen: string[] } {
+  const seen: string[] = [];
+  return {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(`${init?.method ?? 'GET'} ${new URL(String(input)).pathname.replace(/^\/v1beta\//, '')}`);
+      return fetch(input, init);
+    },
+    seen,
   };
 }
 
@@ -90,6 +103,8 @@ describe('Gemini REST against the real API with an invalid key', () => {
     expect(err).toBeInstanceOf(GeminiError);
     expect((err as GeminiError).status).toBe(0);
     expect((err as GeminiError).message).toMatch(/timed out/);
+    // Not retried in place, but worth another run of the job later.
+    expect((err as GeminiError).transient).toBe(true);
     expect(counter.calls()).toBe(1);
   });
 
@@ -102,6 +117,60 @@ describe('Gemini REST against the real API with an invalid key', () => {
     );
     expect((err as DOMException).name).toBe('AbortError');
     expect(counter.calls()).toBe(0);
+  });
+});
+
+describe('waitUntilActive against the real API (invalid key)', () => {
+  const file = (state?: GeminiFile['state']): GeminiFile => ({
+    name: 'files/manet-wait-test',
+    uri: 'https://generativelanguage.googleapis.com/v1beta/files/manet-wait-test',
+    ...(state ? { state } : {}),
+  });
+
+  it('returns an ACTIVE file without a request', async () => {
+    const { fetch, seen } = observingFetch();
+    await expect(waitUntilActive(INVALID_KEY, file('ACTIVE'), { fetch })).resolves.toEqual(file('ACTIVE'));
+    expect(seen).toEqual([]);
+  });
+
+  for (const state of [undefined, 'STATE_UNSPECIFIED', 'PROCESSING'] as const) {
+    it(`treats ${state ?? 'a missing state'} as still processing, and deletes the file when polling fails`, async () => {
+      const { fetch, seen } = observingFetch();
+      const err = await rejection(
+        waitUntilActive(INVALID_KEY, file(state), { fetch, pollIntervalMs: 1, retries: 0 }),
+      );
+      expect(err, NETWORK_HINT).toBeInstanceOf(GeminiError);
+      expect((err as GeminiError).apiMessage).toMatch(/API key not valid/);
+      expect(seen).toEqual(['GET files/manet-wait-test', 'DELETE files/manet-wait-test']);
+    });
+  }
+
+  it('deletes a FAILED file before throwing', async () => {
+    const { fetch, seen } = observingFetch();
+    const failed = { ...file('FAILED'), error: { message: 'Unsupported audio' } };
+    const err = await rejection(waitUntilActive(INVALID_KEY, failed, { fetch }));
+    expect((err as GeminiError).apiStatus).toBe('FAILED');
+    expect((err as GeminiError).message).toMatch(/Unsupported audio/);
+    expect((err as GeminiError).transient).toBe(false);
+    expect(seen).toEqual(['DELETE files/manet-wait-test']);
+  });
+
+  it('deletes a file still processing at the deadline, as a transient failure', async () => {
+    const { fetch, seen } = observingFetch();
+    const err = await rejection(waitUntilActive(INVALID_KEY, file('PROCESSING'), { fetch, activeTimeoutMs: -1 }));
+    expect((err as GeminiError).message).toMatch(/still processing/);
+    expect((err as GeminiError).transient).toBe(true);
+    expect(seen).toEqual(['DELETE files/manet-wait-test']);
+  });
+
+  it('still deletes the file when the caller aborts the wait', async () => {
+    const { fetch, seen } = observingFetch();
+    const ctrl = new AbortController();
+    const waiting = waitUntilActive(INVALID_KEY, file('PROCESSING'), { fetch, signal: ctrl.signal, pollIntervalMs: 60_000 });
+    ctrl.abort(new DOMException('user cancelled', 'AbortError'));
+    const err = await rejection(waiting);
+    expect((err as DOMException).name).toBe('AbortError');
+    expect(seen).toEqual(['DELETE files/manet-wait-test']);
   });
 });
 
@@ -142,16 +211,42 @@ describe.skipIf(!API_KEY)('Gemini REST with a real key (needs GOOGLE_API_KEY)', 
     let file: GeminiFile | undefined;
     try {
       file = await uploadFile(API_KEY, blob, { mimeType: 'audio/webm', displayName: 'manet-rest-test' });
-      expect(file.name).toMatch(/^files\//);
+      // The name uploadFile chose, so a lost attempt can be deleted.
+      expect(file.name).toMatch(/^files\/manet-[0-9a-f]{32}$/);
       expect(file.uri).toMatch(/^https:\/\//);
-      // uploadFile waits out PROCESSING; audio may come back ACTIVE or without a state.
-      expect(['ACTIVE', undefined]).toContain(file.state);
+      expect(file.state).toBe('ACTIVE');
       expect(Number(file.sizeBytes)).toBe(blob.size);
       expect((await getFile(API_KEY, file.name)).uri).toBe(file.uri);
     } finally {
       if (file) await expect(deleteFile(API_KEY, file.name)).resolves.toBe(true);
     }
     await expect(getFile(API_KEY, file!.name, { retries: 0 })).rejects.toBeInstanceOf(GeminiError);
+  }, 120_000);
+
+  it('deletes the file of an attempt whose finalize response was lost', async () => {
+    const blob = new Blob([new Uint8Array(readFileSync(FIXTURE))], { type: 'audio/webm' });
+    const names: string[] = [];
+    let dropped = false;
+    // Real requests; the first finalize reaches Gemini, then its response is thrown away.
+    const lossy: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const command = new Headers(init?.headers).get('x-goog-upload-command') ?? '';
+      if (command === 'start') names.push((JSON.parse(String(init?.body)) as { file: { name: string } }).file.name);
+      const res = await fetch(input, init);
+      if (command.includes('finalize') && !dropped) {
+        dropped = true;
+        await res.text();
+        throw new TypeError('fetch failed');
+      }
+      return res;
+    };
+    const file = await uploadFile(API_KEY, blob, { mimeType: 'audio/webm', fetch: lossy, retries: 1, retryBaseDelayMs: 1 });
+    try {
+      expect(names).toHaveLength(2);
+      expect(file.name).toBe(names[1]);
+      await expect(getFile(API_KEY, names[0]!, { retries: 0 })).rejects.toBeInstanceOf(GeminiError);
+    } finally {
+      await deleteFile(API_KEY, file.name);
+    }
   }, 120_000);
 
   it('does not retry a 4xx from a real request (unknown model)', async () => {

@@ -125,7 +125,7 @@ function uniqueGrams(t: readonly string[], lo: number, hi: number, k: number): M
   const seen = new Map<string, number>();
   outer: for (let i = lo; i + k <= hi; i++) {
     for (let d = 0; d < k; d++) if (t[i + d] === '') continue outer;
-    const key = k === 1 ? t[i]! : t.slice(i, i + k).join('');
+    const key = k === 1 ? t[i]! : t.slice(i, i + k).join('\u0001');
     seen.set(key, seen.has(key) ? -1 : i);
   }
   return seen;
@@ -214,13 +214,35 @@ function greedy(
   }
 }
 
+export interface TransferOptions {
+  /**
+   * Keep target words the source left out: an unmatched target run of at least this
+   * many words, facing at most half as many unmatched source words, is emitted in
+   * place of those source words. Before the first and after the last match, a run
+   * of any length the source has no words against is kept too: the source started
+   * late or stopped short there. Off when unset.
+   */
+  keepSkippedTarget?: number;
+  /** Earliest time for source words placed before the first match. */
+  minMs?: number;
+  /** Latest time for source words placed after the last match (e.g. the end of the audio). */
+  maxMs?: number;
+}
+
 /**
  * Gives every `source` word a time taken from `target`: matched words copy the
  * target word's times, unmatched runs are spread evenly across the gap between
  * their matched neighbours (flagged `approx`). Output keeps source spelling and
  * order and is sorted by start. Returns [] when `target` is empty.
+ *
+ * With `keepSkippedTarget`, target words the source skipped (a truncated or
+ * abridged source) are kept instead of being lost.
  */
-export function transferTimes(source: readonly string[], target: readonly TimedWord[]): TimedWord[] {
+export function transferTimes(
+  source: readonly string[],
+  target: readonly TimedWord[],
+  opts: TransferOptions = {},
+): TimedWord[] {
   if (target.length === 0 || source.length === 0) return [];
   const pairs = alignTokens(source.map(normalizeToken), target.map((w) => normalizeToken(w.text)));
 
@@ -228,59 +250,56 @@ export function transferTimes(source: readonly string[], target: readonly TimedW
   const spanEnd = target.at(-1)!.end;
   const avg =
     target.reduce((sum, w) => sum + Math.max(0, w.end - w.start), 0) / target.length || DEFAULT_WORD_MS;
+  // Time per word including pauses, to extrapolate past the matched range.
+  const pace = spanEnd > spanStart ? Math.max(avg, (spanEnd - spanStart) / target.length) : avg;
+  const minMs = opts.minMs ?? 0;
+  const maxMs = opts.maxMs ?? Infinity;
+  const keep = opts.keepSkippedTarget;
 
-  const out: (TimedWord | undefined)[] = new Array(source.length);
-  for (const [i, j] of pairs) out[i] = { text: source[i]!, start: target[j]!.start, end: target[j]!.end };
-
-  if (pairs.length === 0) {
-    fill(out, source, 0, source.length, spanStart, spanEnd);
-    return out as TimedWord[];
-  }
-
-  let i = 0;
-  while (i < source.length) {
-    if (out[i]) {
-      i++;
-      continue;
+  const out: TimedWord[] = [];
+  // Sentinels around the matches: every gap between neighbours is handled alike.
+  const anchors: [number, number][] = [[-1, -1], ...pairs, [source.length, target.length]];
+  for (let k = 1; k < anchors.length; k++) {
+    const [pi, pj] = anchors[k - 1]!;
+    const [ni, nj] = anchors[k]!;
+    const ns = ni - pi - 1;
+    const nt = nj - pj - 1;
+    const edge = pi < 0 || ni === source.length;
+    if (keep !== undefined && nt > 0 && ((nt >= keep && ns * 2 <= nt) || (edge && ns === 0))) {
+      for (let j = pj + 1; j < nj; j++) out.push({ ...target[j]! });
+    } else if (ns > 0) {
+      const prev = pj >= 0 ? target[pj] : undefined;
+      const next = nj < target.length ? target[nj] : undefined;
+      let ws: number;
+      let we: number;
+      if (!prev && !next) {
+        ws = spanStart;
+        we = spanEnd;
+      } else if (prev && next) {
+        ws = prev.end;
+        we = next.start;
+      } else if (next) {
+        we = next.start;
+        ws = spanStart < we ? spanStart : Math.max(Math.min(minMs, we), we - ns * pace);
+      } else {
+        ws = prev!.end;
+        we = spanEnd > ws ? spanEnd : Math.max(ws, Math.min(maxMs, ws + ns * pace));
+      }
+      fill(out, source.slice(pi + 1, ni), ws, Math.max(ws, we));
     }
-    let runEnd = i;
-    while (runEnd < source.length && !out[runEnd]) runEnd++;
-    const n = runEnd - i;
-    const prev = i > 0 ? out[i - 1] : undefined;
-    const next = runEnd < source.length ? out[runEnd] : undefined;
-    let ws: number;
-    let we: number;
-    if (prev && next) {
-      ws = prev.end;
-      we = next.start;
-    } else if (next) {
-      we = next.start;
-      ws = spanStart < we ? spanStart : Math.max(0, we - n * avg);
-    } else {
-      ws = prev!.end;
-      we = spanEnd > ws ? spanEnd : ws + n * avg;
-    }
-    fill(out, source, i, runEnd, ws, Math.max(ws, we));
-    i = runEnd;
+    if (k < anchors.length - 1) out.push({ text: source[ni]!, start: target[nj]!.start, end: target[nj]!.end });
   }
-  return out as TimedWord[];
+  return out;
 }
 
-function fill(
-  out: (TimedWord | undefined)[],
-  source: readonly string[],
-  from: number,
-  to: number,
-  ws: number,
-  we: number,
-): void {
-  const n = to - from;
-  for (let k = 0; k < n; k++) {
-    out[from + k] = {
-      text: source[from + k]!,
+function fill(out: TimedWord[], words: readonly string[], ws: number, we: number): void {
+  const n = words.length;
+  words.forEach((text, k) => {
+    out.push({
+      text,
       start: Math.round(ws + ((we - ws) * k) / n),
       end: Math.round(ws + ((we - ws) * (k + 1)) / n),
       approx: true,
-    };
-  }
+    });
+  });
 }

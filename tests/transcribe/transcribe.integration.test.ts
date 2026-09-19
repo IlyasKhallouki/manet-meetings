@@ -11,6 +11,7 @@ import type { JobStage, TimedWord, TranscriptionResult } from '@lib/types';
 // Real Gemini. See tests/fixtures/audio/README.md for what the clips contain.
 const API_KEY = process.env.GOOGLE_API_KEY ?? '';
 const INVALID_KEY = 'manet-test-invalid-key';
+const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const fixture = (name: string) => fileURLToPath(new URL(`../fixtures/audio/${name}`, import.meta.url));
 const MIXED = fixture('speech-mixed.webm');
 const MIXED_MS = 80_408;
@@ -120,6 +121,8 @@ describe('transcription against the real API with an invalid key', () => {
     const e = err as TranscriptionError;
     expect(e.timingError).toMatch(/API key not valid/);
     expect(e.textError).toMatch(/API key not valid/);
+    // A bad key will not fix itself: degrade now rather than retry later.
+    expect(e.transient).toBe(false);
     expect(stages).toEqual(['transcribing-timing']);
   });
 });
@@ -142,7 +145,7 @@ describe.skipIf(!API_KEY)('gemini transcription integration (needs GOOGLE_API_KE
     expect(stages.at(-1)).toBe('aligning');
   }, 300_000);
 
-  it('stitches ffmpeg-cut overlapping parts for both passes', async () => {
+  it.skipIf(!hasFfmpeg)('stitches ffmpeg-cut overlapping parts for both passes (needs ffmpeg)', async () => {
     const { fetch, counts } = trackingFetch();
     const timingParts = [cut(0, 30_000), cut(25_000, 55_000), cut(50_000, MIXED_MS)];
     const textParts = [cut(0, 45_000), cut(40_000, MIXED_MS)];
@@ -156,6 +159,39 @@ describe.skipIf(!API_KEY)('gemini transcription integration (needs GOOGLE_API_KE
     expectNoOverlapDuplicates(r);
     if (single) expectSameTimeline(r, single);
     expect(counts).toEqual({ uploads: 5, deletes: 5 });
+  }, 300_000);
+
+  it.skipIf(!hasFfmpeg)('keeps the other parts when one part fails (needs ffmpeg)', async () => {
+    // Real requests; the network "drops" every timing request for the 25–55 s part.
+    const { fetch: tracked, counts } = trackingFetch();
+    const uriToPart = new Map<string, string>();
+    const lossy: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const body = typeof init?.body === 'string' ? init.body : '';
+      if (/\/interactions$/.test(String(input)) && body.includes('timestamp_granularities')) {
+        const uri = (JSON.parse(body) as { input: { uri: string }[] }).input[0]!.uri;
+        if (uriToPart.get(uri) === 'manet-25000-55000') throw new TypeError('fetch failed');
+      }
+      const res = await tracked(input, init);
+      if (headers.get('x-goog-upload-command')?.includes('finalize')) {
+        const file = ((await res.clone().json()) as { file: { uri: string; displayName: string } }).file;
+        uriToPart.set(file.uri, file.displayName);
+      }
+      return res;
+    };
+    const r = await transcribeParts(API_KEY, [cut(0, 30_000), cut(25_000, 55_000), cut(50_000, MIXED_MS)], [cut(0, MIXED_MS)], {
+      mimeType: 'audio/webm',
+      customVocabulary: VOCABULARY,
+      languageCodes: [],
+      rest: { fetch: lossy, retries: 0 },
+    });
+    expect(r.timingPass).toEqual({ ok: true, warning: expect.stringMatching(/^timing pass part 2 \(0:25–0:55\) failed: Could not reach Gemini/) });
+    expect(r.textPass).toEqual({ ok: true });
+    expect(r.gaps).toBeUndefined();
+    // The text pass covers the failed span: its words are there, interpolated.
+    expect(r.words.some((w) => w.start > 32_000 && w.start < 48_000)).toBe(true);
+    expect(r.words.at(-1)!.end).toBeGreaterThan(70_000);
+    expect(counts).toEqual({ uploads: 4, deletes: 4 });
   }, 300_000);
 
   it('splits with the WebM splitter when the limits are small', async () => {
