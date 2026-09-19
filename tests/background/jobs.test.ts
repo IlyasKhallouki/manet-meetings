@@ -3,6 +3,7 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { getResult } from '@lib/storage/resultStore';
 import { getSession } from '@lib/storage/sessionStore';
 import type { ProcessJob, SessionResult } from '@lib/types';
+import { errorText } from '@lib/ui/sessionView';
 import { sessionId } from '@lib/util/ids';
 import type { SessionManager } from '@/entrypoints/background/sessionManager';
 import {
@@ -96,22 +97,33 @@ describe('jobs run in the offscreen document and report back', () => {
     await recordMeeting();
     h.offscreen.close();
     h.createDocument.mockRejectedValueOnce(new Error('offscreen blocked'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await m.transcribe(ID);
     const meta = await getSession(ID);
-    expect(meta).toMatchObject({ status: 'failed', error: expect.stringContaining('offscreen blocked') });
+    // Chrome's words go to the console; the meeting says what didn't happen and what to do.
+    expect(meta).toMatchObject({ status: 'failed', error: 'Transcribing didn’t start. Try again.' });
     expect(meta?.job).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/process job/), expect.stringContaining('offscreen blocked'));
   });
 });
 
 describe('transient Gemini failures', () => {
   it('retries later, twice, instead of filing a degraded transcript', async () => {
+    // Chrome replaces a notification that reuses its id, so keep every one shown.
+    const notified: { title: string; message: string }[] = [];
+    const create = fakeBrowser.notifications.create.bind(fakeBrowser.notifications);
+    vi.spyOn(fakeBrowser.notifications, 'create').mockImplementation(((id: string, o: { title: string; message: string }) => {
+      notified.push({ title: o.title, message: o.message });
+      return create(id, o as never);
+    }) as never);
     h.offscreen.process = () => ({ status: 'retry-later', error: 'Could not reach Gemini' });
     await recordMeeting();
 
     const first = h.clock.now() + 10 * MINUTE;
     let meta = await getSession(ID);
     expect(meta).toMatchObject({ status: 'failed', attempt: 1, retryAt: first });
-    expect(meta?.error).toBe(`Gemini unreachable: Could not reach Gemini. Retrying automatically at ${clockTime(first)}.`);
+    // No status code to give: no parenthesis. Meetings drops the suffix and shows the time on its own line.
+    expect(meta?.error).toBe(`Gemini is unavailable right now. Retrying automatically at ${clockTime(first)}.`);
     expect((await fakeBrowser.alarms.get(`retry:${ID}`))?.scheduledTime).toBe(first);
     expect(h.offscreen.callsOf('offscreen/process').map((j) => j.attempt)).toEqual([1]);
     expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(0);
@@ -133,6 +145,35 @@ describe('transient Gemini failures', () => {
     meta = await getSession(ID);
     expect(meta?.status).toBe('saved');
     expect(meta?.retryAt).toBeUndefined();
+
+    // One notification for the outage (the second retry only moved the time), then the outcome.
+    expect(notified).toEqual([
+      {
+        title: `Couldn’t transcribe the ${clockTime(T0 + 150)} meeting`,
+        message: `Gemini is unavailable right now. Trying again at ${clockTime(first)}.`,
+      },
+      // recordMeeting() takes no time, so the length is unknown and left out.
+      { title: 'Saved to Notion', message: `Your ${clockTime(T0 + 150)} meeting is in Team.` },
+    ]);
+  });
+
+  it('gives up after the last attempt and says so', async () => {
+    h.offscreen.process = () => ({ status: 'retry-later', error: 'Could not reach Gemini' });
+    await recordMeeting();
+    for (let attempt = 2; attempt <= 3; attempt++) {
+      h.clock.set((await getSession(ID))!.retryAt!);
+      await m.onAlarm(`retry:${ID}`);
+      await m.idle();
+    }
+    const meta = await getSession(ID);
+    const gaveUp = 'Gemini is still unavailable after 3 tries. Try again later.';
+    expect(meta).toMatchObject({ status: 'failed', attempt: 3, error: gaveUp });
+    expect(meta?.retryAt).toBeUndefined();
+    expect(h.notifications().at(-1)).toEqual({
+      id: `manet:${ID}`,
+      title: `Couldn’t transcribe the ${clockTime(T0 + 150)} meeting`,
+      message: gaveUp,
+    });
   });
 
   it('starts over at attempt 1 on a manual Transcribe, and drops the scheduled retry', async () => {
@@ -164,9 +205,13 @@ describe('duplicates', () => {
     const meta = await getSession(ID);
     expect(meta).toMatchObject({ status: 'duplicate', notion: { pageId: 'p1', recordedBy: ' ilyas ' } });
     expect(meta?.purgeAudioAt).toBeUndefined();
-    expect(h.notifications().map((n) => n.message)).toContain(
-      'You already saved part of this meeting — open the dashboard to save this recording too',
-    );
+    expect(h.notifications()).toEqual([
+      {
+        id: `manet:${ID}`,
+        title: 'Already in Notion',
+        message: `Part of the ${clockTime(T0 + 150)} meeting is already in Notion from your earlier recording. This one is kept in Meetings.`,
+      },
+    ]);
 
     // Its notification leads to the dashboard, where the recording can be saved.
     const create = vi.spyOn(fakeBrowser.tabs, 'create');
@@ -230,6 +275,13 @@ describe('empty recordings', () => {
     expect(meta?.status).toBe('empty');
     expect(meta?.purgeAudioAt).toBe(h.clock.now() + 7 * DAY);
     expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(0);
+    expect(h.notifications()).toEqual([
+      {
+        id: `manet:${ID}`,
+        title: 'Nothing to save',
+        message: `No speech or captions were captured in the ${clockTime(T0 + 150)} meeting.`,
+      },
+    ]);
 
     // It stays transcribable, e.g. after the audio turned out to hold something.
     h.offscreen.process = (job) => processed(job);
@@ -254,8 +306,8 @@ describe('transcribing again', () => {
     expect(await getResult(ID)).toEqual(good);
     const meta = await getSession(ID);
     expect(meta?.status).toBe('failed');
-    expect(meta?.error).toMatch(/Gemini quota exceeded/);
-    expect(meta?.error).toMatch(/previous transcript/);
+    // The pass's raw error goes to the console; the meeting says what happened and what to do.
+    expect(meta?.error).toBe('Transcribing again didn’t work, so the earlier transcript was kept. Save it, or try again later.');
     expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(1);
   });
 
@@ -280,9 +332,29 @@ describe('settings', () => {
     await recordMeeting();
     const meta = await getSession(ID);
     expect(meta?.status).toBe('failed');
-    expect(meta?.error).toMatch(/Notion integration token/);
-    expect(meta?.error).toMatch(/Your name/);
+    expect(meta?.error).toMatch(/a Notion token/);
+    expect(meta?.error).toMatch(/your name/);
     expect(meta?.error).not.toMatch(/Gemini/);
     expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+    // Meetings words the stored record itself; the notification says the same sentence.
+    expect(errorText(meta!.error!)).toBe('Add your name and a Notion token in Settings, then try again.');
+    expect(h.notifications()).toEqual([
+      {
+        id: `manet:${ID}`,
+        title: `Couldn’t transcribe the ${clockTime(T0 + 150)} meeting`,
+        message: 'Add your name and a Notion token in Settings, then try again.',
+      },
+    ]);
+  });
+
+  it('names the save, not the transcription, when saving is what the settings block', async () => {
+    h.offscreen.save = () => ({ status: 'error', error: 'Notion returned 502' });
+    await recordMeeting();
+    expect((await getSession(ID))?.status).toBe('failed');
+    await configure({ notionToken: '' });
+    await m.save(ID);
+    const meta = await getSession(ID);
+    expect(meta).toMatchObject({ status: 'failed', error: expect.stringMatching(/a Notion token/) });
+    expect(h.notifications().at(-1)).toMatchObject({ title: `Couldn’t save the ${clockTime(T0 + 150)} meeting` });
   });
 });

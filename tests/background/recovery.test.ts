@@ -76,6 +76,8 @@ describe('recovering interrupted recordings', () => {
       url: `chrome-extension://test-extension-id/routing.html?session=${encodeURIComponent(ID)}`,
     });
     expect((await fakeBrowser.alarms.get(`route:${ID}`))?.scheduledTime).toBe(T0 + HOUR + ROUTE_DELAY);
+    // Pages read the same time from the meeting.
+    expect(meta?.routeDeadline).toBe(T0 + HOUR + ROUTE_DELAY);
 
     // Nobody answers: the default route applies and auto-transcribe files it.
     await m.onAlarm(`route:${ID}`);
@@ -115,7 +117,9 @@ describe('recovering interrupted recordings', () => {
     expect(await getSession(ID)).toMatchObject({ status: 'awaiting-route', recovered: true, endedAt: STARTED + 5000 });
     expect(h.windowsCreate).toHaveBeenCalledTimes(1);
     expect(await getActiveRecording()).toBeNull();
-    expect(await h.badge()).toBe('');
+    // No longer recording; the recovered meeting waits for Team or Personal.
+    expect(h.icon()).toBe('idle');
+    expect(await h.badge()).toBe('1');
     expect(await m.onMeetJoined(tabId, { meetCode: MEET_CODE })).toBeNull();
   });
 
@@ -147,7 +151,8 @@ describe('recovering interrupted recordings', () => {
     expect((await getSession(ID))?.status).toBe('recording');
     expect(await getActiveRecording()).toEqual({ sessionId: ID, tabId, meetCode: MEET_CODE });
     expect(h.offscreen.callsOf('offscreen/recorder-stop')).toHaveLength(0);
-    expect(await h.badge()).toBe('REC');
+    expect(h.icon()).toBe('recording');
+    expect(await h.badge()).toBe('');
     expect(h.pushes).toEqual([]);
   });
 
@@ -187,7 +192,8 @@ describe('recovering interrupted recordings', () => {
     expect(meta?.recovered).toBeUndefined();
     expect(h.offscreen.callsOf('offscreen/recorder-stop')).toHaveLength(0);
     expect(await getActiveRecording()).toEqual({ sessionId: ID, tabId, meetCode: MEET_CODE });
-    expect(await h.badge()).toBe('REC');
+    expect(h.icon()).toBe('recording');
+    expect(await h.badge()).toBe('');
     expect(await m.onMeetJoined(tabId, { meetCode: MEET_CODE })).toEqual({ sessionId: ID, startedAt: STARTED });
   });
 
@@ -214,7 +220,8 @@ describe('recovering interrupted recordings', () => {
     const m = h.createManager();
     await m.boot();
     expect((await getSession(ID))?.status).toBe('recording');
-    expect(await h.badge()).toBe('REC');
+    expect(h.icon()).toBe('recording');
+    expect(await h.badge()).toBe('!');
 
     // Same state, but the tab has moved on while the worker slept: ask, don't file silently.
     await fakeBrowser.tabs.update(tabId, { url: 'https://meet.google.com/' });
@@ -358,7 +365,7 @@ describe('interrupted jobs and alarms', () => {
 
     // Its report still lands, in whichever worker is up.
     await m.onJobDone({ sessionId: ID, jobId: 'j1', kind: 'process', outcome: { status: 'error', error: 'Processing failed: boom' } });
-    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Processing failed: boom' });
+    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Transcribing stopped before it finished. Try again.' });
   });
 
   it('asks again for routes whose prompt and alarm a browser restart lost', async () => {
@@ -376,6 +383,8 @@ describe('interrupted jobs and alarms', () => {
     expect(h.windowsCreate).toHaveBeenCalledTimes(2);
     for (const id of [overdue, pending]) {
       expect((await fakeBrowser.alarms.get(`route:${id}`))?.scheduledTime).toBe(T0 + HOUR + ROUTE_DELAY);
+      const meta = await getSession(id);
+      expect(meta?.routeDeadline).toBe(T0 + HOUR + ROUTE_DELAY);
     }
     expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
   });
@@ -399,7 +408,7 @@ describe('interrupted jobs and alarms', () => {
   });
 
   it('re-arms automatic retries a browser restart lost', async () => {
-    await putSession(stored({ status: 'failed', route: 'team', attempt: 1, retryAt: T0 + HOUR, error: 'Gemini unreachable' }));
+    await putSession(stored({ status: 'failed', route: 'team', attempt: 1, retryAt: T0 + HOUR, error: 'Gemini is unavailable right now (503). Retrying automatically at 10:00.' }));
     const m = h.createManager();
     await m.boot();
     expect((await fakeBrowser.alarms.get(`retry:${ID}`))?.scheduledTime).toBe(T0 + HOUR);

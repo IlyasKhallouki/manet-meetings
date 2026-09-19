@@ -42,6 +42,11 @@ export interface BackgroundProtocol {
   'session/start': { req: { tabId: number }; res: StartResult };
   'session/stop': { req: { sessionId: string }; res: void };
   'session/route': { req: { sessionId: string; route: Route }; res: void };
+  /**
+   * Routing window: `hold: true` pauses the default-route countdown (the person asked for
+   * more time); `hold: false` re-arms it, e.g. when the paused window is closed.
+   */
+  'session/route-hold': { req: { sessionId: string; hold: boolean }; res: void };
   /** `force` skips the Notion duplicate check ("Transcribe anyway"). */
   'session/transcribe': { req: { sessionId: string; force?: boolean }; res: void };
   /** `force` saves even if a page with the key exists ("Save anyway"). */

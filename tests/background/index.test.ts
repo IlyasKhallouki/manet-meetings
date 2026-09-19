@@ -130,7 +130,7 @@ describe('background entrypoint', () => {
   it('sends handler errors back to the caller', async () => {
     await startWorker();
     await expect(sendToBackground('session/route', { sessionId: 'nope', route: 'team' })).rejects.toThrow(
-      /Unknown session/,
+      'This meeting was deleted.',
     );
     expect(await sendToBackground('session/start', { tabId: 12345 })).toMatchObject({ ok: false });
   });
@@ -170,6 +170,47 @@ describe('background entrypoint', () => {
     await startWorker();
     const tabId = await h.openMeetTab();
     expect(await sendToBackground('session/start', { tabId })).toMatchObject({ ok: true });
+  });
+
+  it('opens Settings on a first install only', async () => {
+    await startWorker();
+    await fakeBrowser.runtime.onInstalled.trigger({ reason: 'update', previousVersion: '0.0.0' } as never);
+    await fakeBrowser.runtime.onInstalled.trigger({ reason: 'chrome_update' } as never);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.openOptionsPage).not.toHaveBeenCalled();
+
+    await fakeBrowser.runtime.onInstalled.trigger({ reason: 'install' } as never);
+    await vi.waitFor(() => expect(h.openOptionsPage).toHaveBeenCalledTimes(1));
+  });
+
+  it('pauses the default route from the prompt, and re-arms it when the paused prompt closes', async () => {
+    await configure({ autoTranscribe: false });
+    await startWorker();
+    const tabId = await h.openMeetTab();
+    const res = await sendToBackground('session/start', { tabId });
+    if (!res.ok) throw new Error(res.error);
+    await sendToBackground('session/stop', { sessionId: res.sessionId });
+    const prompt = (await h.windowsCreate.mock.results[0]?.value) as { id: number };
+    const alarm = () => fakeBrowser.alarms.get(`route:${res.sessionId}`);
+    expect(await alarm()).toBeDefined();
+
+    await sendToBackground('session/route-hold', { sessionId: res.sessionId, hold: true });
+    expect(await alarm()).toBeUndefined();
+
+    await fakeBrowser.windows.remove(prompt.id);
+    await vi.waitFor(async () => expect(await alarm()).toBeDefined());
+    expect(await statusOf(res.sessionId)).toBe('awaiting-route');
+  });
+
+  it('says why the keyboard shortcut could not start a recording', async () => {
+    await startWorker();
+    const tab = await fakeBrowser.tabs.create({ url: 'https://example.com/' });
+    for (const l of commands) l('toggle-recording', { id: tab.id });
+    await vi.waitFor(() =>
+      expect(h.notifications()).toEqual([
+        { id: 'manet:start', title: "Couldn’t start recording", message: 'This tab isn’t a Google Meet call.' },
+      ]),
+    );
   });
 
   it('gives Meet tabs that predate an install or update a content script', async () => {

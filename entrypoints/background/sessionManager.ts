@@ -19,6 +19,7 @@ import {
   type StartResult,
 } from '@lib/messages';
 import { meetCodeFromUrl } from '@lib/meet/meetCode';
+import { AUDIO_CHUNK_MS, recordingHealth } from '@lib/recordingHealth';
 import { missingForSave } from '@lib/settingsSchema';
 import { deleteCaptions, loadCaptions, mergeCaptions } from '@lib/storage/captionStore';
 import { deleteResult, getResult, putResult } from '@lib/storage/resultStore';
@@ -28,9 +29,12 @@ import {
   getActiveRecording,
   getSession,
   listSessions,
+  needsYou,
   putSession,
   setActiveRecording,
   updateSession,
+  watchActiveRecording,
+  watchSessions,
   type ActiveRecording,
 } from '@lib/storage/sessionStore';
 import {
@@ -47,9 +51,12 @@ import {
   type Settings,
 } from '@lib/types';
 import { idempotencyKey, sessionId as makeSessionId } from '@lib/util/ids';
+import { actionStateFor, type ActionState } from './actionState';
+import { MeetingProblem, notes, problems, type Note } from './copy';
 import type { OffscreenDocument } from './offscreenDocument';
 
-const TIMESLICE_MS = 5000;
+/** The recorder's chunk length; recordingHealth calls three missing chunks a stall. */
+const TIMESLICE_MS = AUDIO_CHUNK_MS;
 const ROUTE_DELAY_MS = 2 * 60 * 1000;
 const ROUTE_ALARM_PREFIX = 'route:';
 const RETRY_ALARM_PREFIX = 'retry:';
@@ -58,8 +65,6 @@ const RETENTION_PERIOD_MINUTES = 6 * 60;
 const WATCHDOG_ALARM = 'recorder-watchdog';
 /** Chrome's shortest alarm period (older versions round it up to a minute). */
 const WATCHDOG_PERIOD_MINUTES = 0.5;
-/** A chunk lands every timeslice; this long without one and the recorder may be gone. */
-const STALL_MS = 3 * TIMESLICE_MS;
 /** Wait before retrying a transcription Gemini could not take: after attempt 1, then after later ones. */
 const RETRY_DELAYS_MS = [10 * 60 * 1000, 30 * 60 * 1000] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -72,11 +77,21 @@ const ACCEPT_TIMEOUT_MS = 30_000;
 const SCANNED_KEY = 'bootScanned';
 /** storage.session: what the content script last reported for a tab. */
 const TAB_PREFIX = 'meetTab:';
+/** storage.session: the routing prompt's window and whether its countdown is paused, per session. */
+const ROUTING_PREFIX = 'routing:';
 const NOTIFICATION_PREFIX = 'manet:';
 /** `<meetCode>_<YYYYMMDDTHHMMSSZ>`, as built by util/ids sessionId(). */
 const SESSION_DIR = /^([a-z]{3}-[a-z]{4}-[a-z]{3})_(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
-const CAPTIONS_MISSING = 'Captions are not reaching Manet from this tab. Reload the Meet tab to capture who said what.';
-const RECORDER_GONE = 'Recording stopped: the recorder is no longer running';
+
+/**
+ * `meta` with its routeDeadline (the route alarm's time, which pages show as "If you don’t
+ * choose, it goes to Team at 15:34") set to `at`, or removed when undefined; `meta` itself
+ * if unchanged.
+ */
+function withRouteDeadline(meta: SessionMeta, at: number | undefined): SessionMeta {
+  if (meta.routeDeadline === at) return meta;
+  return { ...meta, routeDeadline: at };
+}
 
 /** 'duplicate' and 'empty' can run again: "Transcribe anyway", or audio that holds more. */
 const TRANSCRIBABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
@@ -90,8 +105,6 @@ export type SendToOffscreen = <K extends keyof OffscreenProtocol & string>(
   type: K,
   payload: OffscreenProtocol[K]['req'],
 ) => Promise<OffscreenProtocol[K]['res']>;
-
-export type BadgeState = 'recording' | 'captions-only' | null;
 
 /**
  * How a push to a tab went. 'no-receiver': nothing listens in the tab, i.e. it was open
@@ -118,8 +131,14 @@ export interface SessionManagerDeps {
     open(url: string): Promise<void>;
   };
   openDashboard(): Promise<void>;
-  setBadge(state: BadgeState): Promise<void>;
-  openRoutingPrompt(sessionId: string): Promise<void>;
+  /** Opens Settings (the options page). */
+  openSettings(): Promise<void>;
+  /** Shows `state` on the toolbar button: icon, badge and tooltip. */
+  setActionState(state: ActionState): Promise<void>;
+  /** The toggle-recording shortcut as Chrome shows it ("Alt+Shift+R"), or null when unset. Never throws. */
+  shortcut(): Promise<string | null>;
+  /** Opens the Team | Personal prompt. Resolves to its window id, when known. */
+  openRoutingPrompt(sessionId: string): Promise<number | undefined>;
   notify(sessionId: string, title: string, message: string): Promise<void>;
   alarms: {
     create(name: string, info: { when?: number; delayInMinutes?: number; periodInMinutes?: number }): Promise<void>;
@@ -145,6 +164,12 @@ export interface SessionManager {
   toggle(tabId?: number): Promise<void>;
   route(sessionId: string, route: Route): Promise<void>;
   /**
+   * The routing prompt paused (`hold`) or resumed its countdown. Paused, the default route
+   * is not applied until the person resumes or closes the prompt, which re-arms the
+   * 2-minute default. `windowId` is the prompt's window, when the message came from one.
+   */
+  routeHold(sessionId: string, hold: boolean, windowId?: number): Promise<void>;
+  /**
    * Hands the process job (then the save) to the offscreen document and resolves once it
    * is accepted, or the session failed. `force` skips the Notion duplicate check.
    */
@@ -154,8 +179,11 @@ export interface SessionManager {
   /** Stops the session if it is recording, then deletes its audio, captions, result and meta. */
   remove(sessionId: string): Promise<void>;
   sweepRetention(): Promise<void>;
-  /** After an install or update: Meet tabs opened before it get a content script. */
-  onInstalled(): Promise<void>;
+  /**
+   * After an install or update: Meet tabs opened before it get a content script. A first
+   * install (`reason` 'install') also opens Settings, where setup starts.
+   */
+  onInstalled(reason?: string): Promise<void>;
   onMeetJoined(tabId: number | undefined, req: Req<'meet/joined'>): Promise<RecordingState | null>;
   onMeetLeft(tabId: number | undefined, req: Req<'meet/left'>): Promise<void>;
   onCaptions(req: Req<'captions/batch'>): Promise<void>;
@@ -165,8 +193,15 @@ export interface SessionManager {
   onJobDone(req: Req<'offscreen/job-done'>): Promise<void>;
   onTabRemoved(tabId: number): Promise<void>;
   onTabUrlChanged(tabId: number, url: string): Promise<void>;
+  /** A closed routing prompt that was paused re-arms the default route. */
+  onWindowRemoved(windowId: number): Promise<void>;
   onAlarm(name: string): Promise<void>;
   onNotificationClicked(notificationId: string): Promise<void>;
+  /**
+   * Recomputes the toolbar button from storage and shows it if it changed. Runs by itself
+   * on every relevant session or pointer write; alarms and caption batches call it too.
+   */
+  refreshAction(): Promise<void>;
   /** Resolves when every background task started so far has settled. */
   idle(): Promise<void>;
 }
@@ -183,7 +218,16 @@ interface MeetTab {
   title?: string;
 }
 
+interface RoutingPrompt {
+  windowId?: number;
+  /** The person paused the countdown: no default-route alarm is armed. */
+  held?: boolean;
+}
+
 type Job = NonNullable<SessionMeta['job']>;
+
+/** audio.error when the recorder can't start; captions are still captured. */
+const RECORDER_DIDNT_START = 'The recorder couldn’t start, so only captions are being saved.';
 
 function isForced(meta: SessionMeta): boolean {
   return meta.forced === true;
@@ -230,14 +274,11 @@ function parseSessionDir(name: string): { meetCode: string; startedAt: number } 
   return { meetCode, startedAt: Date.UTC(+y, +mo - 1, +d, +h, +mi, +s) };
 }
 
-function label(meta: SessionMeta): string {
-  return meta.meetingTitle || `Meet ${meta.meetCode}`;
-}
-
-/** Local HH:MM. */
-function clockTime(epochMs: number): string {
-  const d = new Date(epochMs);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/** Whether a change to a session can change the toolbar button. */
+function affectsAction(next: SessionMeta | null, previous: SessionMeta | null): boolean {
+  if (!next || !previous) return true;
+  if (next.status === 'recording' || previous.status === 'recording') return true;
+  return needsYou(next) !== needsYou(previous);
 }
 
 /** Whether `name` (as Notion's "Recorded by" has it) is the user's own display name. */
@@ -290,13 +331,62 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return run;
   }
 
-  async function notify(meta: SessionMeta, message: string): Promise<void> {
+  async function notify(sessionId: string, note: Note): Promise<void> {
     try {
-      await deps.notify(meta.id, label(meta), message);
+      await deps.notify(sessionId, note.title, note.message);
     } catch (err) {
       warn('Notification failed:', err);
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Toolbar button
+  // -------------------------------------------------------------------------
+
+  /** JSON of the state last shown, so unchanged states cost no Chrome calls. */
+  let shownAction: string | null = null;
+  let actionChain: Promise<void> = Promise.resolve();
+  /** A refresh that has not started yet: it will read whatever was written before it runs. */
+  let queuedAction: Promise<void> | null = null;
+
+  function refreshAction(): Promise<void> {
+    if (queuedAction) return queuedAction;
+    const run = actionChain.then(() => {
+      queuedAction = null;
+      return showAction();
+    });
+    queuedAction = run;
+    actionChain = run.catch(() => undefined);
+    return run;
+  }
+
+  async function showAction(): Promise<void> {
+    try {
+      const active = await getActiveRecording();
+      const meta = active ? await getSession(active.sessionId) : null;
+      const recording = meta?.status === 'recording' ? meta : null;
+      const state = actionStateFor({
+        recording,
+        sessions: recording ? [] : await listSessions(),
+        now: deps.now(),
+        shortcut: recording ? null : await deps.shortcut(),
+      });
+      const key = JSON.stringify(state);
+      if (key === shownAction) return;
+      await deps.setActionState(state);
+      shownAction = key;
+    } catch (err) {
+      warn('Could not update the toolbar button:', err);
+    }
+  }
+
+  // Session writes come only from this worker, but from dozens of places: watching
+  // storage catches every one of them. Time-based problems are rechecked by the
+  // watchdog alarm and by the chunks and captions that keep arriving.
+  watchSessions((_id, next, previous) => {
+    if (affectsAction(next, previous)) track(refreshAction());
+  });
+  watchActiveRecording(() => track(refreshAction()));
 
   // -------------------------------------------------------------------------
   // Tabs the content script told us about
@@ -336,7 +426,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       warn(`Could not add the content script to tab ${tabId}:`, err);
     }
     if (!reached) {
-      await updateSession(id, (m) => (m.status === 'recording' ? { ...m, captionsError: CAPTIONS_MISSING } : m));
+      await updateSession(id, (m) => (m.status === 'recording' ? { ...m, captionsError: problems.captionsMissing } : m));
     }
   }
 
@@ -358,14 +448,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (current?.status === 'recording') {
         return active.tabId === tabId
           ? { ok: true, sessionId: active.sessionId }
-          : { ok: false, error: 'Already recording another meeting. Stop it first.' };
+          : { ok: false, error: 'Already recording another meeting. Stop that recording first.' };
       }
       await clearActiveRecording();
     }
 
     const tab = await deps.tabs.get(tabId);
     const meetCode = tab?.url ? meetCodeFromUrl(tab.url) : null;
-    if (!meetCode) return { ok: false, error: 'This tab is not a Google Meet call.' };
+    if (!meetCode) return { ok: false, error: 'This tab isn’t a Google Meet call.' };
 
     const settings = await deps.getSettings();
     const requestedAt = deps.now();
@@ -381,7 +471,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       try {
         streamId = await deps.capture.getMediaStreamId(tabId);
       } catch (err) {
-        audioError = `Tab audio capture failed: ${errorMessage(err)}`;
+        // Shown in the popup and on the Notion page: plain words, the raw detail goes to the log.
+        warn('Tab capture failed', err);
+        audioError = 'Chrome couldn’t capture the call audio.';
       }
 
       const known = await rememberedTab(tabId);
@@ -409,7 +501,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         return { ok: false, error: 'The recording was stopped while it was starting.' };
       }
 
-      await deps.setBadge(meta.audio.error ? 'captions-only' : 'recording');
+      await refreshAction();
       if (!meta.audio.error) await armWatchdog();
       await pushState(tabId, id, { sessionId: id, startedAt: meta.startedAt });
       return { ok: true, sessionId: id };
@@ -428,7 +520,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         timesliceMs: TIMESLICE_MS,
         includeMic,
       });
-      if (!res.ok) return `Recorder failed to start: ${res.error}`;
+      if (!res.ok) {
+        warn('Recorder failed to start', res.error);
+        return RECORDER_DIDNT_START;
+      }
       await updateSession(id, (m) =>
         m.status === 'recording'
           ? {
@@ -441,7 +536,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       );
       return undefined;
     } catch (err) {
-      return `Recorder failed to start: ${errorMessage(err)}`;
+      warn('Recorder failed to start', err);
+      return RECORDER_DIDNT_START;
     }
   }
 
@@ -455,14 +551,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /**
-   * Clears the pointer, badge and watchdog, and tells the tab to stop capturing. With
+   * Clears the pointer and watchdog, shows the idle button, and tells the tab to stop capturing. With
    * `waitForTab` false the push is not awaited: the page's reply can depend on a
    * caption batch, and boot must never wait on a page.
    */
   async function releaseActive(active: ActiveRecording, waitForTab = true): Promise<void> {
     await clearActiveRecording();
     await deps.alarms.clear(WATCHDOG_ALARM);
-    await deps.setBadge(null);
+    await refreshAction();
     const push = deps.tabs.pushRecordingState(active.tabId, null);
     if (waitForTab) await push;
     else track(push);
@@ -499,25 +595,96 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (m.status !== 'recording') return m;
       ended = true;
       const audio = withCounts(m.audio, counts);
-      return {
+      const next: SessionMeta = {
         ...m,
         status: 'awaiting-route',
         endedAt,
         durationMs: Math.max(0, endedAt - m.startedAt),
         audio: recorderError && !audio.error ? { ...audio, error: recorderError } : audio,
       };
+      // With the status, so pages never see the meeting waiting without its deadline.
+      return withRouteDeadline(next, endedAt + ROUTE_DELAY_MS);
     });
     if (ended) await askForRoute(id, endedAt + ROUTE_DELAY_MS);
   }
 
-  /** The alarm first: it routes the meeting (to the default) even if the prompt never shows. */
+  /**
+   * The alarm first: it routes the meeting (to the default) even if the prompt never shows.
+   * A new prompt starts a new countdown, so an earlier pause no longer applies.
+   */
   async function askForRoute(id: string, when: number): Promise<void> {
-    await deps.alarms.create(routeAlarm(id), { when });
+    await armRouteAlarm(id, when);
+    await forgetRouting(id);
     try {
-      await deps.openRoutingPrompt(id);
+      const windowId = await deps.openRoutingPrompt(id);
+      if (windowId !== undefined) await setRouting(id, { windowId });
     } catch (err) {
       warn('Could not open the routing prompt:', err);
     }
+  }
+
+  /** Arms the default route for a meeting still waiting for one, and writes its time on the meta. */
+  async function armRouteAlarm(id: string, when: number): Promise<void> {
+    await deps.alarms.create(routeAlarm(id), { when });
+    await updateSession(id, (m) => (m.status === 'awaiting-route' ? withRouteDeadline(m, when) : m));
+  }
+
+  /** No default route any more (paused, routed, transcribed): no alarm, no deadline on the meta. */
+  async function clearRouteAlarm(id: string): Promise<void> {
+    await deps.alarms.clear(routeAlarm(id));
+    await updateSession(id, (m) => withRouteDeadline(m, undefined));
+  }
+
+  // -------------------------------------------------------------------------
+  // Routing prompt: pause and resume the default route
+  // -------------------------------------------------------------------------
+
+  async function routing(id: string): Promise<RoutingPrompt | null> {
+    const key = `${ROUTING_PREFIX}${id}`;
+    return ((await browser.storage.session.get(key))[key] as RoutingPrompt | undefined) ?? null;
+  }
+
+  async function setRouting(id: string, prompt: RoutingPrompt): Promise<void> {
+    await browser.storage.session.set({ [`${ROUTING_PREFIX}${id}`]: prompt });
+  }
+
+  async function forgetRouting(id: string): Promise<void> {
+    await browser.storage.session.remove(`${ROUTING_PREFIX}${id}`);
+  }
+
+  async function isHeld(id: string): Promise<boolean> {
+    return (await routing(id))?.held === true;
+  }
+
+  /** Pause and resume for one session happen one at a time, in arrival order. */
+  const routingOps = new Map<string, Promise<unknown>>();
+  function routingOp<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const run = (routingOps.get(id) ?? Promise.resolve()).then(fn);
+    const tail = run.catch(() => undefined);
+    routingOps.set(id, tail);
+    void tail.then(() => {
+      if (routingOps.get(id) === tail) routingOps.delete(id);
+    });
+    return run;
+  }
+
+  async function holdRoute(id: string, windowId: number | undefined): Promise<void> {
+    if ((await getSession(id))?.status !== 'awaiting-route') return;
+    await clearRouteAlarm(id);
+    const prompt = await routing(id);
+    await setRouting(id, { windowId: prompt?.windowId ?? windowId, held: true });
+  }
+
+  /** Re-arms the full default-route delay for a paused session still waiting for a route. */
+  async function resumeRoute(id: string, windowOpen: boolean): Promise<void> {
+    const prompt = await routing(id);
+    if (!prompt?.held) {
+      if (!windowOpen) await forgetRouting(id);
+      return;
+    }
+    if ((await getSession(id))?.status === 'awaiting-route') await armRouteAlarm(id, deps.now() + ROUTE_DELAY_MS);
+    if (windowOpen) await setRouting(id, prompt.windowId === undefined ? {} : { windowId: prompt.windowId });
+    else await forgetRouting(id);
   }
 
   /**
@@ -534,9 +701,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!meta || !changed) return;
     if ((await getActiveRecording())?.sessionId === id) {
       await deps.alarms.clear(WATCHDOG_ALARM);
-      await deps.setBadge('captions-only');
+      await refreshAction();
     }
-    await notify(meta, `${error}. Captions are still being recorded.`);
+    await notify(id, notes.captionsOnly());
   }
 
   // -------------------------------------------------------------------------
@@ -591,8 +758,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await deps.alarms.clear(WATCHDOG_ALARM);
       return;
     }
-    if (deps.now() - (meta.audio.lastChunkAt ?? meta.startedAt) <= STALL_MS) return;
-    if (!(await recorderAlive(meta.id))) await degradeAudio(meta.id, RECORDER_GONE);
+    // The same rule as the popup's "No audio for 20 s" and the toolbar's "!".
+    if (recordingHealth(meta, deps.now()).audio?.kind !== 'stalled') return;
+    if (!(await recorderAlive(meta.id))) await degradeAudio(meta.id, problems.audioStopped());
   }
 
   // -------------------------------------------------------------------------
@@ -604,17 +772,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const meta = await updateSession(id, (m) => {
       if (m.status === 'awaiting-route') {
         routed = true;
-        return { ...m, route, status: 'ready' };
+        return withRouteDeadline({ ...m, route, status: 'ready' }, undefined);
       }
       if (!explicit) return m;
       if (REROUTABLE.has(m.status)) return { ...m, route };
-      throw new Error(`Cannot route a session that is ${m.status}.`);
+      throw new MeetingProblem(problems.cannotRoute(m.status));
     });
     if (!meta) {
-      if (explicit) throw new Error(`Unknown session ${id}.`);
+      if (explicit) throw new MeetingProblem(problems.deleted);
       return;
     }
-    if (routed || explicit) await deps.alarms.clear(routeAlarm(id));
+    if (routed || explicit) {
+      // A choice ends the prompt's business: no alarm, no deadline, no pause, no window to watch.
+      await clearRouteAlarm(id);
+      await forgetRouting(id);
+    }
     if (routed && (await deps.getSettings()).autoTranscribe) {
       await transcribeNow(id).catch((err: unknown) => warn('Auto-transcribe failed:', err));
     }
@@ -635,33 +807,50 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return applied ? meta : null;
   }
 
-  async function failJob(id: string, jobId: string, error: string): Promise<void> {
-    const meta = await updateJob(id, jobId, (m) => ({ ...m, status: 'failed', stage: undefined, job: undefined, error }));
-    if (meta) await notify(meta, error);
+  /** The notification for a job of `kind` that failed with `reason`. */
+  function failureNote(meta: SessionMeta, kind: Job['kind'], reason: string): Note {
+    return kind === 'save'
+      ? notes.couldNotSave(meta, reason, deps.now())
+      : notes.couldNotTranscribe(meta, reason, deps.now());
   }
 
-  async function markMissingSettings(id: string, missing: string[]): Promise<void> {
-    const error = `Missing settings: ${missing.join(', ')}. Add them in Settings, then try again.`;
+  /** `reason` is what the person reads in the notification, when it differs from the stored error. */
+  async function failJob(id: string, jobId: string, error: string, reason = error): Promise<void> {
+    let kind: Job['kind'] = 'process';
+    const meta = await updateJob(id, jobId, (m) => {
+      kind = m.job?.kind ?? kind;
+      return { ...m, status: 'failed', stage: undefined, job: undefined, error };
+    });
+    if (meta) await notify(id, failureNote(meta, kind, reason));
+  }
+
+  /**
+   * The stored error is a record Meetings reads (sessionView MISSING_SETTINGS) and words
+   * itself; the notification says the same sentence.
+   */
+  async function markMissingSettings(id: string, missing: string[], kind: Job['kind']): Promise<void> {
+    const error = problems.missingSettings(missing);
     let changed = false;
     const meta = await updateSession(id, (m) => {
       if (RUNNING.has(m.status)) return m;
       changed = true;
       return { ...m, status: 'failed', stage: undefined, job: undefined, error };
     });
-    if (meta && changed) await notify(meta, error);
+    if (meta && changed) await notify(id, failureNote(meta, kind, problems.missingSettings(missing)));
   }
 
   /**
    * Hands a job to the offscreen document. Its outcome arrives as 'offscreen/job-done';
    * if the document never accepted it, the session fails with the reason.
    */
-  async function launch(id: string, jobId: string, what: string, send: () => Promise<unknown>): Promise<void> {
+  async function launch(id: string, jobId: string, kind: Job['kind'], send: () => Promise<unknown>): Promise<void> {
     launching.add(id);
     try {
       await deps.offscreen.ensure();
       await withTimeout(send(), ACCEPT_TIMEOUT_MS, 'The offscreen document');
     } catch (err) {
-      await failJob(id, jobId, `${what}: ${errorMessage(err)}`);
+      warn(`The offscreen document did not take the ${kind} job for ${id}:`, err);
+      await failJob(id, jobId, problems.didNotStart(kind));
     } finally {
       launching.delete(id);
     }
@@ -677,16 +866,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    */
   async function transcribeNow(id: string, opts: { force?: boolean; attempt?: number } = {}): Promise<void> {
     const meta = await getSession(id);
-    if (!meta) throw new Error(`Unknown session ${id}.`);
+    if (!meta) throw new MeetingProblem(problems.deleted);
     if (RUNNING.has(meta.status)) return;
-    if (!TRANSCRIBABLE.has(meta.status)) throw new Error(`Cannot transcribe a session that is ${meta.status}.`);
-    await deps.alarms.clear(routeAlarm(id));
+    if (!TRANSCRIBABLE.has(meta.status)) throw new MeetingProblem(problems.cannotTranscribe(meta.status));
+    await clearRouteAlarm(id);
     await deps.alarms.clear(retryAlarm(id));
     const settings = await deps.getSettings();
     const route = meta.route ?? settings.defaultRoute;
     const missing = missingForSave(settings, route);
     if (missing.length > 0) {
-      await markMissingSettings(id, missing);
+      await markMissingSettings(id, missing, 'process');
       return;
     }
 
@@ -714,7 +903,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!claimed || !processing) return;
 
     const force = isForced(processing);
-    await launch(id, job.id, 'Processing failed', async () => {
+    await launch(id, job.id, 'process', async () => {
       const captions = await loadCaptions(id);
       await deps.offscreen.send('offscreen/process', {
         jobId: job.id,
@@ -736,7 +925,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const route = meta.route ?? settings.defaultRoute;
     const missing = missingForSave(settings, route);
     if (missing.length > 0) {
-      await markMissingSettings(id, missing);
+      await markMissingSettings(id, missing, 'save');
       return;
     }
 
@@ -760,18 +949,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!claimed || !saving) return;
 
     const force = isForced(saving);
-    await launch(id, job.id, 'Saving to Notion failed', () =>
+    await launch(id, job.id, 'save', () =>
       deps.offscreen.send('offscreen/save', { jobId: job.id, meta: saving, result, settings, route, ...(force ? { force } : {}) }),
     );
   }
 
   async function saveJob(id: string, force?: boolean): Promise<void> {
     const meta = await getSession(id);
-    if (!meta) throw new Error(`Unknown session ${id}.`);
+    if (!meta) throw new MeetingProblem(problems.deleted);
     if (RUNNING.has(meta.status)) return;
-    if (!SAVABLE.has(meta.status) || !(await getResult(id))) {
-      throw new Error(`Nothing to save for a session that is ${meta.status}: transcribe it first.`);
-    }
+    if (!SAVABLE.has(meta.status) || !(await getResult(id))) throw new MeetingProblem(problems.cannotSave(meta.status));
     await deps.alarms.clear(retryAlarm(id));
     await saveNow(id, { force });
   }
@@ -793,10 +980,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     }));
     if (!meta) return;
     await notify(
-      meta,
-      self
-        ? 'You already saved part of this meeting — open the dashboard to save this recording too'
-        : `Already in Notion — recorded by ${existing.recordedBy || 'a teammate'}`,
+      id,
+      self ? notes.alreadySavedByYou(meta, now) : notes.alreadyInNotion(meta, existing.recordedBy, now),
     );
   }
 
@@ -813,7 +998,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         await scheduleRetry(meta, jobId, outcome.error);
         return;
       case 'error':
-        await failJob(id, jobId, outcome.error);
+        // Unexpected by contract (Gemini and Notion trouble degrade or retry instead): a
+        // bug's words help nobody on Meetings, so they go to the console.
+        warn(`Transcribing ${id} failed:`, outcome.error);
+        await failJob(id, jobId, problems.transcribingStopped);
         return;
     }
   }
@@ -821,11 +1009,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   async function processed(id: string, jobId: string, result: SessionResult): Promise<void> {
     const previous = await getResult(id);
     if (worseThan(previous, result)) {
-      await failJob(
-        id,
-        jobId,
-        `Transcribing again failed (${failureReason(result)}), so the previous transcript was kept. Save it, or transcribe again later.`,
-      );
+      warn(`Transcribing ${id} again came out worse, so the earlier transcript was kept:`, failureReason(result));
+      await failJob(id, jobId, problems.earlierTranscriptKept);
       return;
     }
     await putResult(id, result);
@@ -842,7 +1027,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         job: undefined,
         purgeAudioAt: now + settings.retentionDays * DAY_MS,
       }));
-      if (empty) await notify(empty, 'Nothing was said or captured, so this recording was not saved to Notion.');
+      if (empty) await notify(id, notes.nothingToSave(empty, now));
       else if (!(await getSession(id))) await deleteResult(id);
       return;
     }
@@ -857,12 +1042,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
   async function scheduleRetry(meta: SessionMeta, jobId: string, error: string): Promise<void> {
     const attempt = meta.attempt ?? 1;
+    warn(`Gemini could not transcribe ${meta.id} (attempt ${attempt}):`, error);
     if (attempt >= MAX_TRANSCRIBE_ATTEMPTS) {
-      await failJob(meta.id, jobId, `Gemini unreachable: ${error}.`);
+      await failJob(meta.id, jobId, problems.geminiGaveUp(error, attempt));
       return;
     }
     const retryAt = deps.now() + RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length) - 1]!;
-    const message = `Gemini unreachable: ${error}. Retrying automatically at ${clockTime(retryAt)}.`;
+    const message = problems.geminiRetrying(error, retryAt);
     const failed = await updateJob(meta.id, jobId, (m) => ({
       ...m,
       status: 'failed',
@@ -873,7 +1059,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     }));
     if (!failed) return;
     await deps.alarms.create(retryAlarm(meta.id), { when: retryAt });
-    await notify(failed, message);
+    // One notification per outage: later retries only move the time, which Meetings shows
+    // (HIG notifications.md › Best practices: "Avoid sending multiple notifications for the same thing").
+    if (attempt === 1) await notify(meta.id, notes.retrying(failed, retryAt, deps.now()));
   }
 
   async function saveDone(meta: SessionMeta, jobId: string, outcome: SaveOutcome): Promise<void> {
@@ -893,7 +1081,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           savedAt,
           purgeAudioAt: savedAt + settings.retentionDays * DAY_MS,
         }));
-        if (saved) await notify(saved, 'Saved to Notion.');
+        if (saved) await notify(id, notes.saved(saved, savedAt));
         return;
       }
       case 'duplicate':
@@ -928,11 +1116,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const active = await getActiveRecording();
       if (meta?.status === 'recording' && !meta.audio.error && !(await stopRecorder(id))) {
         // Leave it recording, as it is, rather than half deleted under a live recorder.
-        if (await recorderAlive(id)) throw new Error('Could not stop the recording. Try again.');
+        if (await recorderAlive(id)) throw new MeetingProblem(problems.couldNotStop);
       }
       if (active?.sessionId === id) await releaseActive(active);
       await deps.alarms.clear(routeAlarm(id));
       await deps.alarms.clear(retryAlarm(id));
+      await forgetRouting(id);
       // Audio goes first: an audio directory without a session would be adopted at next boot.
       await deps.offscreen.ensure();
       await deps.offscreen.send('offscreen/audio-delete', { sessionId: id });
@@ -1010,7 +1199,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await updateSession(s.id, (m) => {
         if (m.status !== 'recording') return m;
         changed = true;
-        return { ...m, status: 'awaiting-route', recovered: true, endedAt, durationMs: Math.max(0, endedAt - m.startedAt) };
+        const durationMs = Math.max(0, endedAt - m.startedAt);
+        const next: SessionMeta = { ...m, status: 'awaiting-route', recovered: true, endedAt, durationMs };
+        return withRouteDeadline(next, now + ROUTE_DELAY_MS);
       });
       if (!changed) continue;
       recovered.push(s.id);
@@ -1019,7 +1210,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     if (active && !busy(active.sessionId)) {
       if (activeMeta) {
-        await deps.setBadge(activeMeta.audio.error ? 'captions-only' : 'recording');
         if (!activeMeta.audio.error) await armWatchdog();
       } else {
         await releaseActive(active, false);
@@ -1084,7 +1274,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const now = deps.now();
     for (const s of await listSessions()) {
       if (finalizing.has(s.id)) continue;
-      if (s.status === 'awaiting-route' && !(await deps.alarms.exists(routeAlarm(s.id)))) {
+      // A paused prompt has no alarm on purpose (storage.session forgets pauses with the browser).
+      if (s.status === 'awaiting-route' && !(await deps.alarms.exists(routeAlarm(s.id))) && !(await isHeld(s.id))) {
         const due = (s.endedAt ?? now) + ROUTE_DELAY_MS;
         if (!newBrowserSession && due <= now) await applyDefaultRoute(s.id);
         // Lost, or never armed (the worker died while ending it): the prompt may never have shown.
@@ -1161,11 +1352,30 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         track(job.kind === 'process' ? transcribeNow(job.id, { attempt: job.attempt }) : saveNow(job.id));
       }
     }
+    // The button's state lives in the browser, not the worker: after a browser restart it
+    // is back to the manifest's, so show what storage says.
+    await refreshAction();
   }
 
   // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
+
+  /**
+   * Runs a request a page made. Its words reach that page as they are, so anything but a
+   * MeetingProblem (a storage or messaging failure inside Chrome) goes to the console and
+   * the page hears "Chrome didn't respond. Try again." (HIG writing.md › Getting started:
+   * plain language, no jargon).
+   */
+  async function request<T>(what: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof MeetingProblem) throw err;
+      warn(`Could not ${what}:`, err);
+      throw new MeetingProblem(problems.noResponse);
+    }
+  }
 
   return {
     boot(opts = {}) {
@@ -1177,9 +1387,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     start,
 
-    async stop(sessionId) {
-      await ready();
-      await finalize(sessionId, { kind: 'ended' });
+    stop(sessionId) {
+      return request('stop the recording', async () => {
+        await ready();
+        await finalize(sessionId, { kind: 'ended' });
+      });
     },
 
     async toggle(tabId) {
@@ -1192,32 +1404,45 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const target = tabId ?? (await deps.tabs.activeTabId());
       if (target === null) return;
       const res = await start(target);
-      if (!res.ok) await deps.notify('start', 'Manet Meetings', res.error).catch((err: unknown) => warn('Notification failed:', err));
+      if (!res.ok) await notify('start', notes.couldNotStart(res.error));
     },
 
-    async route(sessionId, route) {
-      await ready();
-      await applyRoute(sessionId, route, true);
+    route(sessionId, route) {
+      return request(`save the meeting to ${route}`, async () => {
+        await ready();
+        await applyRoute(sessionId, route, true);
+      });
     },
 
-    async transcribe(sessionId, opts = {}) {
+    async routeHold(sessionId, hold, windowId) {
       await ready();
-      await transcribeNow(sessionId, { ...(opts.force ? { force: true } : {}), attempt: 1 });
+      await routingOp(sessionId, () => (hold ? holdRoute(sessionId, windowId) : resumeRoute(sessionId, true)));
     },
 
-    async save(sessionId, opts = {}) {
-      await ready();
-      await saveJob(sessionId, opts.force);
+    transcribe(sessionId, opts = {}) {
+      return request('transcribe', async () => {
+        await ready();
+        await transcribeNow(sessionId, { ...(opts.force ? { force: true } : {}), attempt: 1 });
+      });
     },
 
-    async remove(sessionId) {
-      await ready();
-      // A recording is removed in turn with starts and ends, so no recorder outlives it.
-      if (startingIds.has(sessionId) || (await getSession(sessionId))?.status === 'recording') {
-        await serial(() => removeSession(sessionId));
-      } else {
-        await removeSession(sessionId);
-      }
+    save(sessionId, opts = {}) {
+      return request('save to Notion', async () => {
+        await ready();
+        await saveJob(sessionId, opts.force);
+      });
+    },
+
+    remove(sessionId) {
+      return request('delete', async () => {
+        await ready();
+        // A recording is removed in turn with starts and ends, so no recorder outlives it.
+        if (startingIds.has(sessionId) || (await getSession(sessionId))?.status === 'recording') {
+          await serial(() => removeSession(sessionId));
+        } else {
+          await removeSession(sessionId);
+        }
+      });
     },
 
     async sweepRetention() {
@@ -1225,7 +1450,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await sweep();
     },
 
-    async onInstalled() {
+    async onInstalled(reason) {
+      if (reason === 'install') {
+        await deps.openSettings().catch((err: unknown) => warn('Could not open Settings:', err));
+      }
       await ready();
       const active = await getActiveRecording();
       const meta = active ? await getSession(active.sessionId) : null;
@@ -1273,11 +1501,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     // Not gated on boot: merging needs no recovery, and boot may be releasing this very tab.
     async onCaptions({ sessionId, segments }) {
       if (deleting.has(sessionId) || !(await getSession(sessionId))) return;
-      const count = await mergeCaptions(sessionId, segments);
+      const { count, speakers } = await mergeCaptions(sessionId, segments);
       const now = deps.now();
       const meta = await updateSession(sessionId, (m) => ({
         ...m,
         captionCount: count,
+        speakers,
         captionsError: undefined,
         ...(m.status === 'recording' ? { lastHeartbeat: now } : {}),
       }));
@@ -1312,7 +1541,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await updateSession(sessionId, (m) => ({ ...m, audio: withCounts(m.audio, counts) }));
       // A requested stop is already being finalized by whoever requested it.
       if (reason === 'requested' || finalizing.has(sessionId)) return;
-      const message = reason === 'error' ? `Recording stopped: ${error ?? 'recorder error'}` : 'Recording stopped: the tab audio ended';
+      const message = reason === 'error' ? problems.audioStopped(error) : problems.tabAudioEnded;
       const active = await getActiveRecording();
       if (active?.sessionId === sessionId && (await tabOnCall(active))) {
         await degradeAudio(sessionId, message);
@@ -1343,12 +1572,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await finalize(active.sessionId, { kind: 'ended' });
     },
 
+    async onWindowRemoved(windowId) {
+      await ready();
+      const stored = await browser.storage.session.get(null);
+      for (const [key, value] of Object.entries(stored)) {
+        if (!key.startsWith(ROUTING_PREFIX) || (value as RoutingPrompt).windowId !== windowId) continue;
+        const id = key.slice(ROUTING_PREFIX.length);
+        await routingOp(id, () => resumeRoute(id, false));
+      }
+    },
+
     async onAlarm(name) {
       await ready();
       if (name === RETENTION_ALARM) await sweep();
-      else if (name === WATCHDOG_ALARM) await checkRecorder(false);
-      else if (name.startsWith(ROUTE_ALARM_PREFIX)) await applyDefaultRoute(name.slice(ROUTE_ALARM_PREFIX.length));
-      else if (name.startsWith(RETRY_ALARM_PREFIX)) await retryTranscription(name.slice(RETRY_ALARM_PREFIX.length));
+      else if (name === WATCHDOG_ALARM) {
+        await checkRecorder(false);
+        // Problems that only time reveals: no captions yet, captions gone quiet, audio stalled.
+        await refreshAction();
+      } else if (name.startsWith(ROUTE_ALARM_PREFIX)) {
+        const id = name.slice(ROUTE_ALARM_PREFIX.length);
+        // Fired just as the prompt was paused: the pause wins.
+        if (!(await isHeld(id))) await applyDefaultRoute(id);
+      } else if (name.startsWith(RETRY_ALARM_PREFIX)) await retryTranscription(name.slice(RETRY_ALARM_PREFIX.length));
     },
 
     async onNotificationClicked(notificationId) {
@@ -1359,6 +1604,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (meta?.notion?.url && !ownDuplicate) await deps.tabs.open(meta.notion.url);
       else await deps.openDashboard();
     },
+
+    refreshAction,
 
     async idle() {
       await booting;
@@ -1376,6 +1623,7 @@ export function backgroundHandlers(manager: SessionManager): Handlers<Background
     'session/start': (req) => manager.start(req.tabId),
     'session/stop': (req) => manager.stop(req.sessionId),
     'session/route': (req) => manager.route(req.sessionId, req.route),
+    'session/route-hold': (req, sender) => manager.routeHold(req.sessionId, req.hold, sender.tab?.windowId),
     'session/transcribe': (req) => manager.transcribe(req.sessionId, { force: req.force === true }),
     'session/save': (req) => manager.save(req.sessionId, { force: req.force === true }),
     'session/delete': (req) => manager.remove(req.sessionId),

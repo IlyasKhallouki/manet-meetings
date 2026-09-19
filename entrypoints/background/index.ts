@@ -39,16 +39,19 @@ export default defineBackground(() => {
   browser.tabs.onUpdated.addListener((tabId, change) => {
     if (change.url) run(manager.onTabUrlChanged(tabId, change.url));
   });
+  // Closing a paused routing prompt re-arms the default route.
+  browser.windows.onRemoved.addListener((windowId) => run(manager.onWindowRemoved(windowId)));
   browser.alarms.onAlarm.addListener((alarm) => run(manager.onAlarm(alarm.name)));
   browser.commands.onCommand.addListener((command, tab) => {
     if (command === 'toggle-recording') run(manager.toggle(tab?.id));
   });
   browser.notifications.onClicked.addListener((id) => run(manager.onNotificationClicked(id)));
   browser.runtime.onStartup.addListener(() => run(manager.boot({ full: true })));
-  browser.runtime.onInstalled.addListener(() => {
+  browser.runtime.onInstalled.addListener(({ reason }) => {
     run(manager.boot({ full: true }));
-    // Chrome does not add content scripts to tabs that were already open.
-    run(manager.onInstalled());
+    // Chrome does not add content scripts to tabs that were already open. A first install
+    // also opens Settings, where the setup checklist starts.
+    run(manager.onInstalled(reason));
   });
 
   run(manager.boot());

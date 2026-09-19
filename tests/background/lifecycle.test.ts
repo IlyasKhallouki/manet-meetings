@@ -6,7 +6,7 @@ import { getActiveRecording, getSession, listSessions, watchSessions } from '@li
 import type { SessionStatus } from '@lib/types';
 import { idempotencyKey, sessionId } from '@lib/util/ids';
 import type { SessionManager } from '@/entrypoints/background/sessionManager';
-import { configure, DAY, deferred, MEET_CODE, MEET_URL, seg, setupHarness, T0, type Harness } from './harness';
+import { clockTime, configure, DAY, deferred, MEET_CODE, MEET_URL, seg, setupHarness, T0, type Harness } from './harness';
 
 const ID = sessionId(MEET_CODE, T0);
 const ROUTE_DELAY = 2 * 60 * 1000;
@@ -68,7 +68,10 @@ describe('recording lifecycle', () => {
     });
     expect(meta?.audio.error).toBeUndefined();
     expect(await getActiveRecording()).toEqual({ sessionId: ID, tabId, meetCode: MEET_CODE });
-    expect(await h.badge()).toBe('REC');
+    // Red dot on the icon, no badge: nothing is wrong. The tooltip names no meeting.
+    expect(h.icon()).toBe('recording');
+    expect(await h.badge()).toBe('');
+    expect(await h.badgeTitle()).toBe(`Recording since ${clockTime(startedAt)}`);
     expect(h.pushes).toEqual([{ tabId, state: { sessionId: ID, startedAt } }]);
 
     // The content script re-attaches after a reload; other tabs are not recorded.
@@ -101,7 +104,10 @@ describe('recording lifecycle', () => {
       audio: { chunkCount: 3, bytes: 12_000 },
     });
     expect(await getActiveRecording()).toBeNull();
-    expect(await h.badge()).toBe('');
+    await m.idle();
+    // Back to the idle icon, with the meeting waiting for Team or Personal counted in amber.
+    expect(h.icon()).toBe('idle');
+    expect(await h.badge()).toBe('1');
     expect(h.pushes.at(-1)).toEqual({ tabId, state: null });
     expect(h.windowsCreate).toHaveBeenCalledTimes(1);
     expect(h.windowsCreate.mock.calls[0]?.[0]).toMatchObject({
@@ -139,6 +145,14 @@ describe('recording lifecycle', () => {
     expect(saved?.error).toBeUndefined();
     expect(statuses).toEqual(['recording', 'awaiting-route', 'ready', 'processing', 'processed', 'saving', 'saved']);
     expect(saved?.job).toBeUndefined();
+    expect(await h.badge()).toBe('');
+    expect(h.notifications()).toEqual([
+      {
+        id: `manet:${ID}`,
+        title: 'Saved to Notion',
+        message: `Your ${clockTime(startedAt)} meeting (under 1 min) is in Personal.`,
+      },
+    ]);
     unwatch();
   });
 
@@ -172,6 +186,26 @@ describe('recording lifecycle', () => {
     expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(1);
   });
 
+  it('keeps the roll of speakers in the session, in order of first speech', async () => {
+    await record();
+    await m.onCaptions({
+      sessionId: ID,
+      segments: [seg('c2', 'Tom Martin', 6000, 'Salut'), { ...seg('c1', 'Vous', 1000, 'Bonjour'), self: true }],
+    });
+    await m.onCaptions({ sessionId: ID, segments: [seg('c3', 'Marie Curie', 9000, 'On commence ?'), seg('c4', 'Tom Martin', 12_000, 'Oui')] });
+    expect((await getSession(ID))?.speakers).toEqual([
+      { name: 'Vous', self: true, firstAt: 1000, lastAt: 3000, talkMs: 2000 },
+      { name: 'Tom Martin', self: false, firstAt: 6000, lastAt: 14_000, talkMs: 4000 },
+      { name: 'Marie Curie', self: false, firstAt: 9000, lastAt: 11_000, talkMs: 2000 },
+    ]);
+    expect((await getSession(ID))?.captionCount).toBe(4);
+
+    // A late batch after the end still lands in the roll the routing prompt shows.
+    await m.stop(ID);
+    await m.onCaptions({ sessionId: ID, segments: [seg('c5', 'Léa', 15_000, 'Au revoir')] });
+    expect((await getSession(ID))?.speakers?.map((s) => s.name)).toEqual(['Vous', 'Tom Martin', 'Marie Curie', 'Léa']);
+  });
+
   it('refuses to route a session that is still recording', async () => {
     await record();
     await expect(m.route(ID, 'team')).rejects.toThrow(/recording/);
@@ -202,9 +236,11 @@ describe('duplicates and failures', () => {
     expect(meta?.purgeAudioAt).toBe(h.clock.now() + 7 * DAY);
     expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(0);
     expect(await getResult(ID)).toBeNull();
-    expect(h.notifications()).toContainEqual(
-      expect.objectContaining({ id: `manet:${ID}`, message: 'Already in Notion — recorded by Alice' }),
-    );
+    expect(h.notifications()).toContainEqual({
+      id: `manet:${ID}`,
+      title: 'Already in Notion',
+      message: `Alice saved the ${clockTime(T0 + 150)} meeting, so yours wasn’t added.`,
+    });
   });
 
   it('marks a duplicate found at save time and keeps the local result', async () => {
@@ -215,7 +251,7 @@ describe('duplicates and failures', () => {
     await recordAndRoute();
     expect(await getSession(ID)).toMatchObject({ status: 'duplicate', notion: { pageId: 'p7', recordedBy: 'Bob' } });
     expect(await getResult(ID)).not.toBeNull();
-    expect(h.notifications().map((n) => n.message)).toContain('Already in Notion — recorded by Bob');
+    expect(h.notifications().map((n) => n.message)).toContainEqual(expect.stringMatching(/^Bob saved the /));
   });
 
   it('keeps the result when saving fails, then saves on retry', async () => {
@@ -223,7 +259,11 @@ describe('duplicates and failures', () => {
     await recordAndRoute();
     expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Notion returned 502' });
     expect(await getResult(ID)).not.toBeNull();
-    expect(h.notifications().map((n) => n.message)).toContain('Notion returned 502');
+    expect(h.notifications()).toContainEqual({
+      id: `manet:${ID}`,
+      title: `Couldn’t save the ${clockTime(T0 + 150)} meeting`,
+      message: 'Notion returned 502.',
+    });
 
     h.offscreen.save = () => ({ status: 'created', pageId: 'page-2', url: 'https://www.notion.so/page-2' });
     await m.save(ID);
@@ -235,9 +275,12 @@ describe('duplicates and failures', () => {
   });
 
   it('marks the session failed when the pipeline reports an error', async () => {
-    h.offscreen.process = () => ({ status: 'error', error: 'Gemini quota exceeded' });
+    h.offscreen.process = () => ({ status: 'error', error: 'Processing failed: TypeError: turns is undefined' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await recordAndRoute();
-    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Gemini quota exceeded' });
+    // A bug's words are for the console; the meeting says what happened and what to do.
+    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Transcribing stopped before it finished. Try again.' });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[manet\] Transcribing .* failed:$/), expect.stringContaining('turns is undefined'));
     expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(0);
     await expect(m.save(ID)).rejects.toThrow(/transcribe/i);
   });
@@ -246,8 +289,10 @@ describe('duplicates and failures', () => {
     h.offscreen.process = () => {
       throw new Error('Offscreen crashed');
     };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await recordAndRoute();
-    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: expect.stringContaining('Offscreen crashed') });
+    expect(await getSession(ID)).toMatchObject({ status: 'failed', error: 'Transcribing stopped before it finished. Try again.' });
+    expect(warn).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('Offscreen crashed'));
     expect((await getSession(ID))?.stage).toBeUndefined();
   });
 
@@ -286,10 +331,12 @@ describe('capture failures keep a captions-only session', () => {
 
     const meta = await getSession(ID);
     expect(meta).toMatchObject({ status: 'recording', startedAt: T0, audio: { chunkCount: 0 } });
-    expect(meta?.audio.error).toMatch(/not been invoked/);
+    expect(meta?.audio.error).toBe('Chrome couldn’t capture the call audio.');
     expect(h.offscreen.callsOf('offscreen/recorder-start')).toHaveLength(0);
     expect(h.pushes).toEqual([{ tabId, state: { sessionId: ID, startedAt: T0 } }]);
-    expect(await h.badge()).toBe('REC');
+    expect(h.icon()).toBe('recording');
+    expect(await h.badge()).toBe('!');
+    expect(await h.badgeTitle()).toBe('Recording captions only — no call audio');
 
     await m.onCaptions({ sessionId: ID, segments: [seg('c1', 'Alice', 500, 'On commence')] });
     await m.onMeetLeft(tabId, { meetCode: MEET_CODE });
@@ -304,7 +351,7 @@ describe('capture failures keep a captions-only session', () => {
     await record();
     const meta = await getSession(ID);
     expect(meta).toMatchObject({ status: 'recording', startedAt: T0 });
-    expect(meta?.audio.error).toMatch(/Permission denied/);
+    expect(meta?.audio.error).toBe('The recorder couldn’t start, so only captions are being saved.');
   });
 
   it('when the offscreen document cannot be created', async () => {
@@ -312,7 +359,7 @@ describe('capture failures keep a captions-only session', () => {
     h.offscreen.close();
     h.createDocument.mockRejectedValueOnce(new Error('offscreen blocked'));
     await record();
-    expect((await getSession(ID))?.audio.error).toMatch(/offscreen blocked/);
+    expect((await getSession(ID))?.audio.error).toBe('The recorder couldn’t start, so only captions are being saved.');
   });
 });
 
@@ -381,13 +428,22 @@ describe('audio failing mid-call', () => {
 
     const meta = await getSession(ID);
     expect(meta).toMatchObject({ status: 'recording', audio: { chunkCount: 2, bytes: 8000 } });
-    expect(meta?.audio.error).toMatch(/QuotaExceededError/);
+    // Under the red "Recording", never "Recording stopped"; the recorder's own error is kept.
+    expect(meta?.audio.error).toBe('Chrome stopped the audio recording (QuotaExceededError).');
     expect(await getActiveRecording()).toMatchObject({ sessionId: ID, tabId });
-    expect(await h.badge()).toBe('REC');
+    expect(h.icon()).toBe('recording');
+    expect(await h.badge()).toBe('!');
     expect(await h.badgeTitle()).toMatch(/captions only/);
     expect(h.pushes).toEqual([{ tabId, state: { sessionId: ID, startedAt: T0 + 150 } }]);
     expect(h.windowsCreate).not.toHaveBeenCalled();
-    expect(h.notifications().some((n) => n.message.includes('QuotaExceededError'))).toBe(true);
+    // The reason stays in the popup; the notification says what it means for the meeting.
+    expect(h.notifications()).toEqual([
+      {
+        id: `manet:${ID}`,
+        title: 'Recording captions only',
+        message: "Call audio couldn’t be captured. Speakers and what they say are still being saved.",
+      },
+    ]);
     expect(await fakeBrowser.alarms.get('recorder-watchdog')).toBeUndefined();
 
     await m.onCaptions({ sessionId: ID, segments: [seg('c1', 'Alice', 60_000, 'Toujours là')] });
@@ -403,7 +459,7 @@ describe('audio failing mid-call', () => {
     await m.onRecorderStopped({ sessionId: ID, reason: 'track-ended', chunkCount: 3, bytes: 12_000 });
     const meta = await getSession(ID);
     expect(meta?.status).toBe('recording');
-    expect(meta?.audio.error).toBeDefined();
+    expect(meta?.audio.error).toBe('The Meet tab’s audio ended.');
     expect(await getActiveRecording()).toMatchObject({ sessionId: ID, tabId });
   });
 });
@@ -431,10 +487,10 @@ describe('recorder watchdog', () => {
     await m.onAlarm('recorder-watchdog');
     const meta = await getSession(ID);
     expect(meta?.status).toBe('recording');
-    expect(meta?.audio.error).toMatch(/no longer running/);
+    expect(meta?.audio.error).toBe('Chrome stopped the audio recording.');
     expect(await h.badgeTitle()).toMatch(/captions only/);
     expect(await getActiveRecording()).toMatchObject({ sessionId: ID, tabId });
-    expect(h.notifications().some((n) => n.message.includes('no longer running'))).toBe(true);
+    expect(h.notifications().map((n) => n.title)).toEqual(['Recording captions only']);
   });
 
   it('also checks on caption batches, and trusts a recorder that still runs', async () => {
@@ -449,7 +505,7 @@ describe('recorder watchdog', () => {
     h.clock.advance(5000);
     await m.onCaptions({ sessionId: ID, segments: [seg('c2', 'Bob', 24_000, 'Allô ?')] });
     await m.idle();
-    expect((await getSession(ID))?.audio.error).toMatch(/no longer running/);
+    expect((await getSession(ID))?.audio.error).toBe('Chrome stopped the audio recording.');
   });
 
   it('does not declare the recorder dead when its status cannot be read', async () => {
@@ -476,7 +532,9 @@ describe('starting', () => {
     expect(await getSession(ID)).toMatchObject({ status: 'awaiting-route', startedAt: T0 + 150 });
     expect(h.offscreen.recording.size).toBe(0);
     expect(await getActiveRecording()).toBeNull();
-    expect(await h.badge()).toBe('');
+    await m.idle();
+    expect(h.icon()).toBe('idle');
+    expect(await h.badge()).toBe('1');
     expect(h.pushes.at(-1)).toEqual({ tabId, state: null });
     expect(h.windowsCreate).toHaveBeenCalledTimes(1);
   });
@@ -628,6 +686,8 @@ describe('deleting', () => {
 
     expect(h.offscreen.callsOf('offscreen/recorder-stop')).toEqual([{ sessionId: ID }]);
     expect(await getActiveRecording()).toBeNull();
+    await m.idle();
+    expect(h.icon()).toBe('idle');
     expect(await h.badge()).toBe('');
     expect(h.pushes.at(-1)).toEqual({ tabId, state: null });
     expect(h.windowsCreate).not.toHaveBeenCalled();
@@ -659,7 +719,7 @@ describe('deleting', () => {
   it('keeps a recording whose recorder cannot be stopped', async () => {
     const tabId = await record();
     h.offscreen.recorderStopError = 'Recorder stop timed out';
-    await expect(m.remove(ID)).rejects.toThrow();
+    await expect(m.remove(ID)).rejects.toThrow('Couldn’t stop the recording, so it wasn’t deleted. Try again.');
     expect((await getSession(ID))?.status).toBe('recording');
     expect(await getActiveRecording()).toMatchObject({ sessionId: ID, tabId });
     expect(h.offscreen.recording.has(ID)).toBe(true);
@@ -669,7 +729,70 @@ describe('deleting', () => {
     const tabId = await record();
     await m.onMeetLeft(tabId, { meetCode: MEET_CODE });
     h.offscreen.audioDeleteError = 'OPFS unavailable';
-    await expect(m.remove(ID)).rejects.toThrow('OPFS unavailable');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The raw reason is for the console; Meetings shows words, next to the Delete used.
+    await expect(m.remove(ID)).rejects.toThrow('Chrome didn’t respond. Try again.');
+    expect(warn).toHaveBeenCalledWith('[manet] Could not delete:', expect.stringContaining('OPFS unavailable'));
     expect(await getSession(ID)).not.toBeNull();
+  });
+});
+
+describe('what a page hears when a request can’t be carried out', () => {
+  /** Words the direction keeps out of the UI (copyVoice › Glossary), and Chrome's "options". */
+  const JARGON = /\b(session|route|job|stage|pipeline|opfs|offscreen|duplicate|force|options)\b/i;
+
+  /** The reason `request` failed with, checked against the glossary and the house style. */
+  async function reason(request: Promise<unknown>): Promise<string> {
+    const err = await request.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).not.toMatch(JARGON);
+    expect(message).not.toMatch(/'/);
+    expect(message).toMatch(/^[A-Z].*\.$/);
+    return message;
+  }
+
+  it('says what state the meeting is in and what to do next', async () => {
+    await configure({ autoTranscribe: false });
+    expect(await reason(m.route('abc-defg-hij_20260101T000000Z', 'team'))).toBe('This meeting was deleted.');
+    expect(await reason(m.transcribe('abc-defg-hij_20260101T000000Z'))).toBe('This meeting was deleted.');
+    expect(await reason(m.save('abc-defg-hij_20260101T000000Z'))).toBe('This meeting was deleted.');
+
+    const tabId = await record();
+    expect(await reason(m.route(ID, 'team'))).toBe('Stop recording first, then choose Team or Personal.');
+    expect(await reason(m.transcribe(ID))).toBe('Stop recording first, then transcribe it.');
+    expect(await reason(m.save(ID))).toBe('Stop recording first, then transcribe it.');
+
+    await m.onMeetLeft(tabId, { meetCode: MEET_CODE });
+    await m.route(ID, 'team');
+    expect(await reason(m.save(ID))).toBe('Transcribe this meeting first, then save it.');
+
+    await m.transcribe(ID);
+    await m.idle();
+    expect((await getSession(ID))?.status).toBe('saved');
+    expect(await reason(m.route(ID, 'personal'))).toBe('This meeting is already in Notion.');
+    expect(await reason(m.transcribe(ID))).toBe('This meeting is already in Notion.');
+    expect(await reason(m.save(ID))).toBe('This meeting is already in Notion.');
+  });
+
+  it('keeps what Chrome said for the console', async () => {
+    const tabId = await record();
+    await m.onMeetLeft(tabId, { meetCode: MEET_CODE });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(fakeBrowser.storage.session, 'remove').mockRejectedValue(new Error('Invalid session storage key'));
+    expect(await reason(m.route(ID, 'personal'))).toBe('Chrome didn’t respond. Try again.');
+    expect(warn).toHaveBeenCalledWith('[manet] Could not save the meeting to personal:', 'Invalid session storage key');
+  });
+
+  it('flags a tab without captions in the product’s name, with the fix', async () => {
+    const tabId = await h.openMeetTab(MEET_URL, { contentScript: false });
+    h.executeScript.mockRejectedValueOnce(new Error('Cannot access contents of the page'));
+    await m.start(tabId);
+    expect((await getSession(ID))?.captionsError).toBe(
+      'Manet Meetings can’t read this tab’s captions. Reload the Meet tab to capture who said what.',
+    );
   });
 });

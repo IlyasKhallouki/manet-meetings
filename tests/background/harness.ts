@@ -1,7 +1,8 @@
 /**
  * Test harness for the background: WXT's fakeBrowser for storage, tabs, windows,
  * alarms, notifications and the action badge, plus stubs for the chrome APIs it lacks
- * (tabCapture, offscreen, runtime.getContexts, tabs.sendMessage, scripting, commands).
+ * (tabCapture, offscreen, runtime.getContexts, tabs.sendMessage, scripting, commands,
+ * action.setIcon, runtime.openOptionsPage).
  *
  * The offscreen document cannot run in Node (it needs a tab-capture MediaStream), so
  * FakeOffscreen answers OffscreenProtocol messages over the fake chrome.runtime, through
@@ -83,11 +84,8 @@ export function deferred<T = void>() {
   return { promise, resolve };
 }
 
-/** Local HH:MM, as the retry message shows it. */
-export function clockTime(epochMs: number): string {
-  const d = new Date(epochMs);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+/** The time as the background writes it (hour cycle of the test machine's locale). */
+export { clockTime } from '@/entrypoints/background/copy';
 
 export function seg(id: string, speaker: string, tStart: number, text: string, rev = 0): CaptionSegment {
   return { id, speaker, self: false, text, tStart, tEnd: tStart + 2000, rev };
@@ -340,6 +338,21 @@ export function setupHarness() {
 
   const windowsCreate = vi.spyOn(fakeBrowser.windows, 'create');
 
+  /** The toolbar icon's 16 px path, as last set. */
+  const icon: { path: string | null } = { path: null };
+  const setIcon = vi.fn(async (details: { path?: string | Record<number, string> }) => {
+    const path = details.path;
+    icon.path = typeof path === 'string' ? path : (path?.[16] ?? null);
+  });
+  vi.spyOn(fakeBrowser.action, 'setIcon').mockImplementation(setIcon as never);
+  /** The keyboard shortcut Chrome reports for toggle-recording; '' when the user removed it. */
+  const shortcut = { value: 'Alt+Shift+R' };
+  vi.spyOn(fakeBrowser.commands, 'getAll').mockImplementation((async () => [
+    { name: 'toggle-recording', description: 'Start or stop recording the current Meet call', shortcut: shortcut.value },
+  ]) as never);
+  const openOptionsPage = vi.fn(async () => undefined);
+  vi.spyOn(fakeBrowser.runtime, 'openOptionsPage').mockImplementation(openOptionsPage as never);
+
   return {
     clock,
     offscreen,
@@ -350,6 +363,9 @@ export function setupHarness() {
     hooks,
     executeScript,
     setAccessLevel,
+    setIcon,
+    shortcut,
+    openOptionsPage,
     /**
      * A session manager over the real chrome deps (fakeBrowser + stubs) and the fake
      * clock. Like a new worker it takes over the background messages, so the offscreen
@@ -378,6 +394,13 @@ export function setupHarness() {
     },
     badge: (): Promise<string> => fakeBrowser.action.getBadgeText({}),
     badgeTitle: (): Promise<string> => fakeBrowser.action.getTitle({}),
+    /** 'idle' or 'recording', from the toolbar icon last set; null before any. */
+    icon: (): 'idle' | 'recording' | null =>
+      icon.path === null ? null : icon.path.includes('rec-') ? 'recording' : 'idle',
+    badgeColors: async () => ({
+      background: await fakeBrowser.action.getBadgeBackgroundColor({}),
+      color: await fakeBrowser.action.getBadgeTextColor({}),
+    }),
     notifications: () =>
       Object.entries(fakeBrowser.notifications.getAllCreateOptions()).map(([id, o]) => ({
         id,

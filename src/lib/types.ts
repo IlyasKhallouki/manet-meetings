@@ -187,6 +187,18 @@ export interface MeetingStore {
 // Sessions
 // ---------------------------------------------------------------------------
 
+/** One person named by Meet's captions in a session, in order of first speech. */
+export interface SpeakerInfo {
+  /** Display name from the captions; the local user keeps Meet's label with `self`. */
+  name: string;
+  self: boolean;
+  /** ms from recording start of their first and latest caption. */
+  firstAt: number;
+  lastAt: number;
+  /** Total ms covered by their caption blocks (overlaps counted once per block). */
+  talkMs: number;
+}
+
 export type SessionStatus =
   /** Audio + captions are being captured. */
   | 'recording'
@@ -229,6 +241,12 @@ export interface SessionMeta {
   status: SessionStatus;
   stage?: JobStage;
   route?: Route;
+  /**
+   * When the default destination applies (the route alarm's time), epoch ms. Set only
+   * while that alarm is armed: absent while the routing prompt is paused and once the
+   * meeting has a destination.
+   */
+  routeDeadline?: number;
   /** `${meetCode}-${YYYY-MM-DD}` in local time of `startedAt`. */
   idempotencyKey: string;
   audio: {
@@ -244,6 +262,8 @@ export interface SessionMeta {
     lastChunkAt?: number;
   };
   captionCount: number;
+  /** Speakers seen so far, ordered by first speech; kept current while recording. */
+  speakers?: SpeakerInfo[];
   /** Why captions are not being captured (e.g. no content script in the tab). */
   captionsError?: string;
   /** Last time a chunk or caption batch arrived. Used to date orphans. */

@@ -1,11 +1,13 @@
 import { browser, type Browser } from 'wxt/browser';
 import { errorMessage, sendToOffscreen, sendToTab } from '@lib/messages';
 import { getSettings } from '@lib/settings';
+import { presentAction } from './actionState';
 import { createOffscreenDocument } from './offscreenDocument';
 import { withTimeout, type SessionManagerDeps } from './sessionManager';
 
-const BADGE_COLORS = { recording: '#d93025', 'captions-only': '#e37400' } as const;
 const MEET_ORIGIN = 'https://meet.google.com/';
+/** The manifest's command that starts and stops a recording. */
+const TOGGLE_COMMAND = 'toggle-recording';
 /** The content script answers at once; a page that doesn't is busy or frozen. */
 const PUSH_TIMEOUT_MS = 3000;
 
@@ -64,21 +66,40 @@ export function createChromeDeps(): SessionManagerDeps {
     async openDashboard() {
       await browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
     },
-    async setBadge(state) {
-      await browser.action.setBadgeText({ text: state ? 'REC' : '' });
-      if (state) await browser.action.setBadgeBackgroundColor({ color: BADGE_COLORS[state] });
-      await browser.action.setTitle({
-        title: state === 'captions-only' ? 'Manet Meetings: recording captions only (no audio)' : 'Manet Meetings',
-      });
+    async openSettings() {
+      await browser.runtime.openOptionsPage();
+    },
+    async setActionState(state) {
+      const view = presentAction(state);
+      // Each part on its own: a missing icon file must not keep the badge from showing.
+      // Colours go before the text so a new badge never flashes Chrome's default colour.
+      const results = await Promise.allSettled([
+        browser.action.setIcon({ path: view.icon }),
+        browser.action.setBadgeBackgroundColor({ color: view.badge.background }),
+        browser.action.setBadgeTextColor({ color: view.badge.color }),
+        browser.action.setBadgeText({ text: view.badge.text }),
+        browser.action.setTitle({ title: view.title }),
+      ]);
+      const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason;
+    },
+    async shortcut() {
+      try {
+        const commands = await browser.commands.getAll();
+        return commands.find((c) => c.name === TOGGLE_COMMAND)?.shortcut || null;
+      } catch {
+        return null;
+      }
     },
     async openRoutingPrompt(sessionId) {
-      await browser.windows.create({
+      const win = await browser.windows.create({
         url: browser.runtime.getURL(`/routing.html?session=${encodeURIComponent(sessionId)}`),
         type: 'popup',
         width: 380,
         height: 280,
         focused: true,
       });
+      return win?.id;
     },
     async notify(sessionId, title, message) {
       await browser.notifications.create(`manet:${sessionId}`, {

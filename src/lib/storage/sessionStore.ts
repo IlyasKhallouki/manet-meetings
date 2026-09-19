@@ -7,7 +7,7 @@
  * writes sessions; pages read them and send messages to change them.
  */
 import { browser } from 'wxt/browser';
-import type { SessionMeta } from '../types';
+import type { SessionMeta, SessionStatus } from '../types';
 
 const PREFIX = 'session:';
 const ACTIVE_KEY = 'activeRecording';
@@ -93,13 +93,37 @@ export function deleteSession(id: string): Promise<void> {
   return serialized(id, () => browser.storage.local.remove(sessionKey(id)));
 }
 
-/** Calls `onChange(id, meta)` for every session write, with null for deletions. */
-export function watchSessions(onChange: (id: string, meta: SessionMeta | null) => void): () => void {
-  const listener = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+/** Statuses that wait on the person, whatever else the session says. */
+const WAITING_ON_YOU = new Set<SessionStatus>(['awaiting-route', 'processed']);
+
+/**
+ * The meeting needs a decision or a fix from the person: it waits for Team or Personal,
+ * it was transcribed but not saved, or it failed with no automatic retry scheduled.
+ * Drives the "Needs you" group, the popup footer and the idle toolbar badge.
+ */
+export function needsYou(meta: Pick<SessionMeta, 'status' | 'retryAt'>): boolean {
+  if (WAITING_ON_YOU.has(meta.status)) return true;
+  return meta.status === 'failed' && meta.retryAt === undefined;
+}
+
+type Changes = Record<string, { newValue?: unknown; oldValue?: unknown }>;
+
+/**
+ * Calls `onChange(id, meta, previous)` for every session write, with null for deletions
+ * (and for `previous` on creation).
+ */
+export function watchSessions(
+  onChange: (id: string, meta: SessionMeta | null, previous: SessionMeta | null) => void,
+): () => void {
+  const listener = (changes: Changes, area: string) => {
     if (area !== 'local') return;
     for (const [key, change] of Object.entries(changes)) {
       if (!key.startsWith(PREFIX)) continue;
-      onChange(key.slice(PREFIX.length), (change.newValue as SessionMeta | undefined) ?? null);
+      onChange(
+        key.slice(PREFIX.length),
+        (change.newValue as SessionMeta | undefined) ?? null,
+        (change.oldValue as SessionMeta | undefined) ?? null,
+      );
     }
   };
   browser.storage.onChanged.addListener(listener);
@@ -117,4 +141,14 @@ export function setActiveRecording(pointer: ActiveRecording): Promise<void> {
 
 export function clearActiveRecording(): Promise<void> {
   return browser.storage.session.remove(ACTIVE_KEY);
+}
+
+/** Calls `onChange(pointer)` whenever the recording pointer is set or cleared (null). */
+export function watchActiveRecording(onChange: (pointer: ActiveRecording | null) => void): () => void {
+  const listener = (changes: Changes, area: string) => {
+    if (area !== 'session' || !(ACTIVE_KEY in changes)) return;
+    onChange((changes[ACTIVE_KEY]?.newValue as ActiveRecording | undefined) ?? null);
+  };
+  browser.storage.onChanged.addListener(listener);
+  return () => browser.storage.onChanged.removeListener(listener);
 }

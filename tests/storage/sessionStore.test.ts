@@ -6,9 +6,11 @@ import {
   getActiveRecording,
   getSession,
   listSessions,
+  needsYou,
   putSession,
   setActiveRecording,
   updateSession,
+  watchActiveRecording,
   watchSessions,
 } from '@lib/storage/sessionStore';
 import type { SessionMeta } from '@lib/types';
@@ -153,6 +155,34 @@ describe('sessionStore', () => {
       ['a', null],
     ]);
   });
+
+  it('passes watchers the previous value too', async () => {
+    const seen: [string | null, string | null][] = [];
+    const stop = watchSessions((_id, m, previous) => seen.push([previous?.status ?? null, m?.status ?? null]));
+    await putSession(meta('a', 1000));
+    await updateSession('a', { status: 'ready' });
+    await deleteSession('a');
+    stop();
+    expect(seen).toEqual([
+      [null, 'recording'],
+      ['recording', 'ready'],
+      ['ready', null],
+    ]);
+  });
+});
+
+describe('needsYou', () => {
+  it('is true for a meeting waiting for a destination, a transcript not saved, or a failure with no retry scheduled', () => {
+    expect(needsYou(meta('a', 0, { status: 'awaiting-route' }))).toBe(true);
+    expect(needsYou(meta('a', 0, { status: 'processed' }))).toBe(true);
+    expect(needsYou(meta('a', 0, { status: 'failed' }))).toBe(true);
+  });
+
+  it('is false while a retry is scheduled, and for every other status', () => {
+    expect(needsYou(meta('a', 0, { status: 'failed', retryAt: 5000 }))).toBe(false);
+    const others = ['recording', 'ready', 'processing', 'saving', 'saved', 'duplicate', 'empty'] as const;
+    for (const status of others) expect(needsYou(meta('a', 0, { status }))).toBe(false);
+  });
 });
 
 describe('active recording pointer', () => {
@@ -166,5 +196,16 @@ describe('active recording pointer', () => {
 
     await clearActiveRecording();
     expect(await getActiveRecording()).toBeNull();
+  });
+
+  it('notifies watchers when the pointer is set or cleared, until unsubscribed', async () => {
+    const seen: (string | null)[] = [];
+    const stop = watchActiveRecording((pointer) => seen.push(pointer?.sessionId ?? null));
+    await setActiveRecording({ sessionId: 'a', tabId: 12, meetCode: 'abc-defg-hij' });
+    await fakeBrowser.storage.session.set({ other: 1 });
+    await clearActiveRecording();
+    stop();
+    await setActiveRecording({ sessionId: 'b', tabId: 12, meetCode: 'abc-defg-hij' });
+    expect(seen).toEqual(['a', null]);
   });
 });
