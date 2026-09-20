@@ -4,6 +4,12 @@
  * shared components without !important. Every page loads every surface file: every rule
  * here is scoped under body.page-settings.
  *
+ * THE SKIN. Settings is the iOS inset grouped form, nothing more: r18 --surface cards on
+ * the grouped background, 38 px r12 fields, 51 × 31 switches, capsule Show / Check buttons,
+ * a capsule segmented destination, messages under the control they belong to. Nothing here
+ * is glass — the page's only glass is the shell's floating bar, which this file never
+ * touches. Page-level grey text is 13/18 (--t-footnote), inset 16 px like a section header.
+ *
  * The page is the shared grouped look (.section / .group.roomy / .field / .switch-row /
  * .segmented); this file only places things:
  *   .settings-lede     "Changes are saved as you make them." under the title
@@ -13,36 +19,47 @@
  *   .settings-days     the Keep audio number field and its unit
  *   .settings-mic      the microphone status line under the switch
  *   .settings-privacy  the closing footnote
- * Page-level grey text (lede, footnote) shares the section headers' 4 px inset.
+ * The lede is aligned with the title; the closing footnote is inset 16 px, like a
+ * .section-footer, because it belongs to the last card.
  */
 
+/* Reads as the last line of the title block, not the first line of the page: 4 px under
+ * the h1 (cancelling the block's 20 px bottom padding), then that 20 px before the first
+ * card. Aligned with the title, like the mock's .page-lede. */
 body.page-settings .settings-lede {
-  margin: calc(-1 * var(--s3)) var(--s1) var(--s6);
+  margin: calc(var(--s1) - var(--s5)) 0 var(--s5);
   font: var(--t-callout);
   letter-spacing: var(--ls-callout);
   color: var(--label-2);
 }
 
 /* ---- Setup checklist ------------------------------------------------------------------ */
+/* A .callout in everything but name (same grid, gap and padding), because its body is a
+ * list of links rather than a sentence. Once everything is in, it keeps its place and
+ * turns into a quiet --surface card — the same r18 as every group on the page. */
 body.page-settings .setup {
   display: grid;
   grid-template-columns: 1rem minmax(0, 1fr);
-  column-gap: var(--s2);
+  column-gap: 10px;
   row-gap: var(--s1);
-  margin-block-end: var(--s6);
-  padding: var(--s3) var(--s4) var(--s2) var(--s3);
-  border: 1px solid transparent;
+  margin-block-end: var(--s7);
+  padding: 14px var(--s4) 10px; /* the chips carry 30 px of their own height at the foot */
   border-radius: var(--r-group);
   background: var(--caution-weak);
   color: var(--label);
-  transition:
-    background-color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
+  transition: background-color var(--dur-2) var(--ease-io);
 }
 
 body.page-settings .setup[data-state='complete'] {
-  border-color: var(--separator);
   background: var(--surface);
+}
+
+/* The system palette drops our fills, so the card needs a drawn boundary — the same one
+ * .group, .callout and .note get. */
+@media (forced-colors: active) {
+  body.page-settings .setup {
+    border: 1px solid CanvasText;
+  }
 }
 
 body.page-settings .setup-glyph {
@@ -53,7 +70,7 @@ body.page-settings .setup-glyph {
 
 body.page-settings .setup-title {
   font: var(--t-headline);
-  letter-spacing: var(--ls-body);
+  letter-spacing: var(--ls-headline);
 }
 
 /* Chips without borders: glyph + the field's name, wrapping at narrow widths. */
@@ -70,9 +87,9 @@ body.page-settings .setup-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-block-size: var(--h-plain); /* 28 px: the link's hit area, not just its text */
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  min-block-size: var(--h-plain); /* 30 px: the link's hit area, not just its text */
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
 }
 
 body.page-settings .setup-item > .glyph {
@@ -124,10 +141,12 @@ body.page-settings .switch-row-text > .field-msg:not(:empty) {
   margin-block-start: var(--s1);
 }
 
+/* The closing note is the page's last section footer: inset to the cards' text. */
 body.page-settings .settings-privacy {
-  margin: var(--s6) var(--s1) 0;
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  margin: var(--s2) 0 0;
+  padding-inline: var(--s4);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }
 

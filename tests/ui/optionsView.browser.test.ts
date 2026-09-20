@@ -56,6 +56,19 @@ const until = async (check: () => boolean, ms = 20_000) => {
     await tick(25);
   }
 };
+/**
+ * Watches a class that is only on for a moment (the 20 ms "✓ Saved" fade at FAST speed),
+ * which polling can step over on a loaded machine.
+ */
+function seen(el: HTMLElement, name: string): () => boolean {
+  let hit = el.classList.contains(name);
+  const observer = new MutationObserver(() => (hit ||= el.classList.contains(name)));
+  observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+  return () => {
+    if (hit) observer.disconnect();
+    return hit;
+  };
+}
 /** Types like a person: focus, then one input event per character. */
 const type = (el: HTMLInputElement | HTMLTextAreaElement, value: string) => {
   el.focus();
@@ -202,8 +215,9 @@ describe('instant apply', () => {
     expect(saved('displayName').getAttribute('role')).toBe('status');
     expect(text(saved('displayName'))).toMatch(/Saved$/);
     // Fades after a while, then empties.
-    await until(() => saved('displayName').classList.contains('is-fading'));
+    const faded = seen(saved('displayName'), 'is-fading');
     await until(() => text(saved('displayName')) === '');
+    expect(faded()).toBe(true);
 
     // Blurring again without a change writes nothing.
     name.focus();

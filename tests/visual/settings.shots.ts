@@ -115,13 +115,33 @@ async function largeText(): Promise<void> {
   noSideScroll();
 }
 
+/**
+ * Focusing a field scrolls the page, and the floating bar reads the scroll: a full-page
+ * shot is of the page as you land on it, so every one of them ends back at the top. The
+ * bar carrying its material is a state of its own, shot once below.
+ */
 const shot = (name: string, width: number, render: () => Promise<void>): Shot => ({
   name: `settings-${name}`,
   width,
   height: 800,
   full: true,
-  render,
+  render: async () => {
+    await render();
+    window.scrollTo(0, 0);
+  },
 });
+
+/** Content under the glass bar: the material, its hairline and the compact title arrive. */
+const scrolledShot: Shot = {
+  name: 'settings-scrolled-1100',
+  width: 1100,
+  height: 800,
+  full: false,
+  render: async () => {
+    await filled();
+    window.scrollTo(0, 360);
+  },
+};
 
 const statesShot = shot('states-720', 720, states);
 const firstRunShot = shot('first-run-390', 390, firstRun);
@@ -133,6 +153,7 @@ gallery('settings', [
   firstRunShot,
   shot('setup-done-720', 720, setupDone),
   statesShot,
+  scrolledShot,
   shot('large-text-390', 390, largeText),
   // Accessibility settings: switches, Team | Personal, focus, the checklist glyphs and the
   // field messages must survive the system palette and read in more contrast. (Reduced

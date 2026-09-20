@@ -57,6 +57,11 @@ function dashboard(name: string, width: number, o: Options = {}): Shot {
         ...o.data,
       });
       o.after?.(root);
+      // Opening a menu or an inline confirm scrolls the page, and the floating bar reads
+      // the scroll: a full-page shot is of the page as you land on it, so every one of
+      // them ends back at the top. The bar carrying its material is a state of its own,
+      // shot once by `dashboard-scrolled`.
+      if (o.full ?? true) window.scrollTo(0, 0);
       // The quality floor, checked, not assumed: nothing scrolls sideways.
       const doc = document.documentElement;
       if (doc.scrollWidth > doc.clientWidth) throw new Error(`Horizontal overflow at ${width}px: ${doc.scrollWidth}`);
@@ -98,6 +103,8 @@ gallery('dashboard', [
   dashboard('edge-930', 930),
   dashboard('edge-920', 920),
   dashboard('narrow', 390),
+  // Content under the glass bar: the material, its hairline and the compact title arrive.
+  dashboard('scrolled', 1280, { full: false, height: 800, after: () => window.scrollTo(0, 360) }),
   dashboard('menu', 1280, {
     // Keyboard-opened: the first item is highlighted.
     after: (root) => click(root, 'dup:more'),

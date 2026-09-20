@@ -71,6 +71,26 @@ describe('Meetings layout (real CSS)', () => {
     expect(shown(row.querySelector('.meeting-when')!)).toBe(true);
   });
 
+  it('keeps every status word and its clock on one line at 390 px', async () => {
+    await page.viewport(390, 800);
+    // The status word (and the live clock beside it) is the row's primary reading: it
+    // shares the stacked row's line with the next-step capsule, and the capsule's metrics
+    // must never take so much of the width that "Recording 23:12" or "Saved to Notion"
+    // breaks in two. Only the longest word in the glossary, "Transcribed, not saved yet",
+    // takes two lines at 390 px — it always has, and its glyph stays on the first.
+    for (const li of root.querySelectorAll<HTMLElement>('li[data-id]')) {
+      const word = li.querySelector<HTMLElement>('.meeting-head .status-word');
+      if (!word || !shown(word) || li.dataset.id === 'processed') continue;
+      expect(rect(word).height, `${li.dataset.id}: “${word.textContent}” wrapped`).toBeLessThanOrEqual(21);
+    }
+    // And the one that broke: the clock stays beside the word it belongs to.
+    const rec = root.querySelector('li[data-id="rec"]')!;
+    const clock = rect(rec.querySelector('.meeting-clock')!);
+    const head = rect(rec.querySelector('.meeting-head')!);
+    expect(Math.abs(clock.top - head.top)).toBeLessThan(1);
+    expect(rect(rec.querySelector('.meeting-primary')!).left).toBeGreaterThanOrEqual(clock.right);
+  });
+
   it('keeps the inline confirms and the menu on screen at 390 px', async () => {
     await page.viewport(390, 800);
     root.querySelector<HTMLElement>('[data-key="dup:more"]')!.click();

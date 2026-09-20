@@ -5,8 +5,15 @@
  * here is scoped under .meetings (the view's root, main#app) or a .meeting-* class only
  * this surface uses.
  *
- * LAYOUT
- *   .meetings (flex column, 24 px apart): notices · auto-transcribe group · sections ·
+ * THE SKIN. The page is the iOS inset grouped list: a grouped background, one r18 --surface
+ * card per day, rows clipped to its corners and separated by hairlines inset to the text,
+ * capsule next-step buttons, a capsule segmented destination. Nothing here is glass — the
+ * only glass on this page is the shell's floating bar, which this file never touches.
+ * Section rhythm: groups 28 px apart (= .section + .section), the storage line 8 px under
+ * the last card and inset 16 px, like a .section-footer.
+ *
+ * LAYOUT (unchanged by the re-skin)
+ *   .meetings (flex column, 28 px apart): notices · auto-transcribe group · sections ·
  *   empty state · storage footnote. It is the size container for the rows.
  *
  *   A row (li.group-row.meeting > .meeting-main) is one grid with three layouts, chosen
@@ -14,7 +21,7 @@
  *   .meeting-status is display: contents, so its lines are grid items of the row.
  *
  *   ≥ 55rem (880 px at 100 %; a ≥ 928 px window, so titles get ≥ 240 px)
- *     52 | title + byline 1fr | 76 length | 236 status | 176 actions, 16 px gaps
+ *     76 | title + byline 1fr | 76 length | 236 status | 176 actions, 16 px gaps
  *     (76 for the time in the Needs you group, which dates its rows)
  *     15:40  Pricing call with Acme            12:48  ● Recording        [Stop recording] ⋯
  *            Marie Curie, Tom Martin, you · qrs…       ▲ No audio for 20 s
@@ -24,21 +31,25 @@
  *     first line; the first line under a button keeps to the status column.
  *   < 55rem (down to 390 px)
  *     title (full width) / head + actions / the status lines (full width)
+ *     Compact control metrics here: the capsule pads 12 instead of 16, the row's two
+ *     columns sit 8 apart and the ⋯ takes its optical inset (glyph on the 16 px text
+ *     edge, target overhanging). That is the ~20 px the status word needs to keep its
+ *     live clock — "Recording 23:12", "Saved to Notion" — on one line at 390 px.
  *   < 20rem (390 px at 150 % text): ⋯ stays on the status line, the next step goes last
  *     Pricing call with Acme
  *     15:40 · Marie Curie, Tom Martin, you · qrs-tuvw-xyz
  *     ● Recording 12:48                                                          ⋯
  *     [Stop recording]
  *
- *   The status lines line up on the word, not the glyph (14 px glyph + 8 px gap); so do
- *   ▲ lines, as in the popup's facts.
+ *   The status lines line up on the word, not the glyph (--status-indent: 14 px glyph +
+ *   8 px gap); so do ▲ lines, as in the popup's facts.
  */
 
 .meetings {
   container: meetings / inline-size;
   display: flex;
   flex-direction: column;
-  gap: var(--s6);
+  gap: var(--s7); /* the grouped-list rhythm: 28 px between cards, as .section + .section */
 }
 
 .meetings-notices {
@@ -68,8 +79,8 @@
   display: flex;
   gap: var(--s2);
   color: var(--caution);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
 }
 
 .meeting-caution > .glyph {
@@ -83,10 +94,18 @@
 /* Wide: row 1 holds the first line of every column; the lines under the status word
  * (.meeting-line) take rows 2–10, one each (hidden ones take none). Time, title and length span every row, and
  * the last row (1fr) absorbs whatever height they need beyond the status lines, so they
- * never pull the status lines apart. */
-.meeting-main {
-  /* One width for every group, so titles line up whether or not the time has a date under it. */
+ * never pull the status lines apart.
+ *
+ * A meeting row is denser than a .group.roomy settings row and taller than a plain list
+ * row: the inset grouped list's 13 px. */
+.group-row.meeting {
+  /* One width for every group, so titles line up whether or not the time has a date under
+   * it — and so an inline confirm starts on the titles too. */
   --time-col: 4.75rem;
+  padding-block: 13px;
+}
+
+.meeting-main {
   display: grid;
   grid-template-columns: [time] var(--time-col) [title] minmax(0, 1fr) [length] 4.75rem [status] 14.75rem [actions] 11rem [end];
   grid-template-rows: repeat(10, auto) 1fr;
@@ -94,9 +113,12 @@
   align-items: start;
 }
 
+/* Times and lengths are the list's secondary metadata: callout, not body. */
 .meeting-time {
   grid-column: time;
   grid-row: 1 / -1;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
   color: var(--label-2);
 }
 
@@ -105,8 +127,9 @@
 }
 
 .meeting-date {
+  /* "Wed 16 Sep" fits 76 px at 14 px; another year wraps under it */
   font: var(--t-callout);
-  letter-spacing: var(--ls-callout); /* "Wed 16 Sep" fits 76 px; another year wraps under it */
+  letter-spacing: var(--ls-callout);
 }
 
 .meeting-title {
@@ -118,14 +141,15 @@
 .meeting-name {
   overflow: hidden;
   font: var(--t-headline);
-  letter-spacing: var(--ls-body);
+  letter-spacing: var(--ls-headline);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* `font:` above wins over .mono's size and tracking (surface layer), so restate them. */
 .meeting-name.mono {
   font-family: var(--mono);
-  font-size: calc(0.9 * 0.875rem); /* .mono's 0.9 em of the 14 px title, as in the popup */
+  font-size: 0.9em;
   letter-spacing: 0;
 }
 
@@ -157,6 +181,8 @@
 .meeting-length {
   grid-column: length;
   grid-row: 1 / -1;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
   color: var(--label-2);
   text-align: end;
   white-space: nowrap;
@@ -185,13 +211,14 @@
   grid-column: status;
 }
 
+/* The row is a grid, so each line carries the 3 px .status-line gap as a margin. */
 .meeting-detail {
-  margin-block-start: 2px;
+  margin-block-start: 3px;
 }
 
 .meeting-route {
-  margin-block-start: var(--s2);
-  padding-inline-start: calc(0.875rem + var(--s2));
+  margin-block-start: 6px; /* a control under a status word breathes a little more */
+  padding-inline-start: var(--status-indent);
 }
 
 .meeting-route-note {
@@ -204,8 +231,8 @@
 
 .meeting-extra {
   display: grid;
-  gap: 2px;
-  margin-block-start: 2px;
+  gap: 3px;
+  margin-block-start: 3px;
 }
 
 .meeting-health {
@@ -214,12 +241,12 @@
 
 .meeting-health > .meeting-caution {
   margin-block-start: var(--s1);
-  padding-inline-start: calc(0.875rem + var(--s2)); /* on the status word, like every line */
+  padding-inline-start: var(--status-indent); /* on the status word, like every line */
 }
 
 /* What a recording problem means, under the words of its ▲ line. */
 .meeting-health > .meeting-health-detail {
-  padding-inline-start: calc(2 * (0.875rem + var(--s2)));
+  padding-inline-start: calc(2 * var(--status-indent));
 }
 
 .meeting-error {
@@ -233,19 +260,15 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--s2);
-  margin-block: -6px; /* 32 px buttons centred on the 20 px first line */
+  margin-block: calc((1.25rem - var(--h-control)) / 2); /* 34 px capsules centred on the 20 px first line */
 }
 
 /* ---- Inline confirm (replaces the row's content) ------------------------------------ */
 .meeting-confirm {
   display: grid;
-  grid-template-columns: 3.25rem minmax(0, 1fr);
+  grid-template-columns: var(--time-col) minmax(0, 1fr);
   column-gap: var(--s4);
   align-items: center;
-}
-
-.section[data-section='needs-you'] .meeting-confirm {
-  grid-template-columns: 4.75rem minmax(0, 1fr);
 }
 
 .meeting-confirm-time {
@@ -276,7 +299,28 @@
   .meeting-main {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: none;
-    column-gap: var(--s3);
+    /* 8, not 12: once the status word shares its line with the next step, the width goes
+     * to the word. The capsule's own padding is the visible gap. */
+    column-gap: var(--s2);
+  }
+
+  /* Compact capsule metrics, the way iOS tightens a control in a narrow row. The status
+   * word plus its live clock is the row's primary reading and must stay on one line at
+   * 390 px ("Recording 23:12", "Saved to Notion"); a 34 px capsule at its resting 16 px
+   * padding takes just enough of the column to break it. 12 px gives the word back the
+   * 12 px it needs, and the capsule keeps its height, its radius and its target. */
+  .meeting-open,
+  .meeting-primary {
+    padding-inline: var(--s3);
+  }
+
+  /* Here the ⋯ shares its line with the status word and the next step, so it takes its
+   * optical inset the way .page-bar nav does: the 16 px glyph sits on the row's 16 px
+   * text inset and only the 32 px target overhangs into the padding. The glyph lines up
+   * with the end of the byline, and the status word gets the other 8 px. (Wide keeps the
+   * ⋯ in its own column, where the run-on detail lines already end on that edge.) */
+  .meeting-more {
+    margin-inline-end: -8px;
   }
 
   .meeting-time,
@@ -328,8 +372,7 @@
     grid-column: 1 / -1;
   }
 
-  .meeting-confirm,
-  .section[data-section='needs-you'] .meeting-confirm {
+  .meeting-confirm {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -353,7 +396,7 @@
     grid-column: 2;
     grid-row: 2;
     align-self: start;
-    margin-block: calc((1.25rem - var(--h-control)) / 2); /* centred on the word's first line */
+    margin-block: calc((1.25rem - var(--h-icon)) / 2); /* the 32 px ⋯ centred on the word's first line */
   }
 
   .meeting-open,
@@ -365,33 +408,38 @@
 }
 
 /* ---- Empty state and footnote ------------------------------------------------------- */
+/* An empty card of its own, centred: the one place the page has room to breathe. */
 .meetings-empty {
   display: grid;
   justify-items: center;
-  gap: var(--s2);
-  padding: var(--s12) var(--s6);
+  gap: 10px;
+  padding: 56px var(--s6);
   color: var(--label-2);
   text-align: center;
 }
 
 .meetings-empty:focus-visible {
-  outline-offset: -2px;
+  outline-offset: -3px; /* inside the card's 18 px corner, like every .group-row */
 }
 
 .meetings-empty > p {
   max-inline-size: 26rem;
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   text-wrap: balance;
 }
 
 .meetings-empty-title {
   font: var(--t-title3);
-  letter-spacing: var(--ls-title3);
+  letter-spacing: var(--ls-title);
   color: var(--label);
 }
 
+/* The storage line reads as the last card's footer: 8 px under it, inset to its text. */
 .meetings-footnote {
-  margin: calc(-1 * var(--s2)) var(--s1) 0; /* 16 px under the last group */
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  margin-block-start: calc(var(--s2) - var(--s7));
+  padding-inline: var(--s4);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }

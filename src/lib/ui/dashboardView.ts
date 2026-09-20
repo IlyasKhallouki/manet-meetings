@@ -210,7 +210,8 @@ export function createDashboardView(
   const autoError = h('p', { class: 'meeting-caution meetings-auto-error', role: 'alert', hidden: true });
   const autoGroup = h(
     'div',
-    { class: 'group meetings-auto', 'data-role': 'auto-transcribe' },
+    // roomy: a settings row on a list page, padded like one (14 px, not the list's 13).
+    { class: 'group roomy meetings-auto', 'data-role': 'auto-transcribe' },
     h('div', { class: 'group-row' }, autoRow, autoError),
   );
 
