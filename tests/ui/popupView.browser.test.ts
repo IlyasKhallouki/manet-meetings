@@ -533,7 +533,7 @@ describe('popup: facts, setup and links', () => {
     try {
       view().update(
         model({
-          state: { ...onCall, title: 'Onboarding — Lumind × Kera: pricing, pilots and the Q4 roadmap review' },
+          state: { ...onCall, title: 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review' },
           mic: 'denied',
           setup: ['name', 'token', 'team-database'],
         }),
@@ -566,7 +566,7 @@ describe('popup: facts, setup and links', () => {
     try {
       view().update(
         model({
-          state: { ...onCall, title: 'Onboarding — Lumind × Kera: pricing, pilots and the Q4 roadmap review' },
+          state: { ...onCall, title: 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review' },
           mic: 'denied',
           setup: ['name', 'token', 'team-database'],
           needsYou: 3, // the label wraps at 150%, so the bar is taller than --bar-h
@@ -599,7 +599,7 @@ describe('popup: facts, setup and links', () => {
       view().update(
         model({
           state: recording({
-            title: 'Onboarding — Lumind × Kera: pricing, pilots and the Q4 roadmap review with the whole team',
+            title: 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review with the whole team',
             speakers: [speaker('Jean-Baptiste Delacroix-Montmorency de la Tour', 0, 1000), speaker('Supercalifragilisticexpialidocious', 2000, 3000)],
           }),
           recent: [meta('x', { meetingTitle: 'A very long meeting title that goes on and on and on', status: 'processed' })],

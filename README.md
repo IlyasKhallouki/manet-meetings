@@ -2,8 +2,8 @@
 
 A Chrome extension that records Google Meet calls, transcribes them with Gemini and files
 them into Notion: one page per meeting with a summary, action items and a speaker-labelled
-transcript. Built for the Lumind team (4 people, meetings in mixed English/French). No
-backend: each person runs the extension with their own keys.
+transcript. Built for the Lumind team (4 people, meetings in mixed English/French). There
+is no backend. Each person runs the extension with their own keys.
 
 ## How it works
 
@@ -16,78 +16,81 @@ mic ─────────────┴─ offscreen doc ─ MediaRecorde
                                                      └─ Gemini: what was said
 ```
 
-- **Speakers come from Meet's live captions**, not from speech diarization. The content
-  script reads the caption panel, dedupes Meet's in-place rewrites and timestamps each
-  caption block relative to the recording start.
-- **Words come from Gemini (`gemini-3.5-transcribe`)** in two passes over the same audio:
-  - a *timing pass* with word timestamps (Gemini caps these requests at 30 min, and they
-    can't use custom vocabulary), and
-  - a *text pass* with custom vocabulary (team jargon plus attendee names, up to 60 min
-    per request, no timestamps).
+Speaker names come from Meet's live captions rather than from speech diarization. The
+content script reads the caption panel, dedupes Meet's in-place rewrites, and timestamps
+each caption block relative to the start of the recording.
 
-  Text-pass words are aligned onto timing-pass times, then each word gets the caption
-  speaker whose block covers it. Long recordings are split with 30 s overlaps (about
-  28 min for the timing pass, 55 min for the text pass).
-- **A second Gemini call (`gemini-3.5-flash`)** turns the transcript into a title,
-  summary, key points, decisions and action items as structured JSON.
-- **Notion is the dedupe coordinator.** Each meeting has the key `<meet code>-<YYYY-MM-DD>`.
-  Before transcribing or creating anything, the extension looks the key up. If a teammate
-  already saved the meeting, it skips and tells you who recorded it. If two people finish
-  at the same moment, the oldest page wins and the other archives itself.
-- **Nothing is lost.** Audio is written to disk every 5 s from the first second, and an
-  interrupted recording is recovered on the next browser start. If the audio or Gemini
-  fails, the caption-only transcript is still saved with `Source = captions-only`.
+The words come from Gemini (`gemini-3.5-transcribe`), which reads the same audio twice.
+The timing pass returns word timestamps; Gemini caps those requests at 30 minutes and
+rejects custom vocabulary. The text pass uses custom vocabulary (team jargon plus the
+names of whoever spoke) and allows 60 minutes per request, but returns no timestamps.
+Text-pass words are then aligned onto timing-pass times, and each word takes the speaker
+of the caption block covering it. Long recordings are cut into overlapping parts with 30 s
+of overlap: about 28 minutes for the timing pass, 55 for the text pass.
+
+A second call, to `gemini-3.5-flash`, turns the finished transcript into a title, a
+summary, key points, decisions and action items, as structured JSON.
+
+Notion is what keeps two teammates from filing the same meeting twice. Every meeting has
+the key `<meet code>-<YYYY-MM-DD>`, and the extension looks that key up before it
+transcribes or creates anything. If a teammate got there first, it skips and tells you who
+recorded it. When two people finish at the same moment, the older page wins and the newer
+one archives itself.
+
+Losing a meeting takes some doing. Audio is written to disk every 5 s from the first
+second, and a recording cut short by a crash is recovered on the next browser start. If
+the audio or Gemini fails, the caption-only transcript is still saved, with
+`Source = captions-only`.
 
 ## Install
 
 Chrome 116 or newer.
 
-**From CI.** Download the `manet-meetings-chrome` artifact from the latest green CI run
-and unzip it.
+From CI: download the `manet-meetings-chrome` artifact from the latest green run and unzip
+it.
 
-**From source.**
+From source:
 
 ```sh
 pnpm install
 pnpm build        # → .output/chrome-mv3
 ```
 
-Then open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and
-pick the unzipped folder (or `.output/chrome-mv3`). Pin the extension so its icon is one
-click away during calls.
+Then open `chrome://extensions`, turn on Developer mode, click Load unpacked and pick the
+unzipped folder (or `.output/chrome-mv3`). Pin the extension so its icon is one click away
+during calls.
 
 ## Key setup
 
-**Settings** opens by itself after you install the extension, with a checklist of what
-meetings still need before they can be saved to Notion. Later, open it from the popup
-(**Settings**) or right-click the icon → Options. Changes are saved as you make them.
+Settings opens by itself after you install the extension, with a checklist of what is
+still missing before meetings can reach Notion. Later, open it from the popup or by
+right-clicking the icon and choosing Options. Changes save as you make them.
 
-1. **Name** (under *You*): fills *Recorded by* and replaces Meet's "You" caption label.
-2. **Gemini API key** (under *Transcription*): create one at
-   <https://aistudio.google.com/apikey>, paste it, then click **Check**.
-3. **Token** (under *Notion*): use one of these two.
-   - **A personal access token (recommended).** Create one at
-     <https://www.notion.so/developers/tokens> with the *Notion API* capability, in the
-     team's workspace. It acts with your own Notion permissions, so there is nothing to
-     share. It is also exempt from the Free-plan block cap (see below).
-   - **An internal integration secret.** Create the integration at
-     <https://www.notion.so/profile/integrations> with the *Read*, *Update* and *Insert
-     content* capabilities, then share both meeting databases with it (database ⋯ menu
-     → *Connections*). In a Free workspace with more than one member, Notion caps
-     internal integrations at **1,000 blocks for the workspace's lifetime**, and trashing
-     pages doesn't give any back. A meeting uses roughly 15–30 blocks, because transcript
-     turns are packed into shared paragraphs.
-4. **Team database** and **Personal database**: paste each database's link or ID. Then
-   **Check both databases** (its **Check** button) checks access and the schema below.
-5. **Microphone** (under *Recording*, *Include your microphone*): choose **Allow
-   microphone…**, then **Continue** on the page that opens, and allow it in Chrome's
-   prompt. Chrome only allows this from a visible extension page, so it is a one-time
-   separate step. Without it, only the other participants are recorded.
-6. Optional: default destination (Team or Personal), *Transcribe automatically*, how
-   long to keep audio (7 days by default), vocabulary, languages.
+1. Name, under *You*. Fills *Recorded by* in Notion and replaces Meet's "You" caption
+   label.
+2. Gemini API key, under *Transcription*. Create one at <https://aistudio.google.com/apikey>,
+   paste it, then click Check.
+3. Token, under *Notion*. Two kinds work. A personal access token is the easier one:
+   create it at <https://www.notion.so/developers/tokens> with the *Notion API* capability
+   in the team's workspace. It acts with your own Notion permissions, so there is nothing
+   to share, and the Free-plan block cap below doesn't apply to it. The other kind is an
+   internal integration secret, created at <https://www.notion.so/profile/integrations>
+   with the *Read*, *Update* and *Insert content* capabilities. Share both meeting
+   databases with it afterwards (database ⋯ menu, then *Connections*). In a Free workspace
+   with more than one member, Notion caps internal integrations at 1,000 blocks for the
+   workspace's lifetime, and trashing pages gives none of them back. A meeting costs
+   roughly 15 to 30 blocks, because transcript turns are packed into shared paragraphs.
+4. Team database and Personal database: paste each database's link or ID, then press Check
+   on *Check both databases*. It checks access and the schema below.
+5. Microphone, under *Recording*. Choose *Allow microphone…*, then Continue on the page
+   that opens, and allow it in Chrome's prompt. Chrome only allows this from a visible
+   extension page, which is why it is a separate one-time step. Without it, only the other
+   participants are recorded.
+6. Optional: default destination (Team or Personal), *Transcribe automatically*, how long
+   to keep audio (7 days by default), vocabulary and languages.
 
-Keys are stored in `chrome.storage.local` on your machine only. They are sent only to
-Gemini and Notion respectively.
+Keys are stored in `chrome.storage.local` on your machine. They are sent only to Gemini
+and Notion respectively.
 
 ## Notion database schema
 
@@ -106,7 +109,7 @@ exactly these properties. Names are case-sensitive.
 | `Key`         | Text         | Dedupe key `<meet code>-<YYYY-MM-DD>` |
 
 The page body holds the summary, key points, decisions and action items (as to-dos). The
-full transcript is in a child page called **Transcript**.
+full transcript lives in a child page called Transcript.
 
 To create a database with this schema under an existing page:
 
@@ -114,62 +117,63 @@ To create a database with this schema under an existing page:
 NOTION_TOKEN=ntn_… node scripts/notion-setup.ts <parent page link or id> "Team meetings"
 ```
 
-It prints the database id to paste into Settings. With an internal integration, share
-the parent page with it first. The client targets Notion API version `2026-03-11`, where
+It prints the database id to paste into Settings. With an internal integration, share the
+parent page with it first. The client targets Notion API version `2026-03-11`, where
 databases contain data sources.
 
 ## Using it
 
-1. Join a Meet call, click Manet Meetings in the toolbar and choose **Record this call**
-   (or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). Chrome only lets an extension
-   capture a tab after you invoke it on that tab, so recording can't start by itself.
-   While it records, the popup shows how long it has been recording, the speakers Meet's
-   captions have named so far, and whether your microphone is in the recording.
-   **Stop recording** ends it, and so does leaving the call.
-2. Captions are turned on for you, because they are how speakers are identified. Leave
-   them on.
-3. When the recording stops, a small window asks **Save this meeting to Team | Personal**
-   (or press <kbd>T</kbd> or <kbd>P</kbd>). If you don't choose, your default applies
-   when its countdown ends. **Pause** (or <kbd>Esc</kbd>) stops the countdown while you
-   decide; close a paused window and the default applies 2 minutes later. A recording
-   cut short by a crash or restart asks the same question the next time Chrome starts.
+1. Join a Meet call, click Manet Meetings in the toolbar and choose Record this call (or
+   press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). Chrome only lets an extension
+   capture a tab after you invoke it on that tab, so recording never starts by itself.
+   While it records, the popup shows how long it has been going, the speakers Meet's
+   captions have named so far, and whether your microphone is in the recording. Stop
+   recording ends it, and so does leaving the call.
+2. Captions get turned on for you, since they are how speakers are identified. Leave them
+   on.
+3. When the recording stops, a small window asks where the meeting goes: Team or Personal
+   (or press <kbd>T</kbd> or <kbd>P</kbd>). If you don't choose, your default applies when
+   the countdown ends. Pause, or <kbd>Esc</kbd>, stops the countdown while you think; if
+   you close a paused window, the default applies 2 minutes later. A recording cut short by
+   a crash or restart asks the same question the next time Chrome starts.
 4. With *Transcribe automatically* on (a switch at the top of Meetings and in Settings),
-   the meeting is then transcribed and saved to Notion, and Meetings shows the step it
-   is on (*Step 4 of 8*). Otherwise choose **Transcribe** on Meetings. If Gemini is
-   unavailable, the extension tries again after 10 and 30 minutes before falling back to
-   a captions-only transcript. With no Gemini key set, meetings are saved from captions
-   only.
-5. **Meetings** (from the popup's footer) lists every meeting by day, newest first. Each
-   row has one next step (**Transcribe**, **Save to Notion**, **Try again**, **Open in
-   Notion**…) and a **⋯** menu with the rest: *Transcribe again*, *Save to Personal
-   instead* (or Team), *Delete…*. Meetings that wait on you are pinned in a **Needs you**
-   group at the top: a meeting waiting for Team or Personal, one transcribed but not
-   saved yet, or one that failed with no retry scheduled. The popup's footer counts them
-   (*Meetings · 1 needs you*).
-6. A meeting a teammate already saved reads *Saved by Marie*, and yours isn't added. If
-   you want your own page as well, choose **⋯ › Save a second copy…**.
+   the meeting is transcribed and saved to Notion, and Meetings shows the step it is on
+   (*Step 4 of 8*). Otherwise choose Transcribe on Meetings. If Gemini is unavailable, the
+   extension tries again after 10 and 30 minutes before falling back to a captions-only
+   transcript. With no Gemini key set, meetings are saved from captions only.
+5. Meetings, from the popup's footer, lists every meeting by day, newest first. Each row
+   has one next step (Transcribe, Save to Notion, Try again, Open in Notion) and a ⋯ menu
+   with the rest: *Transcribe again*, *Save to Personal instead* (or Team), *Delete…*.
+   Meetings that wait on you are pinned in a Needs you group at the top: one waiting for
+   Team or Personal, one transcribed but not saved yet, or one that failed with no retry
+   scheduled. The popup's footer counts them (*Meetings · 1 needs you*).
+6. A meeting a teammate already saved reads *Saved by Marie*, and yours isn't added. If you
+   want your own page too, choose ⋯ then *Save a second copy…*.
 
 ### The toolbar icon
 
-- **A red dot** on the icon: recording right now. Red means nothing else anywhere in
-  the extension.
-- **An amber "!"** while recording: something needs a look (no call audio, the audio
-  stopped arriving, no captions yet, or captions went quiet). The popup says what and
-  what to do.
-- **An amber number** when nothing is recording: how many meetings need you (the *Needs
-  you* group). It clears as you deal with them.
+A red dot on the icon means a recording is running right now. Red means nothing else
+anywhere in the extension.
 
-The tooltip reads *Recording since 14:02* or shows the record shortcut, and
-notifications name a meeting by its start time and length. Neither ever shows a meeting
-title, so nothing confidential pops up while you share your screen on the next call.
+An amber "!" while recording means something needs a look: no call audio, audio that
+stopped arriving, no captions yet, or captions that went quiet. The popup says which and
+what to do about it.
+
+An amber number when nothing is recording counts the meetings that need you, the same ones
+in the Needs you group. It clears as you deal with them.
+
+The tooltip reads *Recording since 14:02* or shows the record shortcut, and notifications
+name a meeting by its start time and length. Neither ever shows a meeting title, so
+nothing confidential pops up while you share your screen on the next call.
 
 ## Data and privacy
 
-- Audio stays on your machine, in the extension's private file system (OPFS). It is
-  deleted 7 days (configurable) after the transcript is saved to Notion, or right away
-  with **⋯ › Delete…** on Meetings.
-- Gemini requests are sent with `store: false`. Uploaded audio files are deleted once
-  transcription finishes (Gemini also expires them after 48 h).
+Audio stays on your machine, in the extension's private file system (OPFS). It is deleted
+7 days after the transcript reaches Notion, or right away with ⋯ then *Delete…* on
+Meetings. The 7 days are configurable.
+
+Gemini requests are sent with `store: false`, and uploaded audio files are deleted once
+transcription finishes. Gemini expires them after 48 h anyway.
 
 ## Development
 
@@ -179,11 +183,12 @@ pnpm test         # both Vitest projects
 pnpm test:node    # logic + integration tests (Node)
 pnpm test:browser # real headless Chrome: DOM fixtures, OPFS, AudioContext, MediaRecorder
 pnpm typecheck
+pnpm shots        # renders every page state to UI_SHOTS_DIR, for design review
 pnpm zip          # packed extension in .output/
 ```
 
-Tests use real dependencies. Integration tests only run when their keys are set, either
-in the shell or in a git-ignored `.env.test.local`:
+Tests run against real dependencies. The integration tests only run when their keys are
+set, either in the shell or in a git-ignored `.env.test.local`:
 
 | Variable            | Enables |
 |---------------------|---------|
@@ -191,17 +196,17 @@ in the shell or in a git-ignored `.env.test.local`:
 | `NOTION_TOKEN`      | Real Notion writes (with `NOTION_TEST_DB_ID`) |
 | `NOTION_TEST_DB_ID` | A scratch database with the schema above, shared with the integration |
 
-A skipped integration test means that path wasn't checked. It is not a pass. CI reads
-the same three names from repository secrets and runs the Notion writes only on pushes
-to `main`.
+A skipped integration test means that path wasn't checked. It is not a pass. CI reads the
+same three names from repository secrets, and runs the Notion writes only on pushes to
+`main`.
 
 Every run of the Notion suite creates a few pages. Keep `NOTION_TEST_DB_ID` in a
-single-member or paid workspace, or use a personal access token, so the tests don't use
-up the team workspace's Free-plan block allowance.
+single-member or paid workspace, or use a personal access token, so the tests don't eat
+the team workspace's Free-plan block allowance.
 
-The audio tests also need `ffmpeg` and `ffprobe` on the `PATH`; tests that need them are
-skipped with a reason when they're missing. Browser test files run one at a time,
-because real-time audio tests are sensitive to CPU contention.
+The audio tests also want `ffmpeg` and `ffprobe` on the `PATH`; the tests that need them
+skip with a reason when they are missing. Browser test files run one at a time, because
+real-time audio tests are sensitive to CPU contention.
 
 Layout:
 
@@ -216,68 +221,81 @@ src/lib/align/           word-sequence alignment
 src/lib/merge/           words + captions → speaker-labelled transcript
 src/lib/notion/          client, idempotency, page builder
 src/lib/pipeline/        orchestration and degradation
+src/lib/ui/              design system (styles.css), shared controls, one view per page
 tests/fixtures/captions/ saved Meet caption DOM
 ```
 
 ## Known breakage points
 
-These are the places most likely to break silently, and what to check first.
+The places most likely to break quietly, and what to check first.
 
-1. **Meet's caption DOM.** Every selector and Meet UI string lives in
+1. Meet's caption DOM. Every selector and Meet UI string lives in
    `src/lib/meet/captionAdapter.ts`. The fixtures in `tests/fixtures/captions/` were
-   *reconstructed from maintained open-source scrapers*, not captured from a live call.
+   reconstructed from maintained open-source scrapers, not captured from a live call.
    During the first real meeting, run the capture snippet in
-   `tests/fixtures/captions/README.md` and replace them. Symptoms of breakage: transcripts
+   `tests/fixtures/captions/README.md` and replace them. Breakage shows up as transcripts
    with `Source = audio-only` or "Unknown speaker". The Meet tab's console logs
    `adapterHealth` once per call, showing which hooks matched.
-2. **Your own caption label.** Your turns are recognized by Meet's `You` / `Vous` label,
-   so use Meet in English or French. In other UI languages your turns keep Meet's label
+2. Your own caption label. Your turns are recognized by Meet's `You` or `Vous` label, so
+   use Meet in English or French. In other UI languages your turns keep Meet's label
    instead of your name.
-3. **Captions must stay on.** The extension turns them on (at most 3 tries, 3 s apart)
-   and never fights you if you turn them off. Without captions there are no speaker
-   names; the audio is unaffected. Meet captions follow one spoken-language setting.
-   Speakers are matched mainly by timing, so wrong-language captions still give
-   speakers, but a captions-only fallback will read poorly.
-4. **Starting a recording needs your click.** Chrome only grants tab capture after you
-   invoke the extension on that tab: the icon, then **Record this call**, or
-   <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>. Nothing records automatically.
-5. **Microphone.** The grant comes only from the permission page. If you picked
-   "Allow this time", it expires and later calls record only the other participants
-   (the popup says so). On speakers without headphones, remote voices can reach your
-   mic. Chrome's echo cancellation of the played-back tab audio hasn't been verified,
-   so use headphones.
-6. **Gemini.** Model ids are in `src/lib/gemini/models.ts` (`gemini-3.5-transcribe`,
-   `gemini-3.5-flash`). Per the docs, word-timestamp requests are capped at 30 min and
-   reject `custom_vocabulary`; plain requests are capped at 60 min. That is why there
-   are two passes. If either pass fails the other still counts, and the page lists what
-   degraded. The integration tests have not yet run against a real key (see
-   Development), so the first real transcription is also the first end-to-end check of
-   the request shapes and of `store: false`.
-7. **Notion.** API version `2026-03-11` (data sources), the property names above, and
-   the Free-plan block cap for internal integrations. **Check both databases** in
-   Settings checks access and schema but can't check write capability.
-8. **Dedupe key.** `<meet code>-<YYYY-MM-DD>` uses each recorder's local date. Two
+3. Captions must stay on. The extension turns them on (at most 3 tries, 3 s apart) and
+   never fights you if you turn them off again. Without captions there are no speaker
+   names, though the audio is unaffected. Meet captions follow one spoken-language
+   setting. Speakers are matched mainly by timing, so captions in the wrong language still
+   identify who spoke, but a captions-only fallback will read poorly.
+4. Starting a recording needs your click. Chrome grants tab capture only after you invoke
+   the extension on that tab: the icon, then Record this call, or
+   <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>.
+5. Microphone. The grant comes only from the permission page. If you picked "Allow this
+   time" it expires, and later calls record only the other participants; the popup says
+   so. On speakers without headphones, remote voices can reach your mic. Chrome's echo
+   cancellation of the played-back tab audio has not been verified, so use headphones.
+6. Gemini. Model ids are in `src/lib/gemini/models.ts` (`gemini-3.5-transcribe`,
+   `gemini-3.5-flash`). Per the docs, word-timestamp requests are capped at 30 minutes and
+   reject `custom_vocabulary`, while plain requests are capped at 60. Hence the two passes.
+   If one pass fails the other still counts, and the page lists what degraded. A pass that
+   hits its output cap can loop, repeating the same stretch; anything past the last word
+   that matched the timing pass is dropped, and the timing pass covers that stretch
+   instead. The integration tests have not run against a real key (see Development), so the
+   first real transcription is also the first end-to-end check of the request shapes and of
+   `store: false`.
+7. Notion. API version `2026-03-11` (data sources), the property names above, and the
+   Free-plan block cap for internal integrations. Check both databases in Settings checks
+   access and schema, but it cannot check write capability.
+8. The dedupe key. `<meet code>-<YYYY-MM-DD>` uses each recorder's local date, so two
    teammates in different time zones around midnight get different keys. Two separate
-   meetings in the same Meet room on the same day count as one: the second shows as
-   *Saved by …* and needs **⋯ › Save a second copy…**. The same happens when you record
-   one meeting in two pieces, for example after closing the tab by mistake. Your own
-   earlier piece is recognized by your name, so that audio is kept until you act. If two
-   teammates save at the same moment, the older page wins (settled within about 20 s).
-   A Notion row with an empty `Key` is a save that is still running or was abandoned,
-   and dedupe ignores it.
-9. **Chrome's recording format.** Long recordings are cut on WebM cluster boundaries.
-   Chrome currently writes about one cluster per 5 s chunk, and a browser test asserts
-   that layout.
-10. **Service worker lifetime.** Recording, transcription and Notion calls run in the
+   meetings in the same Meet room on the same day count as one: the second shows as *Saved
+   by …* and needs ⋯ then *Save a second copy…*. The same happens when you record one
+   meeting in two pieces, say after closing the tab by mistake. Your own earlier piece is
+   recognized by your name, so that audio is kept until you act. When two teammates save at
+   the same moment, the older page wins, settled within about 20 s. A Notion row with an
+   empty `Key` is a save still running or abandoned, and dedupe ignores it.
+9. Chrome's recording format. Long recordings are cut on WebM cluster boundaries. Chrome
+   currently writes about one cluster per 5 s chunk, and a browser test asserts that
+   layout.
+10. Service worker lifetime. Recording, transcription and Notion calls all run in the
     offscreen document, which reports each job's result as its own message. A worker
-    restart therefore doesn't lose a result, and interrupted jobs resume when
-    auto-transcribe is on.
-11. **Audio failures mid-call.** If the disk quota is hit, a chunk can't be written or
-    the recorder dies, audio stops but captions continue until the meeting ends. The
-    missing stretch is filled from caption text, and the page notes it. A watchdog
-    checks for missing chunks every 30 s. Audio takes about 14 MB per hour.
-12. **Tabs opened before an install or update** have no caption observer. It is
-    injected when you choose Record this call. If that fails, the popup and Meetings say
-    so; reload the Meet tab.
-13. **A guest named "You" or "Vous".** Their captions are indistinguishable from your
-    own, so their words are attributed to you.
+    restart therefore doesn't lose a result, and interrupted jobs resume when auto
+    transcribe is on.
+11. Audio failures mid-call. If the disk quota is hit, a chunk can't be written or the
+    recorder dies, the audio stops but captions continue until the meeting ends. The
+    missing stretch is filled from caption text and the page notes it. A watchdog checks
+    for missing chunks every 30 s. Audio takes about 14 MB per hour.
+12. Tabs opened before an install or update have no caption observer. It is injected when
+    you choose Record this call. If that fails, the popup and Meetings say so; reload the
+    Meet tab.
+13. A guest named "You" or "Vous". Their captions are indistinguishable from your own, so
+    their words are attributed to you.
+
+## Design
+
+The pages follow the iOS 26 visual language: inset grouped lists on a grouped background,
+capsule controls, Inter, and Manet's navy for the single filled button on a screen. Liquid
+Glass appears on exactly three floating surfaces, each over content that really scrolls:
+the page bar on Meetings and Settings, the popup's bottom toolbar, and the ⋯ menu. Rows,
+cards, the routing window and the microphone page stay opaque, and a test enforces that
+budget. Reduced transparency, increased contrast, forced colours and reduced motion each
+fall back to an opaque bar that keeps its hairline.
+
+`pnpm shots` renders every page in every state, light and dark, at the widths people use.

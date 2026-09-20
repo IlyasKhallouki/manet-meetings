@@ -2,7 +2,7 @@
   "name": "manet-meetings",
   "description": "Records Google Meet calls, transcribes them with Gemini and files them into Notion.",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",

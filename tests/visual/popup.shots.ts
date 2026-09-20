@@ -71,7 +71,7 @@ function recording(patch: Partial<Recording> = {}): Recording {
 
 const onCall: PopupState = { kind: 'idle', tabId: 1, meetCode: 'abc-defg-hij', title: 'Weekly product sync' };
 const RECENT = SESSIONS.filter((s) => s.status !== 'recording');
-const LONG_TITLE = 'Onboarding — Lumind × Kera: pricing, pilots and the Q4 roadmap review';
+const LONG_TITLE = 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review';
 
 function model(state: PopupState, patch: Partial<PopupModel> = {}): PopupModel {
   return {
@@ -249,7 +249,7 @@ gallery('popup', [
       }),
     ),
   ),
-  popup('recording-many-speakers', model(recording({ speakers: BIG_ROLL, title: 'Client call — Deloitte audit pilot, Q4 scoping' }))),
+  popup('recording-many-speakers', model(recording({ speakers: BIG_ROLL, title: 'Client call — Halstead audit pilot, Q4 scoping' }))),
   popup('recording-other-tab', model(recording({ thisTab: false }), { needsYou: 1 })),
   // C · On a call, ready.
   popup('on-call', model(onCall, { mic: 'prompt', recent: recentFor('route', 'proc', 'saved'), needsYou: 2 })),

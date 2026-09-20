@@ -87,7 +87,7 @@ describe('routing window layout (real CSS, 380 px)', () => {
   it('wraps long titles to two lines and long names without sideways scroll', () => {
     const root = render({
       ...meta,
-      meetingTitle: 'Point hebdo produit — revue des priorités Q4 avec l’équipe design et les partenaires de Kera',
+      meetingTitle: 'Point hebdo produit — revue des priorités Q4 avec l’équipe design et les partenaires de Nova',
       speakers: speakers('Jean-Baptiste de La Fontaine', 'Marie-Hélène Dubois-Laurent', 'Ilyas', 'Sofia', 'Tom'),
     });
     const title = root.querySelector<HTMLElement>('h1')!;

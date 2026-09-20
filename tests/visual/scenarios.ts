@@ -30,7 +30,7 @@ export const SESSIONS: SessionMeta[] = [
   session('rec', {
     status: 'recording',
     meetCode: 'qrs-tuvw-xyz',
-    meetingTitle: 'Client call — Deloitte audit pilot',
+    meetingTitle: 'Client call — Halstead audit pilot',
     startedAt: NOW - 23 * MIN,
     endedAt: undefined,
     durationMs: undefined,
@@ -122,8 +122,8 @@ export const FULL_SETTINGS: Settings = {
   displayName: 'Ilyas',
   geminiApiKey: 'AIzaSyD-example-key-000000000000000000',
   notionToken: 'ntn_example_token_0000000000000000000000000000',
-  notionTeamDbId: 'https://app.notion.com/p/035b42c7acb0418b8fed9c4f20491c3a',
+  notionTeamDbId: 'https://www.notion.so/team/Meetings-0123456789abcdef0123456789abcdef',
   notionPersonalDbId: '',
-  customVocabulary: ['Lumind', 'Manet', 'OPFS', 'Deloitte'],
+  customVocabulary: ['Lumind', 'Manet', 'OPFS', 'Halstead'],
   languageCodes: ['en-US', 'fr-FR'],
 };

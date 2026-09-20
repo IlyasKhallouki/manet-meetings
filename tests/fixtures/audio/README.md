@@ -8,7 +8,7 @@ LibriVox audiobooks.
 |---|---|---|---|
 | `speech-en.webm` | English excerpt | 40.2 s | 167 KB |
 | `speech-fr.webm` | French excerpt | 40.2 s | 170 KB |
-| `speech-mixed.webm` | `speech-en` then `speech-fr` (English 0–40.2 s, French 40.2–80.4 s) | 80.4 s | 349 KB |
+| `speech-mixed.webm` | `speech-en` then `speech-fr` (English 0 to 40.2 s, French 40.2 to 80.4 s) | 80.4 s | 349 KB |
 
 All three are mono Opus in WebM (48 kHz, 32 kb/s), like the extension's recordings.
 
@@ -48,8 +48,8 @@ available offline. The text below is the standard LibriVox preamble plus the
 opening of each book (Project Gutenberg #1661 and #800), so tests should assert
 only on the distinctive words listed under each excerpt, never on exact wording.
 
-English, 0–40.2 s. About 0–30 s is the LibriVox preamble, then a pause (about
-30–33 s), then the story begins:
+English, 0 to 40.2 s. About 0 to 30 s is the LibriVox preamble, then a pause (about
+30 to 33 s), then the story begins:
 
 > A Scandal in Bohemia, [from] The Adventures of Sherlock Holmes by Sir Arthur
 > Conan Doyle. This is a LibriVox recording. All LibriVox recordings are in the
@@ -59,8 +59,8 @@ English, 0–40.2 s. About 0–30 s is the LibriVox preamble, then a pause (abou
 
 Distinctive words: **Sherlock**, **Holmes**, **LibriVox**, Bohemia, Doyle.
 
-French, 0–40.2 s (40.2–80.4 s in `speech-mixed.webm`). About 0–30 s is the
-LibriVox preamble, then a pause (about 30–32.6 s), then chapter I begins:
+French, 0 to 40.2 s (40.2 to 80.4 s in `speech-mixed.webm`). About 0 to 30 s is the
+LibriVox preamble, then a pause (about 30 to 32.6 s), then chapter I begins:
 
 > [Chapitre premier du] Tour du monde en quatre-vingts jours, de Jules Verne.
 > [Ceci est un enregistrement LibriVox. Tous les enregistrements LibriVox sont

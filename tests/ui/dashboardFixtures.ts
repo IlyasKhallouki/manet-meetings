@@ -34,7 +34,7 @@ export const MEETINGS: SessionMeta[] = [
   session('rec', {
     status: 'recording',
     meetCode: 'qrs-tuvw-xyz',
-    meetingTitle: 'Client call — Deloitte audit pilot',
+    meetingTitle: 'Client call — Halstead audit pilot',
     startedAt: NOW - 23 * MIN - 12_000,
     endedAt: undefined,
     durationMs: undefined,
@@ -88,7 +88,7 @@ export const MEETINGS: SessionMeta[] = [
   session('failed-save', {
     status: 'failed',
     meetCode: 'vwx-yzab-cde',
-    meetingTitle: 'Quarterly planning with Lumind, Kera and the Deloitte audit team — follow-up on pricing',
+    meetingTitle: 'Quarterly planning with Lumind, Nova and the Halstead audit team — follow-up on pricing',
     startedAt: NOW - 25 * HOUR,
     durationMs: 72 * MIN,
     error: 'Notion rejected the token. Copy it again in Settings.',

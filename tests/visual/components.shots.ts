@@ -155,7 +155,7 @@ function type(): HTMLElement {
     h('p', { class: 't-large-title' }, 'Meetings — Large title, 30/36 700'),
     h('p', { class: 't-title2' }, 'Include your voice — Title 2, 21/26 600'),
     h('p', { class: 't-title3' }, 'Weekly product sync — Title 3, 17/22 600'),
-    h('p', { class: 't-headline' }, 'Onboarding — Lumind × Kera — Headline 15/20 600'),
+    h('p', { class: 't-headline' }, 'Onboarding — Lumind × Nova — Headline 15/20 600'),
     h('p', { class: 't-body' }, 'Each meeting is transcribed and saved to Notion — Body 15/20'),
     h('p', { class: 't-callout l2' }, 'Marie Curie · Tom Martin · you · qrs-tuvw-xyz — Callout 14/19'),
     h('p', { class: 't-footnote l2' }, 'Gemini is unavailable right now (503) — Footnote 13/18'),

@@ -86,7 +86,7 @@ gallery('routing', [
   routing(
     'choose-long',
     ended({
-      meetingTitle: 'Point hebdo produit — revue des priorités Q4 avec l’équipe design et les partenaires de Kera',
+      meetingTitle: 'Point hebdo produit — revue des priorités Q4 avec l’équipe design et les partenaires de Nova',
       durationMs: 72 * MIN,
       speakers: speakers('Jean-Baptiste de La Fontaine', 'Marie-Hélène Dubois-Laurent', 'Ilyas', 'Sofia', 'Tom', 'Julien'),
     }),

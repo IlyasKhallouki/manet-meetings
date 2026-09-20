@@ -104,7 +104,7 @@ const PROBLEM_MEETINGS: SessionMeta[] = [
   session('rec', {
     status: 'recording',
     meetCode: 'qrs-tuvw-xyz',
-    meetingTitle: 'Client call — Deloitte audit pilot',
+    meetingTitle: 'Client call — Halstead audit pilot',
     startedAt: NOW - 23 * MIN,
     endedAt: undefined,
     durationMs: undefined,

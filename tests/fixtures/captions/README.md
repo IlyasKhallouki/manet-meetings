@@ -43,7 +43,7 @@ Behaviour the tracker and watcher are built around:
 | What | Hook used by the adapter (in order) | Confidence |
 | --- | --- | --- |
 | Captions region | `[jsname="dsyhDe"] [role="region"]`, aria-label `Captions` / `Sous-titres`, `[role="region"].vNKgIf`, then any `[role="region"][tabindex="0"]` holding block-shaped children | EN label and classes in several 2026 sources; `Sous-titres` inferred |
-| Block / name / text | `.nMcdL` / `.NWpY1d`, `.KcIKyf` / `.ygicle`, `.VbkSUe`, then block shape (header first, text last) | classes stable in all 2025–2026 sources |
+| Block / name / text | `.nMcdL` / `.NWpY1d`, `.KcIKyf` / `.ygicle`, `.VbkSUe`, then block shape (header first, text last) | classes stable in all 2025 to 2026 sources |
 | Local user | speaker label `You` (EN), `Vous` (FR) | `You` seen in an anonymized capture; `Vous` from the team, not found in any source |
 | CC toggle | `button[jsname="RrG0hf"]` (since the Feb 2026 redesign), `button[jsname="r8qRAd"]` (before), then a button outside the captions region with a `closed_caption(_off)` icon, then one labelled "caption" / "sous-titre" (not settings/language) | jsnames and icons from ChrisRegado; EN labels from attendee and notetaker |
 | CC state | icon `closed_caption_off` = off, `closed_caption` = on; then `aria-pressed`; then label `Turn on captions` / `Turn off captions`, `Activer les sous-titres` / `Désactiver les sous-titres` | icon and EN labels observed by others; FR labels inferred from Meet's French mic/camera labels ("Activer le micro") and MeetBot's word lists |
