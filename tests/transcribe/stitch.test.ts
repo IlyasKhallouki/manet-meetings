@@ -193,6 +193,35 @@ describe('stitchTextParts', () => {
     expect(out[1]!.approx).toBe(true);
   });
 
+  /**
+   * Seen in a real 90-minute meeting: the text pass hit its output cap and looped, repeating
+   * the same stretch a dozen times. Those repeats align to nothing, so they used to be spread
+   * over the part's range and ended up as one 131k-character turn at the end of the page.
+   */
+  it('drops a looped tail and keeps the timing pass wording for the rest', () => {
+    const timing = ticks(0, 200);
+    const loop = words(100, 120).toUpperCase();
+    const text = `${words(0, 100, (x) => x.toUpperCase())} ${Array.from({ length: 12 }, () => loop).join(' ')}`;
+    const out = stitchTextParts([{ startMs: 0, endMs: 200_000, text }], timing);
+
+    // Every word once, in order: the text pass's spelling while it tracked the audio,
+    // then the timing pass's own words for the stretch the loop swamped.
+    expect(texts(out)).toEqual([
+      ...Array.from({ length: 120 }, (_, k) => `w${k}`.toUpperCase()),
+      ...Array.from({ length: 80 }, (_, k) => `w${k + 120}`),
+    ]);
+    expect(out.map((x) => x.start)).toEqual(timing.map((x) => x.start));
+  });
+
+  it('keeps a text tail the timing pass never reached when it does not loop', () => {
+    const timing = ticks(0, 20);
+    const out = stitchTextParts(
+      [{ startMs: 0, endMs: 40_000, text: `${words(0, 20, (x) => x.toUpperCase())} and then we stopped` }],
+      timing,
+    );
+    expect(texts(out).slice(-4)).toEqual(['and', 'then', 'we', 'stopped']);
+  });
+
   it('keeps every word exactly once across overlapping text parts', () => {
     const timing = ticks(0, 20);
     const upper = (s: string) => s.toUpperCase();

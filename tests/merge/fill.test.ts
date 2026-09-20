@@ -78,6 +78,33 @@ describe('mergeTranscript: caption text for speech the audio does not have', () 
     expect(t.notes[0]).toMatch(/00:00:1\d–00:00:2\d/);
   });
 
+  /**
+   * A real 90-minute meeting came back with fifteen one- to three-second gaps, and the note
+   * listed five of them by the clock. Short gaps are normal; the note says how many and how
+   * long in total instead of reading like a list of failures.
+   */
+  it('sums up short gaps instead of listing them', () => {
+    const words: TimedWord[] = [];
+    const captions: CaptionSegment[] = [];
+    let t = 0;
+    for (let i = 0; i < 12; i++) {
+      // A spoken line the audio heard, then a two-second line only the captions have.
+      for (const word of splitWords(`line ${i} that the audio heard just fine`)) {
+        words.push({ text: word, start: t, end: t + 400 });
+        t += 500;
+      }
+      t += 9000; // silence, so the aside's lag-compensated span holds no audio word
+      captions.push({ id: `c${i}`, speaker: ALICE, self: false, text: `aside ${i}`, tStart: t, tEnd: t + 2000, rev: 1 });
+      t += 9000;
+    }
+    const note = mergeTranscript({ words, captions, selfName: 'Ilyas' }).notes.find((n) => /stretch|transcript/i.test(n));
+
+    expect(note).toBeDefined();
+    expect(note).toMatch(/12 short stretches/);
+    expect(note).not.toMatch(/\d\d:\d\d:\d\d/); // no clock times for gaps this small
+    expect(note).toMatch(/24s|0m 24s|24 s/);
+  });
+
   it('without the mic, keeps every self block as caption text and gives the audio words to others', () => {
     const lines: Line[] = [
       ...meeting,

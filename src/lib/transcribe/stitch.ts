@@ -62,6 +62,12 @@ export class TranscriptionError extends Error {
 const MAX_SKEW_MS = 1500;
 /** Unmatched timing words in a row that mean the text pass skipped speech. */
 const MIN_SKIPPED_RUN = 5;
+/**
+ * Unaligned words a text part may end with before its tail is treated as a loop. A pass
+ * that hits its output cap often repeats the same stretch until it stops (seen in the wild:
+ * one part repeated a dozen times, 131k characters), and those repeats match no timing word.
+ */
+const MAX_UNALIGNED_TAIL = 40;
 /** Consecutive shared words that prove two untimed texts overlap. */
 const MIN_OVERLAP_RUN = 3;
 const MIN_OVERLAP_MATCHES = 3;
@@ -202,7 +208,11 @@ function textCut(a: PartSpan, aWords: TimedWord[], b: PartSpan, bWords: TimedWor
  * text part failed). A part with no text keeps the timing words; a part with no
  * timing words spreads its text evenly over the time it owns.
  */
-export function stitchTextParts(parts: readonly TextPart[], timingWords: readonly TimedWord[]): TimedWord[] {
+export function stitchTextParts(
+  parts: readonly TextPart[],
+  timingWords: readonly TimedWord[],
+  notes?: { looped: PartSpan[] },
+): TimedWord[] {
   const ordered = byStart(parts);
   const midWindows = ownershipWindows(ordered);
   const placed = ordered.map((part, i) => {
@@ -213,11 +223,14 @@ export function stitchTextParts(parts: readonly TextPart[], timingWords: readonl
       const window = midWindows[i]!;
       return spread(source, Math.max(part.startMs, window.from), Math.min(part.endMs, window.to));
     }
-    return transferTimes(source, target, {
+    const words = transferTimes(source, target, {
       keepSkippedTarget: MIN_SKIPPED_RUN,
       minMs: part.startMs,
       maxMs: part.endMs,
     });
+    const trimmed = withoutLoopedTail(words, target);
+    if (trimmed !== words) notes?.looped.push(part);
+    return trimmed;
   });
   const windows = windowsFromCuts(ordered, placed, textCut);
   const out: TimedWord[] = [];
@@ -226,6 +239,22 @@ export function stitchTextParts(parts: readonly TextPart[], timingWords: readonl
   });
   for (const word of timingWords) if (!ordered.some((part) => covers(part, word))) out.push(word);
   return sortWords(out);
+}
+
+/**
+ * The part's words up to the last one that matched the timing pass, then the timing pass's
+ * own words for the rest — used when a long tail aligned to nothing, which is what a looping
+ * pass produces. `words` itself is returned when the tail is short enough to trust, or when
+ * the timing pass has nothing to put in its place.
+ */
+function withoutLoopedTail(words: TimedWord[], target: readonly TimedWord[]): TimedWord[] {
+  let last = words.length - 1;
+  while (last >= 0 && words[last]!.approx) last--;
+  if (words.length - 1 - last <= MAX_UNALIGNED_TAIL) return words;
+  const from = last >= 0 ? words[last]!.end : -Infinity;
+  const rest = target.filter((t) => t.start >= from);
+  if (rest.length === 0) return words;
+  return [...words.slice(0, last + 1), ...rest];
 }
 
 /** Longest run of pairs that advance together in both sequences, as [first, length]. */
@@ -322,6 +351,14 @@ function passOutcome(
   return { outcome: warnings.length > 0 ? { ok: true, warning: warnings.join('; ') } : { ok: true }, transient: false };
 }
 
+/** Says which stretches fell back to the timing pass because the text pass repeated itself. */
+function withLoopWarning(outcome: PassOutcome, looped: readonly PartSpan[]): PassOutcome {
+  if (!outcome.ok || looped.length === 0) return outcome;
+  const where = looped.map((p) => `${clock(p.startMs)}–${clock(p.endMs)}`).join(', ');
+  const note = `the text pass repeated itself in ${where}, so that stretch uses the timing pass wording`;
+  return { ok: true, warning: outcome.warning ? `${outcome.warning}; ${note}` : note };
+}
+
 /** Ranges of the recording that no successful part covered. */
 export function uncoveredRanges(parts: readonly PartOutcome<unknown>[]): { start: number; end: number }[] {
   if (parts.length === 0) return [];
@@ -366,18 +403,20 @@ export function combinePasses(
 
   let words: TimedWord[] = [];
   let joined: string;
+  const looped: PartSpan[] = [];
   if (timedParts.length > 0) {
     const timingWords = stitchTimingParts(timedParts);
-    words = textParts.length > 0 ? stitchTextParts(textParts, timingWords) : timingWords;
+    words = textParts.length > 0 ? stitchTextParts(textParts, timingWords, { looped }) : timingWords;
     joined = words.map((x) => x.text).join(' ');
   } else joined = joinOverlappingTexts(textParts);
+  const textOutcome = withLoopWarning(textPass.outcome, looped);
 
   const gaps = uncoveredRanges([...timing, ...text]);
   return {
     words,
     text: joined,
     timingPass: timingPass.outcome,
-    textPass: textPass.outcome,
+    textPass: textOutcome,
     ...(gaps.length > 0 ? { gaps } : {}),
   };
 }

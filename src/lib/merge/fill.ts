@@ -12,7 +12,7 @@
  * then) are given back: the audio has them.
  */
 import { normalizeToken, splitWords } from '../align/sequence';
-import { formatClock } from '../util/time';
+import { formatClock, formatDuration } from '../util/time';
 import { blockSpan, type Lags } from './assign';
 import { lowerBound, MAX_LAG_MS, MIN_LAG_MS, upperBound } from './lag';
 import type { Segment } from './segments';
@@ -53,6 +53,8 @@ const REACH_MS = 1000;
 /** Shorter uncovered stretches left beside words are just pauses. */
 const MIN_UNCOVERED_MS = 2000;
 const MAX_RANGES = 5;
+/** Gaps this short are summed up rather than listed: a second or two is ordinary. */
+const SHORT_GAP_MS = 5000;
 
 /**
  * Sorted, disjoint ranges the audio transcript does not cover. Timed words (sorted by
@@ -228,9 +230,18 @@ export function fillNotes(fills: readonly CaptionFill[], words: HeardWords['word
       if (last && lowerBound(starts, last[1]) >= lowerBound(starts, f.start)) last[1] = Math.max(last[1], f.end);
       else ranges.push([f.start, f.end]);
     }
+    // A few seconds here and there is normal; listing each one reads like a failure.
+    const long = ranges.filter(([a, b]) => b - a >= SHORT_GAP_MS);
+    const short = ranges.length - long.length;
+    const total = ranges.reduce((ms, [a, b]) => ms + (b - a), 0);
+    const plural = (n: number) => (n === 1 ? 'stretch' : 'stretches');
     notes.push(
-      `Where the audio had no transcript (${formatRanges(ranges)}), the text comes from Meet captions ` +
-        'and may contain recognition errors.',
+      long.length === 0
+        ? `${ranges.length} short ${plural(ranges.length)} with no audio transcript ` +
+            `(${formatDuration(total)} in total) use Meet's captions instead, which may contain recognition errors.`
+        : `Where the audio had no transcript (${formatRanges(long)}` +
+            `${short > 0 ? `, and ${short} shorter ${plural(short)}` : ''}), the text comes from Meet captions ` +
+            'and may contain recognition errors.',
     );
   }
   return notes;
