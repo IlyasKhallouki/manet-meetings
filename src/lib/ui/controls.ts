@@ -63,17 +63,19 @@ export function guard<E extends Event>(handler: (event: E) => void): (event: E) 
 // Buttons
 
 /**
- * bordered — the default next step (surface fill, 3:1 outline).
+ * Every button is a capsule (the concentric rule: an inset control inside an r18 row
+ * would fall under an 8 px radius, so it becomes a capsule instead).
+ * bordered — the default next step (--fill, 3:1 outline, 34 px).
  * prominent — the ONE filled navy button per view (Record this call, Continue, default route).
  * live — Stop recording (red fill). Red means recording, nothing else.
- * plain — text-only accent button in footers and page heads (Meetings, Settings, Pause).
- * link — inline, inside a sentence ("Allow microphone…"): accent and underlined.
+ * plain — text-only tint button in bars and footers (Meetings, Settings, Pause), 30 px.
+ * link — inline, inside a sentence ("Allow microphone…"): tint and underlined.
  */
 export type ButtonKind = 'bordered' | 'prominent' | 'live' | 'plain' | 'link';
 
 export interface ButtonOptions {
   kind?: ButtonKind;
-  /** 40 px, full width, 15/600: the popup's one big button. */
+  /** 48 px, full width, 17/600: the popup's one big button. */
   hero?: boolean;
   onClick?: (event: MouseEvent) => void;
   /** Unavailable: aria-disabled (focus stays); the click handler is skipped. */
@@ -118,7 +120,7 @@ export interface IconButtonOptions extends Omit<ButtonOptions, 'kind' | 'hero'> 
   tooltip?: string | null;
 }
 
-/** 32×32 glyph-only button (the ⋯ menu button). `label` is its accessible name. */
+/** 32×32 round glyph-only button (the ⋯ menu button). `label` is its accessible name. */
 export function iconButton(glyph: Glyph, label: string, options: IconButtonOptions = {}): HTMLButtonElement {
   const tooltip = options.tooltip === undefined ? label : options.tooltip;
   return button(svg(glyph), {
@@ -150,7 +152,7 @@ export function toneGlyph(tone: Tone, title?: string): SVGSVGElement {
 export interface StatusLineOptions {
   tone: Tone;
   word: Children;
-  /** Second line(s): destination, stage, error detail. --label-2, 13/18. */
+  /** Second line(s): destination, stage, error detail. --label-2, 13/18 footnote. */
   detail?: Children;
   attrs?: Attrs;
 }
@@ -196,7 +198,7 @@ export interface SegmentedOptions<V extends string> {
   disabled?: boolean;
   /** Every segment busy while the choice is being saved (see setBusy()). */
   busy?: boolean;
-  /** 48 px segments with a subtitle (routing). */
+  /** 56 px segments with a subtitle (routing). */
   large?: boolean;
   attrs?: Attrs;
 }
@@ -286,7 +288,7 @@ export interface SwitchOptions {
   attrs?: Attrs;
 }
 
-/** <input type=checkbox role=switch class=switch>, 34×20. */
+/** <input type=checkbox role=switch class=switch>, 51×31 — the iOS metric, exactly. */
 export function switchInput(o: SwitchOptions): HTMLInputElement {
   const input = h('input', {
     type: 'checkbox',
@@ -501,7 +503,7 @@ export interface NoteOptions {
   attrs?: Attrs;
 }
 
-/** ⓘ neutral information on --surface-2 (No Gemini key…). */
+/** ⓘ neutral information on --fill (No Gemini key…). */
 export function note(o: NoteOptions): HTMLDivElement {
   return h(
     'div',
@@ -515,7 +517,7 @@ export function note(o: NoteOptions): HTMLDivElement {
 // ---------------------------------------------------------------------------------------
 // Progress, kbd
 
-/** Determinate 88×4 bar. */
+/** Determinate 92×5 capsule bar. */
 export function progress(value: number, max: number, label: string, attrs: Attrs = {}): HTMLProgressElement {
   const el = h('progress', {
     ...attrs,
@@ -541,7 +543,7 @@ export function kbd(shortcut: string): HTMLElement {
 // Grouped sections
 
 export interface SectionOptions {
-  /** Header above the group (13/600 --label-2). Omit for a group without a header. */
+  /** Header above the group (13/18 600 --label-2, inset 16 px). Omit for a bare group. */
   title?: Children;
   id?: string;
   /** The rows. Pass `list: true` to get <ul>/<li> semantics (Meetings). */
@@ -550,7 +552,7 @@ export interface SectionOptions {
   attrs?: Attrs;
 }
 
-/** Header + grouped surface with hairlines between rows. Rows get .group-row. */
+/** Header + inset grouped card with hairlines between rows. Rows get .group-row. */
 export function section(o: SectionOptions): HTMLElement {
   const headerId = o.title && o.id ? `${o.id}-title` : undefined;
   const group = h(o.list ? 'ul' : 'div', { class: 'group', role: o.list ? 'list' : undefined });

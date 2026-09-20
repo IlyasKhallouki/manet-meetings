@@ -9,10 +9,17 @@
     <title>Manet Meetings</title>
   </head>
   <body class="page page-meetings">
-    <header class="page-head">
-      <h1>Meetings</h1>
-      <nav aria-label="Pages"><button type="button" class="btn plain" id="open-settings">Settings</button></nav>
+    <!-- The floating glass bar. Its title is a second copy of the h1 that appears as the
+         page scrolls, so it is hidden from assistive tech: the h1 below is the page title. -->
+    <header class="page-bar">
+      <div class="page-bar-inner">
+        <span class="bar-title" aria-hidden="true">Meetings</span>
+        <span class="bar-spacer"></span>
+        <nav aria-label="Pages"><button type="button" class="btn plain" id="open-settings">Settings</button></nav>
+      </div>
     </header>
+    <div class="bar-edge" aria-hidden="true"></div>
+    <div class="page-title-block"><h1 class="t-large-title">Meetings</h1></div>
     <main id="app" class="page-body"></main>
     <script type="module" src="./main.ts"></script>
   </body>

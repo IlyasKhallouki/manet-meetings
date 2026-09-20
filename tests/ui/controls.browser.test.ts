@@ -443,24 +443,150 @@ describe('styles.css (real CSS)', () => {
     const el = button('Continue', { kind: 'prominent' });
     mountHost(el);
     await document.fonts.ready;
-    expect(document.fonts.check('500 14px Inter')).toBe(true);
+    expect(document.fonts.check('600 15px Inter')).toBe(true);
     const style = getComputedStyle(el);
     expect(style.fontFamily.startsWith('Inter')).toBe(true);
-    expect(style.fontWeight).toBe('500');
-    expect(style.minHeight).toBe('32px');
-    expect(style.borderRadius).toBe('8px');
+    expect(style.fontWeight).toBe('600');
+    expect(style.minHeight).toBe('34px');
+    // Every button is a capsule (the concentric rule).
+    expect(style.borderRadius).toBe('999px');
   });
 
   it('never makes a control narrower than 28 px or a focus ring invisible', () => {
     const icon = iconButton('more', 'More actions');
-    mountHost(icon);
-    const rect = icon.getBoundingClientRect();
-    expect(rect.width).toBe(32);
-    expect(rect.height).toBe(32);
+    const plain = button('Settings', { kind: 'plain' });
+    const toggle = switchInput({ checked: true, label: 'On', onChange: () => {} });
+    const segments = segmented({
+      label: 'Save to',
+      options: [
+        { value: 'team', label: 'Team' },
+        { value: 'personal', label: 'Personal' },
+      ],
+      value: 'team',
+      onSelect: () => {},
+    });
+    mountHost(icon, plain, toggle, segments);
+    expect(icon.getBoundingClientRect().width).toBe(32);
+    expect(icon.getBoundingClientRect().height).toBe(32);
+    // The iOS switch metric, exactly.
+    expect(toggle.getBoundingClientRect().width).toBe(51);
+    expect(toggle.getBoundingClientRect().height).toBe(31);
+    for (const el of [plain, ...segments.querySelectorAll<HTMLElement>('.segment')]) {
+      expect(el.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+    }
     icon.focus({ focusVisible: true } as FocusOptions);
     const style = getComputedStyle(icon);
     expect(style.outlineStyle).toBe('solid');
     expect(style.outlineWidth).toBe('2px');
+  });
+
+  /* The glass budget: the three functional-layer surfaces carry a backdrop filter, and
+   * nothing in the content layer does. (liquid-glass.md › Review checklist, Restraint.) */
+  it('puts Liquid Glass on exactly three surfaces and never in the content layer', () => {
+    const bar = h(
+      'header',
+      { class: 'page-bar' },
+      h('div', { class: 'page-bar-inner' }, h('span', { class: 'bar-title' }, 'Meetings')),
+    );
+    const foot = h('nav', { class: 'popup-foot' }, button('Settings', { kind: 'plain' }));
+    const menu = h('div', { class: 'menu', role: 'menu' }, h('button', { class: 'menu-item' }, 'Delete…'));
+    const content = [
+      h('div', { class: 'group' }, h('div', { class: 'group-row' }, 'row')),
+      callout({ title: 'Setup' }),
+      note({ body: 'No key' }),
+      button('Continue', { kind: 'prominent' }),
+      textInput({ id: 'g' }),
+    ];
+    mountHost(bar, foot, menu, ...content);
+    const filtered = (el: Element) => getComputedStyle(el).backdropFilter !== 'none';
+    expect(filtered(menu)).toBe(true);
+    expect(getComputedStyle(bar, '::before').backdropFilter).not.toBe('none');
+    expect(getComputedStyle(foot, '::before').backdropFilter).not.toBe('none');
+    for (const el of content) {
+      expect(filtered(el)).toBe(false);
+      expect(getComputedStyle(el, '::before').backdropFilter).toBe('none');
+    }
+    // The opaque fallback exists for every one of them.
+    const tokens = getComputedStyle(document.documentElement);
+    expect(tokens.getPropertyValue('--glass-opaque').trim()).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  /* Glass only while the popup actually scrolls: a popup that fits has no scroll range,
+   * its timeline is inactive and the toolbar stays the flat opaque bar. */
+  it('the popup toolbar is a flat bar until the popup scrolls', async () => {
+    const popup = (contentHeight: number) =>
+      h(
+        'div',
+        { style: 'height:120px;width:220px;overflow:auto' },
+        h('div', { style: `height:${contentHeight}px` }),
+        h('nav', { class: 'popup-foot' }, button('Settings', { kind: 'plain' })),
+      );
+    const short = popup(20);
+    const tall = popup(600);
+    mountHost(short, tall);
+    // Scroll timelines are resolved on the frame after layout.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const foot = (el: HTMLElement) => getComputedStyle(el.querySelector<HTMLElement>('.popup-foot')!);
+    expect(foot(short).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(foot(short).boxShadow).not.toBe('none');
+    expect(foot(tall).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+  });
+
+  /* The bar is sticky, so the scrollport has to start below it. Without this, Shift+Tab
+   * back up the page lands the focused control — ring and all — behind the glass
+   * (WCAG 2.2 § 2.4.11 Focus Not Obscured). It belongs to the root, not body: that is
+   * where the viewport takes its scroll padding from. */
+  it('keeps the sticky page bar clear of whatever the keyboard focuses', () => {
+    const previous = document.body.className;
+    document.body.className = 'page page-meetings';
+    try {
+      const root = getComputedStyle(document.documentElement);
+      const barHeight = parseFloat(root.getPropertyValue('--bar-h'));
+      expect(barHeight).toBeGreaterThan(0);
+      expect(parseFloat(root.scrollPaddingTop)).toBeGreaterThanOrEqual(barHeight);
+    } finally {
+      document.body.className = previous;
+    }
+  });
+
+  /* Every mode that drops the material has to hand the boundary to a real hairline, and
+   * the toolbar's can't come from ::before: the scroll-edge mask on that same box fades
+   * the rim shadow away with it. Chrome can't be asked to emulate reduced transparency,
+   * so the rule itself is the assertion. */
+  it('gives the popup toolbar a hairline in every mode that drops the material', () => {
+    const modes = new Set<string>();
+    // Style rules are grouping rules too now (CSS nesting), so they are read before the
+    // walk descends, not instead of it.
+    const walk = (rules: CSSRuleList, condition: string): void => {
+      for (const rule of Array.from(rules)) {
+        if (rule instanceof CSSStyleRule && /\.popup-foot(?![:\w-])/.test(rule.selectorText)) {
+          const shadow = rule.style.getPropertyValue('box-shadow');
+          if (shadow.includes('--glass-rim') || shadow.includes('--separator')) {
+            if (condition.includes('reduced-transparency')) modes.add('reduced-transparency');
+            if (condition.includes('contrast: more')) modes.add('contrast: more');
+            if (condition.includes('reduced-motion')) modes.add('reduced-motion');
+          }
+        }
+        if ('cssRules' in rule) {
+          const nested = rule instanceof CSSMediaRule ? `${condition} ${rule.conditionText}` : condition;
+          walk((rule as CSSGroupingRule).cssRules, nested);
+        }
+      }
+    };
+    for (const sheet of Array.from(document.styleSheets)) walk(sheet.cssRules, '');
+    expect([...modes].sort()).toEqual(['contrast: more', 'reduced-motion', 'reduced-transparency']);
+  });
+
+  /* The bar is transparent at rest and takes its material from a scroll-driven
+   * animation, so a page that does not scroll never puts content under bare glass. */
+  it('the page bar starts clear and its material is scroll-driven', () => {
+    const bar = h('header', { class: 'page-bar' }, h('div', { class: 'page-bar-inner' }));
+    mountHost(bar);
+    const before = getComputedStyle(bar, '::before');
+    expect(before.opacity).toBe('0');
+    expect(before.animationName).toBe('bar-material');
+    // getPropertyValue: animation-timeline is not in TypeScript's CSSStyleDeclaration yet.
+    expect(before.getPropertyValue('animation-timeline')).toContain('scroll');
   });
 
   it('links are underlined (1 px, thicker on hover); button-styled links and plain buttons are not', () => {
@@ -519,7 +645,8 @@ describe('styles.css (real CSS)', () => {
     expect(getComputedStyle(team!).opacity).toBe('1');
     expect(getComputedStyle(team!).color).toBe(rgb('--label-2'));
     expect(getComputedStyle(personal!).color).toBe(rgb('--label'));
-    expect(getComputedStyle(personal!).backgroundColor).toBe(rgb('--surface-2'));
+    // The pressed thumb sinks to --fill-2 and keeps its ✓, ring and --label text.
+    expect(getComputedStyle(personal!).backgroundColor).toBe(rgb('--fill-2'));
   });
 
   it('the fact list stacks labels above values when it is narrower than 18em', () => {

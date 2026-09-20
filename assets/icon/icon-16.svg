@@ -1,8 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
   <!-- Manet Meetings toolbar icon, hand-fitted for the 1x toolbar. The caption line:
        a speaker mark above two left-aligned text bars of unequal length. Idle: white ring
-       on whole pixels (x 3–9, y 2–8), its left edge on the bars' left edge. -->
-  <rect x="1" y="1" width="14" height="14" rx="3.5" fill="#032A4A"/>
+       on whole pixels (x 3-9, y 2-8), its left edge on the bars' left edge. The tile is
+       the same iOS 26 squircle, with the rim dropped: at 14 px it is one grey pixel. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#093458"/>
+      <stop offset="1" stop-color="#02223C"/>
+    </linearGradient>
+  </defs>
+  <path d="M15 8C15 9.359 14.969 11.192 14.904 12.077C14.838 12.961 14.744 12.969 14.609 13.305C14.474 13.641 14.311 13.877 14.094 14.094C13.877 14.311 13.641 14.474 13.305 14.609C12.969 14.744 12.961 14.838 12.077 14.904C11.192 14.969 9.359 15 8 15C6.641 15 4.808 14.969 3.923 14.904C3.039 14.838 3.031 14.744 2.695 14.609C2.359 14.474 2.123 14.311 1.906 14.094C1.689 13.877 1.526 13.641 1.391 13.305C1.256 12.969 1.162 12.961 1.096 12.077C1.031 11.192 1 9.359 1 8C1 6.641 1.031 4.808 1.096 3.923C1.162 3.039 1.256 3.031 1.391 2.695C1.526 2.359 1.689 2.123 1.906 1.906C2.123 1.689 2.359 1.526 2.695 1.391C3.031 1.256 3.039 1.162 3.923 1.096C4.808 1.031 6.641 1 8 1C9.359 1 11.192 1.031 12.077 1.096C12.961 1.162 12.969 1.256 13.305 1.391C13.641 1.526 13.877 1.689 14.094 1.906C14.311 2.123 14.474 2.359 14.609 2.695C14.744 3.031 14.838 3.039 14.904 3.923C14.969 4.808 15 6.641 15 8Z" fill="url(#tile)"/>
   <circle cx="6" cy="5" r="2.25" fill="none" stroke="#FFFFFF" stroke-width="1.5"/>
   <rect x="3" y="9" width="10" height="2" rx="1" fill="#FFFFFF"/>
   <rect x="3" y="12" width="6" height="2" rx="1" fill="#FFFFFF"/>

@@ -1,10 +1,19 @@
 /* Manet Meetings — the design system every extension page shares.
  *
- * "Native restraint: red means recording." A quiet, native-feeling part of Chrome in the
- * Manet family (Inter, Manet navy, grey grouped surfaces). The only loud thing is the live
- * moment: --live red always and only means "recording right now". Needs-you is amber with
- * a ▲ glyph, saved is green with a ✓, working is grey ◐, and blue is everything
- * interactive that is not the one filled navy button of a view.
+ * "iOS 26, two layers, honestly." The CONTENT layer is an inset grouped list on a grouped
+ * background — opaque, flat, generous concentric radii, capsule controls. The FUNCTIONAL
+ * layer is Liquid Glass and nothing else is. Content scrolls under exactly three glass
+ * surfaces and nowhere else:
+ *   1. .page-bar    the floating nav bar on Meetings and Settings (regular variant, scroll
+ *                   edge effect: transparent at rest, material once content is under it)
+ *   2. .popup-foot  the popup's bottom toolbar, while the popup actually scrolls
+ *   3. .menu        the ⋯ popover (top layer, thicker fill: it is text-heavy)
+ * Glass is never faked on rows, cards, callouts, fields, page backgrounds, the routing
+ * window or the microphone page — nothing scrolls behind those, so they are opaque.
+ *
+ * The UX is unchanged: --live red always and only means "recording right now", needs-you
+ * is amber with a ▲, saved is green with a ✓, working is the ◐ tint, and blue is
+ * everything interactive that is not the one filled navy button of a view.
  *
  * FILES
  *   styles.css           tokens, fonts, base, shared components, page shells (this file)
@@ -21,108 +30,162 @@
  *   rules are [hidden] and prefers-reduced-motion in `reset`; as important declarations
  *   in the earliest layer they win over every later layer.
  *
- * CONTRAST (WCAG 2.x; text ≥ 4.5:1, boundaries / glyphs / focus ≥ 3:1). Computed by
- * scratchpad/foundation/contrast.mjs over 191 pairs; all pass. Light / dark:
- *   --label        on surface 17.75 / 14.22   on bg 16.11 / 15.86   on surface-2 15.00 / 12.24
- *   --label-2      on surface  7.69 /  7.15   on bg  6.98 /  7.98   on surface-2  6.50 /  6.16
- *                  on caution-weak 7.27 / 6.21   on elevated 7.69 / 6.40
- *   --placeholder  on surface  4.97 /  5.47
- *   --accent       on surface  5.53 /  8.58   on bg  5.02 /  9.57   on surface-2  4.68 /  7.39
- *                  on accent-weak 4.83 / 7.57   on caution-weak 5.23 / 7.44
- *                  (SPEC #016DCF was 4.34 on surface-2 and 4.48 on accent-weak → #0168C6)
- *   --on-accent    on accent   5.53 /  7.60   (menu highlight, switch thumb)
- *   --on-prominent on prominent 14.64 / 7.60  hover 11.74 / 8.97  pressed 16.72 / 6.52
- *   --on-live      on live-fill 5.80 / 4.77   hover 6.54 / 5.76
- *   --live         on surface  5.80 /  6.55   on bg  5.26 /  7.31
- *   --caution      on surface  6.79 /  9.85   on caution-weak 6.42 / 8.54   on bg 6.16 / 10.99
- *   --done         on surface  5.69 /  9.09   on bg  5.16 / 10.14   on surface-2 4.81 / 7.82
- *   --field-border on surface  3.77 /  3.81   on bg  3.42 /  4.25   on surface-2 3.19 / 3.28
- *                  on caution-weak 3.57 / 3.31
- *   --switch-off   on surface  3.77 /  3.81   thumb on it 3.77 / 3.73
- *   focus ring (--accent) on surface 5.53 / 8.58, bg 5.02 / 9.57, accent-weak 4.83 / 7.57
- *   --live-fill vs surface 5.80 / 3.46   --prominent vs surface 14.64 / 8.58
- *   routing drain bar (on-prominent at .75 / .8 over the fill) 8.80 / 4.96
- *   busy / unavailable (no opacity): button label --label-2 on surface-2 6.50 / 6.16,
- *     its outline --field-border on surface 3.77 / 3.81 and bg 3.42 / 4.25, plain
- *     --label-2 on surface 7.69 / 7.15, pressed segment --label on surface-2 15.00 / 12.24
- *     (outline 3.19 / 3.28), other segments --label-2 on surface 7.69 / 7.15
- *   links are underlined, so they never rely on accent vs --label-2 (1.39 / 1.20)
- *   prefers-contrast: more  --label-2 10.46 / 10.45, --field-border 5.98 / 6.34,
- *                           --switch-off 5.98 / 4.20 (thumb 5.98 / 3.38)
+ * CONTRAST (WCAG 2.x; text ≥ 4.5:1, boundaries / glyphs / focus ≥ 3:1). Light / dark:
+ * ┌──────────────────────────────┬────────┬────────┐
+ * │ pair                         │  light │   dark │
+ * ├──────────────────────────────┼────────┼────────┤
+ * │ --label on --surface         │  17.76 │  15.19 │
+ * │ --label on --bg              │  16.02 │  17.72 │  also the dark field fill
+ * │ --label on --fill            │  14.78 │  12.42 │  bordered buttons, note, seg track
+ * │ --label on --fill-2          │  13.34 │  10.58 │  unavailable pressed segment
+ * │ --label on --caution-weak    │  16.03 │  13.02 │
+ * │ --label on --tint-weak       │  15.27 │  13.48 │
+ * │ --label-2 on --surface       │   6.13 │   7.29 │
+ * │ --label-2 on --bg            │   5.53 │   8.51 │
+ * │ --label-2 on --fill          │   5.10 │   5.96 │  unpressed segment label
+ * │ --label-2 on --fill-2        │   4.60 │   5.08 │
+ * │ --label-2 on --caution-weak  │   5.53 │   6.25 │
+ * │ --label-2 on --tint-weak     │   5.27 │   6.47 │
+ * │ --label-3 on --surface       │   4.69 │   5.38 │  placeholder (dark: 6.28 on --bg)
+ * │ --tint on --surface          │   5.83 │   7.52 │
+ * │ --tint on --bg               │   5.25 │   8.77 │
+ * │ --tint on --fill             │   4.85 │   6.15 │
+ * │ --tint on --tint-weak        │   5.01 │   6.67 │  ⋯ button while its menu is open
+ * │ --tint on --caution-weak     │   5.26 │   6.45 │
+ * │ --on-tint on --tint-fill     │   5.83 │   4.55 │  switch on, progress, menu highlight
+ * │ --on-prominent on --prominent│  14.64 │   9.22 │  the one filled button per view
+ * │ --on-live on --live-fill     │   5.73 │   5.05 │  Stop recording
+ * │ --live on --surface          │   5.73 │   5.98 │  the dot + the word Recording
+ * │ --live on --bg               │   5.17 │   6.98 │
+ * │ --caution on --surface       │   7.10 │  10.13 │  ▲ needs you
+ * │ --caution on --caution-weak  │   6.41 │   8.69 │
+ * │ --caution on --bg            │   6.41 │  11.83 │  also the invalid field border
+ * │ --caution on --fill          │   5.91 │   8.28 │
+ * │ --done on --surface          │   5.41 │   8.55 │  ✓ saved
+ * │ --done on --bg               │   4.88 │   9.98 │
+ * │ --done on --fill             │   4.51 │   6.99 │
+ * │ --border on --surface   ≥3   │   3.86 │   4.29 │  every control boundary
+ * │ --border on --bg        ≥3   │   3.48 │   5.01 │
+ * │ --border on --fill      ≥3   │   3.22 │   3.51 │  segmented thumb ring vs its track
+ * │ --switch-off on --surface ≥3 │   3.44 │   3.34 │  switch off-track
+ * │ thumb (--thumb) on switch-off│   3.44 │   5.05 │
+ * │ thumb on --tint-fill    ≥3   │   5.83 │   4.55 │
+ * │ --prominent on --surface ≥3  │  14.64 │  10.23 │  filled button vs its background
+ * │ --live-fill on --surface ≥3  │   5.73 │   3.34 │
+ * │ focus ring (--tint) surface  │   5.83 │   7.52 │
+ * │ focus ring (--tint) on --bg  │   5.25 │   8.77 │
+ * └──────────────────────────────┴────────┴────────┘
+ * ON GLASS — worst case is a bar over the most saturated thing that can scroll under it
+ * (the navy prominent capsule; the red Stop capsule). Light glass = 80 % white:
+ *   label on glass over a row 17.76, over navy 11.87, over red 12.20
+ *   --tint-glass (#0A4A8C)     8.86            5.92            6.09
+ *   --tint (#0B62C9)      ✗    5.83            3.89            4.00  ← why --tint-glass is
+ * Dark glass = 80 % of #16171B and --tint (#6EB2F6) holds everywhere: row 7.91, over the
+ * prominent capsule 5.04, over the red one 6.87; --label 15.98 / 10.18 / 13.89.
+ * RULE: only --label and --tint-glass (light) / --tint (dark) may sit on glass.
+ * --label-2 is banned from the functional layer; it falls to 3.6 over navy.
+ * The ⋯ menu is a thicker 0.90 fill: --label reads 17.76 / 14.68, --label-2 6.13 / 7.05,
+ * and the keyboard-highlight label (--on-tint on --tint-fill) 5.83 / 4.55.
+ *   Busy / unavailable never uses opacity: the fill is --fill, the outline --border and
+ *   the label --label-2 (5.10 / 5.96), because focus stays and the label is the feedback.
+ *   Links are underlined, so they never rely on --tint vs --label-2 alone.
+ *   prefers-contrast: more → --label-2 10.10 / 10.67, --border 6.25 / 6.48.
  *   Toolbar icon: white glyph on navy 14.64, #FF4D40 dot on navy 4.45, navy tile on
  *   #FFFFFF 14.64 / #F1F3F4 13.16 (on dark toolbars the white glyph carries it: 12.07),
  *   badge #1F1F1F on #F9AB00 8.52, badge vs #35363A 6.24.
  *
- * TYPE (Inter 400/500/600, rem so Chrome's font size scales everything; letter-spacing
- * from Inter's dynamic metrics for each size). Classes set font + tracking; the tokens
- * are there for rules that need them.
- *   .t-title1   22/28 600  page titles                         --t-title1
- *   .t-title3   17/22 600  popup state headline, routing title  --t-title3
- *   .t-headline 14/20 600  row titles, field labels             --t-headline
- *   .t-body     14/20 400  values, list text (body default)     --t-body
- *   .t-callout  13/18 400  bylines (the roll), hints, details   --t-callout
- *   .t-caption  12/16 500  kbd, ✓ Saved, subtitles              --t-caption
- *   buttons 14/1 500, hero 15/1 600. Nothing below 12 px.
- *   .num        tabular numerals (clock, times, durations, sizes, countdown, steps)
- *   .mono       system mono for Meet codes and secrets
- *   .l2         --label-2 colour     .visually-hidden (alias .vh)   .motion-only
+ * TYPE (Inter 400/500/600/700, rem so Chrome's font size scales everything; letter-spacing
+ * from Inter's dynamic metrics for each size). Classes set font + tracking; the tokens are
+ * there for rules that need them.
+ *   .t-large-title 30/36 700  page title at rest              --t-large-title (= --t-title1)
+ *   .t-title2      21/26 600  microphone-page headline        --t-title2
+ *   .t-title3      17/22 600  popup state headline, routing   --t-title3
+ *   .t-headline    15/20 600  row titles, field labels        --t-headline
+ *   .t-body        15/20 400  values, list text (body default) --t-body
+ *   .t-callout     14/19 400  bylines (the roll), list detail --t-callout
+ *   .t-footnote    13/18 400  hints, status detail, footers   --t-footnote
+ *   .t-caption     12/16 500  kbd, ✓ Saved, subtitles         --t-caption
+ *   .t-section     13/18 600  grouped section header          --t-section
+ *   the glass bar's compact title 17/22 600 --t-bar-title; buttons 15/600 --t-button;
+ *   hero 17/600 --t-hero. Nothing below 12 px.
+ *   .num tabular numerals · .mono system mono · .l2 --label-2 colour
+ *   .visually-hidden (alias .vh) · .motion-only
  *
- * SPACE 4 px grid: --s1 4 · --s2 8 · --s3 12 · --s4 16 · --s5 20 · --s6 24 · --s8 32 · --s12 48
- * RADIUS --r-control 8 (buttons, fields, menu items) · --r-group 12 (groups, callouts, menu)
- * SIZE   --h-control 2rem (32) · --h-plain 1.75rem (28) · --h-hero 2.5rem (40) · --h-large 3rem (48)
- * MOTION --ease cubic-bezier(.2,0,0,1) · --dur-fast 120ms (hover) · --dur 200ms · --dur-thumb 160ms
+ * SPACE 4 px grid: --s1 4 · --s2 8 · --s3 12 · --s4 16 · --s5 20 · --s6 24 · --s7 28
+ *                  --s8 32 · --s11 44 · --s12 48
+ * RADIUS concentric rule, inner = outer − gap:
+ *   --r-group 18 (groups, callouts, notes, the menu, popup cards, tiles)
+ *   --r-menu-item 12 (= 18 − 6 padding) · --r-field 12 · --r-tile 14 · --r-kbd 6
+ *   --r-capsule 999 (= --r-control): every button, the segmented track and its thumb,
+ *   the switch, progress. A control inside an r18 row inset by 16 would fall under 8, so
+ *   the concentric rule sends it to a capsule instead.
+ * SIZE   --h-control 34 · --h-plain 30 · --h-icon 32 · --h-hero 48 · --h-choice 56
+ *        (= --h-large) · --h-row 44 · --h-seg 34 · switch 51×31 · --bar-h 52
+ * MOTION --spring iOS spring · --ease-io cubic-bezier(.32,.72,0,1) (= --ease)
+ *        --dur-1 140ms hover/press (= --dur-fast) · --dur-2 220ms thumb, material
+ *        (= --dur, --dur-thumb) · --dur-3 320ms menu
  *
  * CLASS VOCABULARY (controls.ts builds most of these; the builder is named in brackets)
- *   Buttons [button(), iconButton()]
- *     .btn                 bordered: surface fill, --field-border outline, 32 px
+ *   Buttons [button(), iconButton()] — every one a capsule
+ *     .btn                 bordered: --fill, --border outline, 34 px
  *     .btn.prominent       the ONE navy fill per view (Record this call, Continue, default route)
  *     .btn.live            Stop recording (--live-fill). Nothing else is red.
- *     .btn.plain           accent text, no border, 28 px (footer, page head, Pause)
- *     .btn.hero            modifier: 40 px, full width, 15/600 (popup)
- *     .btn.icon            32×32 glyph button (⋯); aria-label names it
- *     .link                inline text button inside a sentence: accent, underlined
+ *     .btn.plain           tint text, no border, 30 px (bar, footer, Pause)
+ *     .btn.hero            modifier: 48 px, full width, 17/600 (popup)
+ *     .btn.icon            32×32 round glyph button (⋯); aria-label names it
+ *     .link                inline text button inside a sentence: tint, underlined
  *                          (1 px, 2 px below the baseline; 2 px on hover), like every <a>
  *     [aria-busy=true]     busy, its request is running [setBusy(), busy option]; always
  *                          with aria-disabled. Progress cursor.
- *     [aria-disabled=true] busy or unavailable [setDisabled()]: grey fill, --label-2 text,
+ *     [aria-disabled=true] busy or unavailable [setDisabled()]: --fill, --label-2 text,
  *                          still legible; ignores activation, focus stays (never `disabled`)
- *     [aria-expanded=true] on .btn.icon: its menu is open (tinted)
+ *     [aria-expanded=true] on .btn.icon: its menu is open (--tint-weak well)
+ *     A .btn inside a .callout or .note sits on --surface, not --fill.
  *   Fields [field(), textInput(), secretInput(), setFieldMessage()]
  *     .field > .field-head (.field-label + status slot) · control · .field-msg · .hint
- *     .input               text / password / number / url / textarea / select.input
+ *     .input               38 px, r12 — text / password / number / url / textarea / select
  *     .input.mono          codes and secrets        [aria-invalid=true] caution border
  *     .field-row           input + trailing buttons (Show, Check) on one line
  *     .field-msg[data-tone=caution|done|neutral]  ▲/✓/ⓘ + text under the control
  *     .saved               12/16 --done "✓ Saved"; add .is-fading to fade it (300 ms)
- *     input[type=radio|checkbox] use the accent colour, 16 px
+ *     input[type=radio|checkbox] use --tint-fill, 17 px
  *   Toggles
- *     input.switch[role=switch]   34×20 switch; busy keeps its colours [switchInput()]
+ *     input.switch[role=switch]   51×31 iOS switch; busy keeps its colours [switchInput()]
  *     .switch-row > .switch-row-text (.field-label, .hint) + .switch  [switchRow()]
  *     .segmented[role=group] > button.segment[aria-pressed]           [segmented()]
- *       .segment-label > .segment-check (✓ when pressed, hung 4 px before the label)
- *       .segment-sub; busy/unavailable: pressed on --surface-2, others --label-2
- *       .segmented.large     48 px segments with a subtitle line
+ *       capsule track on --fill; the pressed segment IS the sliding thumb (--seg-thumb
+ *       capsule with a --border ring and --shadow-thumb); a hairline sits between two
+ *       unpressed segments. .segment-label > .segment-check (✓ when pressed, hung 4 px
+ *       before the label) · .segment-sub · .segmented.large 56 px with a subtitle line
  *   Status
  *     .glyph .glyph-<name> inline SVG from icons.ts; colour via currentColor
  *     .tone-live|working|caution|done|neutral|none   glyph colour per tone
+ *       (working is --tint now: ◐ is the one spinner-ish state; neutral/none stay --label-2)
  *     .status-line[data-tone] > .status-head (glyph + .status-word) + .status-detail
- *                                                                     [statusLine()]
+ *       glyph 14 px + 8 px gap, so every line under it indents by --status-indent (22 px)
+ *       .status-detail.is-error keeps --label                         [statusLine()]
  *     dl.facts > dt + dd(.is-caution) > .fact-value + .fact-detail   [factList()]
  *       two columns (4.5rem labels); stacks below 18em of its own width
  *     .callout             ▲ title/body/actions on --caution-weak     [callout()]
- *     .note                ⓘ body/actions on --surface-2              [note()]
- *     progress.progress    determinate 88×4                           [stepProgress()]
+ *     .note                ⓘ body/actions on --fill                   [note()]
+ *     progress.progress    determinate 92×5 capsule                   [stepProgress()]
  *     kbd, .kbd            keyboard shortcut                          [kbd()]
  *   Structure
  *     .section > .section-header + .group > .group-row                [section()]
- *       .group-row + .group-row gets a hairline; .group.roomy rows pad 16
- *       .group-row.is-confirming  inline-confirm tint (--surface-2)
+ *       .group is an inset grouped card: --surface, r18, no border, rows clipped to it
+ *       .group-row + .group-row gets a hairline inset 16 px; .group.roomy rows pad 14
+ *       .group-row.is-confirming  inline-confirm tint (--fill), full-bleed hairlines
  *     .menu[popover][role=menu] > .menu-item[role=menuitem] (+ .menu-item-note), .menu-sep
  *   Shells (entrypoints/<name>/index.html)
- *     body.page.page-meetings|page-settings|page-permission > header.page-head (h1 + nav)
- *       + main.page-body — max widths 960 / 640 / 560 (padding included)
- *     body.popup > #app.popup-root (360 px, 16 px padding, 16 px gaps) … .popup-foot
- *     body.routing > main#app.routing-root (20 px padding)
+ *     body.page.page-meetings|page-settings > header.page-bar > .page-bar-inner
+ *         (span.bar-title + .bar-spacer + nav) , div.bar-edge,
+ *       .page-title-block > .page-inner > h1 , main#app.page-body
+ *       measures 1080 / 640, the side padding outside them. The bar is transparent at rest and
+ *       gains its material + compact title from a scroll-driven animation; where that is
+ *       unsupported, or under reduced motion, it is a plain sticky material bar.
+ *     body.page-permission > main#app.page-body — 560, no bar, opaque
+ *     body.popup > #app.popup-root (360 px) … nav.popup-foot (glass while it scrolls)
+ *     body.routing > main#app.routing-root (opaque: nothing sits behind the window)
  */
 
 @layer tokens, reset, base, components, shells, surface;
@@ -161,131 +224,292 @@
   :root {
     color-scheme: light dark;
 
-    /* Surfaces */
-    --bg: #f2f4f7; /* full-tab page background */
-    --surface: #ffffff; /* groups, rows, popup, routing window, fields */
-    --surface-2: #eaecf0; /* hover, inline-confirm tint, neutral note, icon wells */
-    --surface-3: #e0e3e8; /* pressed bordered button */
-    --elevated: #ffffff; /* the ⋯ menu only */
-    --separator: #eaecf0; /* decorative hairlines only */
-    --field-border: #7b8494; /* field + bordered-button outlines, segmented track */
-    --switch-off: #7b8494; /* switch off-track */
-    --thumb: #ffffff;
+    /* ---- Content layer: grouped background + inset grouped surfaces ------------------ */
+    --bg: #f2f3f7; /* systemGroupedBackground, cooled 2° toward Manet navy */
+    --surface: #ffffff; /* secondarySystemGroupedBackground: groups, rows, popup cards, fields */
+    --fill: #e9eaef; /* secondarySystemFill: bordered buttons, segmented track, note, tiles */
+    --fill-2: #dddfe6; /* pressed */
+    --separator: #d8dae1; /* decorative hairline only — no boundary depends on it */
+    --border: #7c828d; /* every control boundary (≥ 3:1 on --surface, --bg and --fill) */
+    --switch-off: #8a8a8e; /* systemGray, darkened to clear 3:1 */
+    --thumb: #ffffff; /* the switch knob */
+    --seg-thumb: var(--surface); /* the segmented control's sliding thumb */
 
-    /* Content */
-    --label: #101828;
-    --label-2: #475467; /* secondary text, the roll, hints, ◐ working glyph */
-    --placeholder: #667085;
+    /* Names the surface files and the views already use, kept as aliases. */
+    --surface-2: var(--fill);
+    --surface-3: var(--fill-2);
+    --elevated: var(--surface); /* the ⋯ menu is glass now; this is its opaque fallback */
+    --field-border: var(--border);
 
-    /* Interactive: navy = the main thing to do here (filled), blue = everything else */
-    --accent: #0168c6; /* links, focus ring, switch on, progress fill, selected segment */
-    --accent-weak: #e6f1fb; /* selected / pressed tints */
-    --on-accent: #ffffff;
-    --prominent: #032a4a; /* Manet navy */
-    --prominent-hover: #0b3a60;
-    --prominent-pressed: #021f38;
+    /* ---- Content -------------------------------------------------------------------- */
+    --label: #16181d;
+    --label-2: #5b6270; /* the roll, hints, times, day headers */
+    --label-3: #6e7480; /* placeholder */
+    --placeholder: var(--label-3);
+
+    /* ---- Tint: iOS systemBlue pulled onto Manet's link blue #016DCF ------------------ */
+    --tint: #0b62c9; /* links, focus ring, selected, ◐ working */
+    --tint-glass: #0a4a8c; /* the vibrant variant used ONLY on the glass layer */
+    --tint-fill: #0b62c9; /* switch on, progress fill, menu keyboard highlight */
+    --on-tint: #ffffff;
+    --tint-weak: #e4effc;
+    --accent: var(--tint);
+    --accent-weak: var(--tint-weak);
+    --on-accent: var(--on-tint);
+
+    /* ---- Prominent: Manet navy, the ONE filled button per view ----------------------- */
+    --prominent: #032a4a;
+    --prominent-hover: #0a3a61;
+    --prominent-pressed: #021e36;
     --on-prominent: #ffffff;
 
-    /* Signals. Red means one thing: a recording is running right now. */
-    --live: #c5221f; /* the dot, the word Recording, the popup headline */
-    --live-fill: #c5221f; /* Stop recording */
-    --live-fill-hover: #b3261e;
+    /* ---- Signals. Red means one thing: a recording is running right now. ------------- */
+    --live: #cf0014; /* iOS accessible red, darkened to clear 4.5 on --fill */
+    --live-fill: #cf0014;
+    --live-fill-hover: #ba0012;
+    --live-fill-pressed: #a5000f;
     --on-live: #ffffff;
-    --caution: #8c4a00; /* needs you — always with ▲ */
-    --caution-weak: #fef9e3; /* Manet signal: the setup callout */
-    --done: #067647; /* ✓ saved */
+    --caution: #8a4600; /* needs you — always with ▲ */
+    --caution-weak: #fdf2e0;
+    --done: #0b7a43; /* ✓ saved */
 
-    --shadow-menu: 0 8px 24px rgb(16 24 40 / 0.14), 0 0 0 1px rgb(16 24 40 / 0.06);
+    /* ---- Liquid Glass (functional layer only) ----------------------------------------
+     * Regular variant: blur 20–40, fill 60–80 %, saturate 1.2–1.5. Saturation is pushed
+     * to 1.7 because Chrome's backdrop-filter desaturates more than CoreAnimation's. */
+    --glass-blur: 28px;
+    --glass-blur-edge: 10px; /* the scroll edge band */
+    --glass-sat: 1.7;
+    --glass-bar: rgb(255 255 255 / 0.8); /* nav bar, popup toolbar */
+    --glass-menu: rgb(255 255 255 / 0.9); /* text-heavy → thicker */
+    --glass-rim: rgb(9 20 38 / 0.13); /* hairline at the material's edge */
+    --glass-spec: rgb(255 255 255 / 0.55); /* 1 px specular highlight along the top */
+    --glass-opaque: #f7f8fa; /* reduced-transparency / forced-colors fallback */
 
-    /* Type */
-    --font: 'Inter', system-ui, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', Roboto, 'Noto Sans', Ubuntu,
-      Cantarell, 'Helvetica Neue', Arial, sans-serif;
-    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Segoe UI Mono', 'Noto Sans Mono', 'DejaVu Sans Mono', Menlo,
-      Consolas, monospace;
-    --t-title1: 600 1.375rem/1.75rem var(--font); /* 22/28 */
-    --t-title3: 600 1.0625rem/1.375rem var(--font); /* 17/22 */
-    --t-headline: 600 0.875rem/1.25rem var(--font); /* 14/20 */
-    --t-body: 400 0.875rem/1.25rem var(--font); /* 14/20 */
-    --t-callout: 400 0.8125rem/1.125rem var(--font); /* 13/18 */
-    --t-caption: 500 0.75rem/1rem var(--font); /* 12/16 */
-    --t-button: 500 0.875rem/1 var(--font);
-    --t-hero: 600 0.9375rem/1 var(--font);
-    --ls-title1: -0.018em;
-    --ls-title3: -0.013em;
-    --ls-body: -0.006em; /* 14 px, also headline and buttons */
-    --ls-hero: -0.009em;
-    --ls-callout: -0.003em;
-    --ls-caption: 0em;
+    /* ---- Radii. CONCENTRIC RULE: inner = outer − gap. ------------------------------- */
+    --r-group: 18px;
+    --r-menu-item: 12px; /* = 18 − 6 */
+    --r-field: 12px;
+    --r-tile: 14px;
+    --r-kbd: 6px;
+    --r-capsule: 999px;
+    --r-control: var(--r-capsule); /* legacy name: every control is a capsule now */
+    --focus-offset: 3px;
+    --focus-width: 2px;
 
-    /* Space, radius, size, motion */
+    /* ---- Space: 4 px grid ----------------------------------------------------------- */
     --s1: 4px;
     --s2: 8px;
     --s3: 12px;
     --s4: 16px;
     --s5: 20px;
     --s6: 24px;
+    --s7: 28px;
     --s8: 32px;
+    --s11: 44px;
     --s12: 48px;
-    --r-control: 8px;
-    --r-group: 12px;
-    --h-control: 2rem;
-    --h-plain: 1.75rem;
-    --h-hero: 2.5rem;
-    --h-large: 3rem;
-    --ease: cubic-bezier(0.2, 0, 0, 1);
-    --dur-fast: 120ms;
-    --dur: 200ms;
-    --dur-thumb: 160ms;
+
+    /* ---- Control sizes (iOS metrics; all ≥ 28 px) ----------------------------------- */
+    --h-control: 34px; /* capsule buttons */
+    --h-plain: 30px; /* borderless text buttons */
+    --h-icon: 32px; /* ⋯ */
+    --h-hero: 48px; /* popup hero capsule */
+    --h-choice: 56px; /* routing Team | Personal */
+    --h-large: var(--h-choice); /* legacy name */
+    --h-row: 44px; /* minimum list row */
+    --h-seg: 34px; /* segmented control */
+    --sw-w: 51px; /* switch — the iOS metric, exactly */
+    --sw-h: 31px;
+    --sw-thumb: 27px;
+    --sw-travel: 20px;
+    --bar-h: 52px; /* nav bar / popup toolbar */
+    --status-indent: calc(0.875rem + var(--s2)); /* 14 px glyph + gap: lines under a status word */
+
+    /* ---- Type: Inter, restated in an iOS idiom -------------------------------------- */
+    --font: 'Inter', system-ui, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', Roboto, 'Noto Sans', Ubuntu,
+      Cantarell, 'Helvetica Neue', Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Segoe UI Mono', 'Noto Sans Mono', 'DejaVu Sans Mono', Menlo,
+      Consolas, monospace;
+    --t-large-title: 700 1.875rem/2.25rem var(--font); /* 30/36 — page title at rest */
+    --t-title1: var(--t-large-title); /* legacy name */
+    --t-bar-title: 600 1.0625rem/1.375rem var(--font); /* 17/22 — title inside the glass bar */
+    --t-title2: 600 1.3125rem/1.625rem var(--font); /* 21/26 — permission headline */
+    --t-title3: 600 1.0625rem/1.375rem var(--font); /* 17/22 — popup headline, routing title */
+    --t-headline: 600 0.9375rem/1.25rem var(--font); /* 15/20 — row titles, field labels */
+    --t-body: 400 0.9375rem/1.25rem var(--font); /* 15/20 — values, list text */
+    --t-callout: 400 0.875rem/1.1875rem var(--font); /* 14/19 — the roll, list detail */
+    --t-footnote: 400 0.8125rem/1.125rem var(--font); /* 13/18 — hints, status detail, footers */
+    --t-caption: 500 0.75rem/1rem var(--font); /* 12/16 — kbd, ✓ Saved, subtitles */
+    --t-section: 600 0.8125rem/1.125rem var(--font); /* 13/18 — grouped section header */
+    --t-button: 600 0.9375rem/1 var(--font); /* 15 — capsule buttons */
+    --t-hero: 600 1.0625rem/1 var(--font); /* 17 — hero capsule */
+    --ls-large-title: -0.022em;
+    --ls-title1: var(--ls-large-title); /* legacy name */
+    --ls-title: -0.012em;
+    --ls-title3: var(--ls-title); /* legacy name */
+    --ls-hero: var(--ls-title); /* legacy name */
+    --ls-headline: -0.009em;
+    --ls-body: var(--ls-headline); /* legacy name */
+    --ls-callout: -0.006em;
+    --ls-footnote: -0.003em;
+    --ls-caption: 0em;
+
+    /* ---- Shadows. The content layer stays flat; only the floating layer casts. ------- */
+    --shadow-menu: 0 12px 32px rgb(9 20 38 / 0.18), 0 2px 8px rgb(9 20 38 / 0.1);
+    --shadow-thumb: 0 3px 8px rgb(9 20 38 / 0.14), 0 1px 1px rgb(9 20 38 / 0.16);
+    --shadow-press: inset 0 1px 2px rgb(9 20 38 / 0.12);
+
+    /* ---- Motion: iOS springs, all reduced-motion-safe -------------------------------- */
+    --spring: linear(
+      0,
+      0.009,
+      0.035 4.5%,
+      0.076,
+      0.208 11.4%,
+      0.408 17.1%,
+      0.501,
+      0.574,
+      0.635,
+      0.686 28%,
+      0.769,
+      0.827 38.2%,
+      0.875 44.6%,
+      0.909 50.4%,
+      0.934 56.2%,
+      0.968 69.3%,
+      0.99 85.7%,
+      1
+    );
+    --ease-io: cubic-bezier(0.32, 0.72, 0, 1); /* the iOS sheet / nav curve */
+    --ease: var(--ease-io); /* legacy name */
+    --dur-1: 140ms; /* hover, press */
+    --dur-2: 220ms; /* thumb slide, cross-fade, bar material */
+    --dur-3: 320ms; /* menu, sheet */
+    --dur-fast: var(--dur-1); /* legacy names */
+    --dur: var(--dur-2);
+    --dur-thumb: var(--dur-2);
   }
 
+  /* ---- Dark: near-black grouped background, iOS-style -------------------------------- */
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #121418;
-      --surface: #1c1f24;
-      --surface-2: #272b31;
-      --surface-3: #30353c;
-      --elevated: #242830;
-      --separator: #30353c;
-      --field-border: #737a84;
-      --switch-off: #737a84;
-      --thumb: #eceef1;
-      --label: #eceef1;
-      --label-2: #a5abb5;
-      --placeholder: #8e959f;
-      --accent: #8ac0f2;
-      --accent-weak: #172a3f;
-      --on-accent: #032a4a;
-      --prominent: #8ac0f2;
-      --prominent-hover: #a6cff5;
-      --prominent-pressed: #74b2ee;
-      --on-prominent: #032a4a;
-      --live: #ff7b72;
-      --live-fill: #d93025;
-      --live-fill-hover: #c22a20;
-      --caution: #f2c14e;
-      --caution-weak: #33290f;
-      --done: #6dd58c;
-      --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.08);
+      --bg: #0a0b0e;
+      --surface: #1b1d22;
+      --fill: #2a2d34;
+      --fill-2: #343841;
+      --separator: #32363e;
+      --border: #7a818c;
+      --switch-off: #6a6f78;
+      --thumb: #ffffff;
+      /* --surface can't read as a thumb on a --fill track in the dark: it is darker than
+       * the track. The thumb becomes the one lighter grey instead (label 7.29:1 on it). */
+      --seg-thumb: #4b505a;
+
+      --label: #f2f3f5;
+      --label-2: #a4abb6;
+      --label-3: #8b929d;
+
+      --tint: #6eb2f6;
+      --tint-glass: #6eb2f6; /* already ≥ 5:1 on every glass composite; no separate value */
+      --tint-fill: #1173e6;
+      --on-tint: #ffffff;
+      --tint-weak: #14283e;
+
+      /* Navy can't survive on near-black: it inverts to Manet's pale sky, one step
+       * brighter than --tint so the single filled button still outranks every link. */
+      --prominent: #a8cdf7;
+      --prominent-hover: #bcd8f9;
+      --prominent-pressed: #93c0f4;
+      --on-prominent: #04264a;
+
+      --live: #ff6961;
+      --live-fill: #d7241a;
+      --live-fill-hover: #c21f16;
+      --live-fill-pressed: #ad1b13;
+      --on-live: #ffffff;
+      --caution: #f5c14e;
+      --caution-weak: #332811;
+      --done: #4fd07c;
+
+      --glass-bar: rgb(22 23 27 / 0.8);
+      --glass-menu: rgb(30 32 37 / 0.9);
+      --glass-rim: rgb(255 255 255 / 0.12);
+      --glass-spec: rgb(255 255 255 / 0.09);
+      --glass-opaque: #17191d;
+
+      --shadow-menu: 0 14px 38px rgb(0 0 0 / 0.62), 0 2px 8px rgb(0 0 0 / 0.5);
+      --shadow-thumb: 0 3px 8px rgb(0 0 0 / 0.45), 0 1px 1px rgb(0 0 0 / 0.4);
+      --shadow-press: inset 0 1px 2px rgb(0 0 0 / 0.35);
     }
   }
 
+  /* ---- FALLBACK 1 — prefers-reduced-transparency -------------------------------------
+   * The material is dropped entirely: bars and menus become opaque, keep their hairline,
+   * and the light bar goes back to the page --tint because there is no composite to
+   * survive. */
+  @media (prefers-reduced-transparency: reduce) {
+    :root {
+      --glass-blur: 0px;
+      --glass-blur-edge: 0px;
+      --glass-sat: 1;
+      --glass-bar: var(--glass-opaque);
+      --glass-menu: var(--surface);
+      --glass-spec: transparent;
+      --glass-rim: var(--border);
+      --tint-glass: var(--tint);
+    }
+  }
+
+  /* ---- FALLBACK 2 — prefers-contrast: more -------------------------------------------
+   * Secondary text and every boundary darken; the material goes opaque and the bars gain
+   * a real 1 px border, so glass is never the only thing separating a control from its
+   * background. Light: --label-2 10.10, --border and --switch-off 6.25.
+   * Dark: --label-2 10.67, --border 6.48, --switch-off 5.03. */
   @media (prefers-contrast: more) {
     :root {
-      --label-2: #344054;
-      --placeholder: #475467;
-      --field-border: #5a6474;
-      --switch-off: #5a6474;
-      --separator: #98a2b3;
+      --label-2: #3c424d;
+      --label-3: #4b515c;
+      --border: #5a616c;
+      --switch-off: #5a616c;
+      --separator: #9aa0ab;
+      --glass-blur: 0px;
+      --glass-blur-edge: 0px;
+      --glass-sat: 1;
+      --glass-bar: var(--glass-opaque);
+      --glass-menu: var(--surface);
+      --glass-spec: transparent;
+      --glass-rim: var(--border);
+      --tint-glass: var(--tint);
     }
   }
 
   @media (prefers-contrast: more) and (prefers-color-scheme: dark) {
     :root {
       --label-2: #c9ced6;
-      --placeholder: #a5abb5;
-      --field-border: #9aa1ab;
-      --switch-off: #7a818b;
-      --separator: #737a84;
+      --label-3: #b3b9c2;
+      --border: #9aa1ac;
+      --switch-off: #868d97;
+      --separator: #6d747e;
+    }
+  }
+
+  /* ---- FALLBACK 3 — forced-colors: active --------------------------------------------
+   * No material, no tint, no shadow: everything is drawn with system keywords and a
+   * border, so structure survives without colour. The live dot opts out below, so red
+   * still means recording. */
+  @media (forced-colors: active) {
+    :root {
+      --glass-blur: 0px;
+      --glass-blur-edge: 0px;
+      --glass-sat: 1;
+      --glass-bar: Canvas;
+      --glass-menu: Canvas;
+      --glass-spec: transparent;
+      --glass-rim: CanvasText;
+      --shadow-menu: none;
+      --shadow-thumb: none;
+      --shadow-press: none;
+      --separator: CanvasText;
+      --border: ButtonBorder;
     }
   }
 }
@@ -336,6 +560,8 @@
     display: none !important;
   }
 
+  /* FALLBACK 4 — prefers-reduced-motion. Every transition collapses; the scroll-driven
+   * bar is handled where it is defined (it becomes a plain sticky material bar). */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -352,11 +578,12 @@
 /* ------------------------------------------------------------------------------------ */
 @layer base {
   body {
-    background: var(--surface);
+    background: var(--bg);
     color: var(--label);
     font: var(--t-body);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
     font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
   }
 
   h1,
@@ -370,12 +597,11 @@
     font-weight: 600;
   }
 
-  /* Links are underlined, never marked by colour alone (color.md › Inclusive color; the
-   * accent is only 1.39:1 against --label-2 around it). 1 px, 2 px under the baseline:
-   * distinct from the roll's 2 px "speaking" underline. Hover thickens it. Anchors styled
-   * as buttons (.btn) have none. */
+  /* Links are underlined, never marked by colour alone (the tint is only 1.4:1 against
+   * the --label-2 around it). 1 px, 2 px under the baseline: distinct from the roll's
+   * 2 px "speaking" underline. Hover thickens it. Anchors styled as buttons have none. */
   a {
-    color: var(--accent);
+    color: var(--tint);
     text-decoration: underline 1px;
     text-underline-offset: 2px;
     border-radius: 2px;
@@ -393,43 +619,55 @@
   }
 
   ::selection {
-    background: var(--accent-weak);
+    background: var(--tint-weak);
     color: var(--label);
   }
 
-  /* One focus ring everywhere: 2 px --accent, 2 px away from the control. */
+  /* One focus ring everywhere: 2 px --tint, 3 px away from the control. */
   :focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    outline: var(--focus-width) solid var(--tint);
+    outline-offset: var(--focus-offset);
   }
 
   /* A link inside a sentence: the ring hugs the text vertically, so at 13/18 it meets the
-   * descenders of the line above instead of cutting 3 px through them (offset 2). It gets
-   * 2 px on the sides from padding that its negative margin cancels: nothing reflows. */
+   * descenders of the line above instead of cutting through them. It gets 2 px on the
+   * sides from padding that its negative margin cancels: nothing reflows. */
   a:not(.btn):focus-visible {
     margin-inline: -2px;
     padding-inline: 2px;
     outline-offset: 0;
   }
 
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline-color: Highlight;
+    }
+  }
+
+  .t-large-title,
   .t-title1 {
-    font: var(--t-title1);
-    letter-spacing: var(--ls-title1);
+    font: var(--t-large-title);
+    letter-spacing: var(--ls-large-title);
+  }
+
+  .t-title2 {
+    font: var(--t-title2);
+    letter-spacing: var(--ls-title);
   }
 
   .t-title3 {
     font: var(--t-title3);
-    letter-spacing: var(--ls-title3);
+    letter-spacing: var(--ls-title);
   }
 
   .t-headline {
     font: var(--t-headline);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
   }
 
   .t-body {
     font: var(--t-body);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
   }
 
   .t-callout {
@@ -437,9 +675,19 @@
     letter-spacing: var(--ls-callout);
   }
 
+  .t-footnote {
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
+  }
+
   .t-caption {
     font: var(--t-caption);
     letter-spacing: var(--ls-caption);
+  }
+
+  .t-section {
+    font: var(--t-section);
+    letter-spacing: var(--ls-footnote);
   }
 
   .num {
@@ -495,45 +743,54 @@
     color: var(--done);
   }
 
-  /* ◐ ○ — are grey: the accent stays for things you can click. */
-  .tone-working,
+  /* ◐ is the one state that is happening now without being a recording: the tint. */
+  .tone-working {
+    color: var(--tint);
+  }
+
+  /* ○ — stay grey: nothing is running and nothing is clickable. */
   .tone-neutral,
   .tone-none {
     color: var(--label-2);
   }
 
   /* ---- Buttons ----------------------------------------------------------------------- */
+  /* Every button is a capsule: a control inset inside an r18 group would be R − 16 = 2 px,
+   * so the concentric rule sends it to a capsule instead. */
   .btn {
     appearance: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--s2);
+    gap: 6px;
     min-block-size: var(--h-control);
-    padding: 0 var(--s3);
-    border: 1px solid var(--field-border);
-    border-radius: var(--r-control);
-    background: var(--surface);
+    padding: 0 var(--s4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-capsule);
+    background: var(--fill);
     color: var(--label);
     font: var(--t-button);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
     white-space: nowrap;
     text-decoration: none;
     cursor: pointer;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     transition:
-      background-color var(--dur-fast) var(--ease),
-      border-color var(--dur-fast) var(--ease),
-      color var(--dur-fast) var(--ease);
+      background-color var(--dur-1) var(--ease-io),
+      border-color var(--dur-1) var(--ease-io),
+      color var(--dur-1) var(--ease-io),
+      transform var(--dur-1) var(--spring);
   }
 
   .btn:hover:not([aria-disabled='true']) {
-    background: var(--surface-2);
+    background: var(--fill-2);
   }
 
   .btn:active:not([aria-disabled='true']) {
-    background: var(--surface-3);
+    background: var(--fill-2);
+    transform: scale(0.97);
+    box-shadow: var(--shadow-press);
   }
 
   .btn > .glyph {
@@ -542,79 +799,97 @@
   }
 
   .btn.prominent {
-    border-color: var(--prominent);
+    border-color: transparent;
     background: var(--prominent);
     color: var(--on-prominent);
   }
 
   .btn.prominent:hover:not([aria-disabled='true']) {
-    border-color: var(--prominent-hover);
     background: var(--prominent-hover);
   }
 
   .btn.prominent:active:not([aria-disabled='true']) {
-    border-color: var(--prominent-pressed);
     background: var(--prominent-pressed);
   }
 
   .btn.live {
-    border-color: var(--live-fill);
+    border-color: transparent;
     background: var(--live-fill);
     color: var(--on-live);
   }
 
-  .btn.live:hover:not([aria-disabled='true']),
-  .btn.live:active:not([aria-disabled='true']) {
-    border-color: var(--live-fill-hover);
+  .btn.live:hover:not([aria-disabled='true']) {
     background: var(--live-fill-hover);
+  }
+
+  .btn.live:active:not([aria-disabled='true']) {
+    background: var(--live-fill-pressed);
   }
 
   .btn.plain {
     min-block-size: var(--h-plain);
-    padding: 0 var(--s2);
+    padding: 0 10px;
     border-color: transparent;
     background: transparent;
-    color: var(--accent);
+    color: var(--tint);
   }
 
+  .btn.plain:hover:not([aria-disabled='true']),
   .btn.plain:active:not([aria-disabled='true']) {
-    background: var(--accent-weak);
+    background: var(--fill);
   }
 
   .btn.hero {
     inline-size: 100%;
     min-block-size: var(--h-hero);
     font: var(--t-hero);
-    letter-spacing: var(--ls-hero);
+    letter-spacing: var(--ls-title);
   }
 
   .btn.icon {
-    inline-size: var(--h-control);
+    inline-size: var(--h-icon);
+    min-block-size: var(--h-icon);
     padding: 0;
     border-color: transparent;
     background: transparent;
     color: var(--label-2);
   }
 
-  .btn.icon:hover:not([aria-disabled='true']),
-  .btn.icon[aria-expanded='true'] {
-    background: var(--surface-2);
+  .btn.icon:hover:not([aria-disabled='true']) {
+    background: var(--fill);
     color: var(--label);
+  }
+
+  .btn.icon[aria-expanded='true'] {
+    background: var(--tint-weak);
+    color: var(--tint);
+  }
+
+  /* A chip inside a tinted block reads better on --surface than on --fill. */
+  .callout .btn:not(.prominent):not(.live),
+  .note .btn:not(.prominent):not(.live) {
+    background: var(--surface);
+  }
+
+  .callout .btn:not(.prominent):not(.live):hover:not([aria-disabled='true']),
+  .note .btn:not(.prominent):not(.live):hover:not([aria-disabled='true']) {
+    background: var(--fill);
   }
 
   /* Busy ("Starting…", "Checking…") or unavailable: focus stays on the button and its
    * label is then the only feedback, so it stays legible instead of fading. Every kind
-   * turns the same grey: --surface-2 fill, the 3:1 outline, --label-2 text (6.50 / 6.16).
-   * (Opacity .55 took "Starting…" to 3.59:1 and "Stopping…" to 2.68:1.) Red returns only
-   * once recording has started. */
+   * turns the same grey: --fill, the 3:1 outline, --label-2 text (5.10 / 5.96).
+   * Red returns only once recording has started. */
   .btn[aria-disabled='true'] {
-    border-color: var(--field-border);
-    background: var(--surface-2);
+    border-color: var(--border);
+    background: var(--fill);
     color: var(--label-2);
+    transform: none;
+    box-shadow: none;
     cursor: default;
   }
 
-  /* No fill to grey on plain and icon buttons: only the text turns --label-2 (7.69 / 7.15). */
+  /* No fill to grey on plain and icon buttons: only the text turns --label-2. */
   .btn.plain[aria-disabled='true'],
   .btn.icon[aria-disabled='true'] {
     border-color: transparent;
@@ -640,7 +915,7 @@
     border: 0;
     border-radius: 2px;
     background: none;
-    color: var(--accent);
+    color: var(--tint);
     font: inherit;
     letter-spacing: inherit;
     text-align: inherit;
@@ -671,7 +946,7 @@
   /* ---- Text fields ------------------------------------------------------------------- */
   .field {
     display: grid;
-    gap: var(--s1);
+    gap: 6px;
     min-inline-size: 0;
   }
 
@@ -685,7 +960,7 @@
   .field-label {
     display: block;
     font: var(--t-headline);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
     color: var(--label);
   }
 
@@ -701,46 +976,60 @@
     min-inline-size: 0;
   }
 
+  .field-row > .btn {
+    flex: none;
+    min-block-size: 38px;
+  }
+
   .input {
     appearance: none;
     display: block;
     inline-size: 100%;
-    min-block-size: var(--h-control);
+    min-block-size: 38px;
     margin: 0;
-    padding: 0 var(--s3);
-    border: 1px solid var(--field-border);
-    border-radius: var(--r-control);
+    padding: 8px var(--s3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-field);
     background: var(--surface);
     color: var(--label);
     font: var(--t-body);
-    letter-spacing: var(--ls-body);
-    transition: border-color var(--dur-fast) var(--ease);
+    letter-spacing: var(--ls-headline);
+    transition: border-color var(--dur-1) var(--ease-io);
+  }
+
+  /* In the dark a white-ish field would be the brightest thing on the page; iOS sinks it
+   * to the grouped background instead (--label 17.72:1 on it). */
+  @media (prefers-color-scheme: dark) {
+    .input {
+      background: var(--bg);
+    }
   }
 
   .input.mono {
     font-family: var(--mono);
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     letter-spacing: 0;
   }
 
   .input::placeholder {
-    color: var(--placeholder);
+    color: var(--label-3);
     opacity: 1;
   }
 
   .input.mono::placeholder {
     font-family: var(--font); /* "Not set" is words, not a code */
-    font-size: 0.875rem;
-    letter-spacing: var(--ls-body);
+    font-size: 0.9375rem;
+    letter-spacing: var(--ls-headline);
   }
 
   .input:focus-visible {
     outline-offset: 0;
-    border-color: var(--accent);
+    border-color: var(--tint);
   }
 
   .input[aria-invalid='true'] {
     border-color: var(--caution);
+    border-width: 1.5px;
   }
 
   .input[type='number'] {
@@ -749,49 +1038,50 @@
 
   textarea.input {
     min-block-size: 5.25rem;
-    padding: 5px var(--s3); /* 5 px: first line on the single-line inputs' baseline */
     resize: vertical;
     /* Grows with its lines (so none is half cut off) up to about ten, then scrolls. */
     field-sizing: content;
-    max-block-size: calc(10lh + 12px);
+    max-block-size: calc(10lh + 18px);
   }
 
+  /* The pop-up chevron, drawn from currentColor so it follows the theme and forced colours. */
   select.input {
     padding-inline-end: var(--s8);
-    background: var(--surface)
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23475467' d='M3.684 6.816L8 11.131L12.316 6.816A0.8 0.8 0 0 0 11.184 5.684L8 8.869L4.816 5.684A0.8 0.8 0 0 0 3.684 6.816Z'/%3E%3C/svg%3E")
-      no-repeat right var(--s3) center / 14px;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position:
+      calc(100% - 17px) center,
+      calc(100% - 12px) center;
+    background-size:
+      5px 5px,
+      5px 5px;
+    background-repeat: no-repeat;
     cursor: pointer;
   }
 
-  @media (prefers-color-scheme: dark) {
-    select.input {
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23a5abb5' d='M3.684 6.816L8 11.131L12.316 6.816A0.8 0.8 0 0 0 11.184 5.684L8 8.869L4.816 5.684A0.8 0.8 0 0 0 3.684 6.816Z'/%3E%3C/svg%3E");
-    }
-  }
-
   .hint {
-    font: var(--t-callout);
-    letter-spacing: var(--ls-callout);
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
     color: var(--label-2);
   }
 
   /* Empty until setFieldMessage() fills it; stays in the tree so it can announce. */
   .field-msg {
     display: flex;
-    gap: var(--s2);
-    font: var(--t-callout);
-    letter-spacing: var(--ls-callout);
+    gap: 6px;
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
     color: var(--label-2);
   }
 
   .field-msg:empty {
     display: block;
-    margin-block-start: calc(-1 * var(--s1)); /* collapse the grid gap it would otherwise add */
+    margin-block-start: -6px; /* collapse the grid gap it would otherwise add */
   }
 
   .field-msg > .glyph {
-    margin-block-start: 1px; /* 16 px glyph centred on the first 18 px line */
+    flex: none;
+    margin-block-start: 2px; /* 16 px glyph centred on the first 18 px line */
     inline-size: 1rem;
     block-size: 1rem;
   }
@@ -800,14 +1090,22 @@
     color: var(--caution);
   }
 
+  .field-msg[data-tone='done'] {
+    color: var(--done);
+  }
+
+  .field-msg[data-tone='neutral'] {
+    color: var(--label-2);
+  }
+
   .saved {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     font: var(--t-caption);
     letter-spacing: var(--ls-caption);
     color: var(--done);
-    transition: opacity 300ms var(--ease);
+    transition: opacity 300ms linear;
   }
 
   .saved.is-fading {
@@ -816,24 +1114,25 @@
 
   input[type='radio'],
   input[type='checkbox']:not(.switch) {
-    inline-size: 1rem;
-    block-size: 1rem;
+    inline-size: 17px;
+    block-size: 17px;
     margin: 0;
-    accent-color: var(--accent);
+    accent-color: var(--tint-fill);
   }
 
-  /* ---- Switch ------------------------------------------------------------------------ */
+  /* ---- Switch (the iOS metric, exactly: 51 × 31, a 27 px knob, 20 px of travel) ------ */
   .switch {
     appearance: none;
     position: relative;
     flex: none;
-    inline-size: 2.125rem;
-    block-size: 1.25rem;
+    inline-size: var(--sw-w);
+    block-size: var(--sw-h);
     margin: 0;
-    border-radius: 999px;
+    border: 0;
+    border-radius: var(--r-capsule);
     background: var(--switch-off);
     cursor: pointer;
-    transition: background-color var(--dur-fast) var(--ease);
+    transition: background-color var(--dur-2) var(--ease-io);
   }
 
   .switch::before {
@@ -841,27 +1140,31 @@
     position: absolute;
     inset-block-start: 2px;
     inset-inline-start: 2px;
-    inline-size: calc(1.25rem - 4px);
-    block-size: calc(1.25rem - 4px);
-    border-radius: 50%;
+    inline-size: var(--sw-thumb);
+    block-size: var(--sw-thumb);
+    border-radius: var(--r-capsule);
     background: var(--thumb);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.24);
+    box-shadow: var(--shadow-thumb);
     transition:
-      translate var(--dur-thumb) var(--ease),
-      background-color var(--dur-fast) var(--ease);
+      translate var(--dur-2) var(--spring),
+      inline-size var(--dur-1) var(--ease-io);
   }
 
   .switch:checked {
-    background: var(--accent);
+    background: var(--tint-fill);
   }
 
   .switch:checked::before {
-    translate: 0.875rem 0;
-    background: var(--on-accent);
+    translate: var(--sw-travel) 0;
+  }
+
+  /* iOS stretches the knob while it is held. */
+  .switch:active:not([aria-disabled='true'])::before {
+    inline-size: calc(var(--sw-thumb) + 4px);
   }
 
   .switch:focus-visible {
-    border-radius: 999px;
+    border-radius: var(--r-capsule);
   }
 
   /* Busy or unavailable: the switch already shows its new position, and a dimmed track
@@ -887,22 +1190,23 @@
     min-inline-size: 0;
   }
 
-  .switch-row > .switch {
-    margin-block-start: 0; /* 20 px track on the 20 px label line */
-  }
-
-  /* ---- Segmented (Team | Personal) ------------------------------------------------- */
-  /* Never narrower than its labels: a Team | Personal control that truncates is useless.
-   * About 190 px wide at 100% text; give it its own line when space is tight. */
+  /* ---- Segmented (Team | Personal) --------------------------------------------------- */
+  /* Track and thumb are both capsules → concentric by construction. The pressed segment
+   * IS the thumb: --seg-thumb with a 1 px --border ring (3.22 light / 3.51 dark against
+   * the track) and a soft lift, never the shadow alone; the ✓ keeps the state readable
+   * without colour. Never narrower than its labels: a Team | Personal control that
+   * truncates is useless. */
   .segmented {
     display: inline-grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
     inline-size: max-content;
     max-inline-size: none;
-    border: 1px solid var(--field-border);
-    border-radius: var(--r-control);
-    background: var(--surface);
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-capsule);
+    background: var(--fill);
+    isolation: isolate;
   }
 
   .segment {
@@ -912,39 +1216,42 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-block-size: calc(var(--h-control) - 2px);
+    min-block-size: calc(var(--h-seg) - 6px);
     margin: 0;
     /* Symmetric room for the ✓ so the label never moves when a segment is pressed. */
     padding: 0 1.25rem;
     border: 0;
-    border-radius: 0;
+    border-radius: var(--r-capsule);
     background: transparent;
-    color: var(--label);
+    color: var(--label-2);
     font: var(--t-button);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
     white-space: nowrap;
     cursor: pointer;
     transition:
-      background-color var(--dur-fast) var(--ease),
-      color var(--dur-fast) var(--ease);
+      background-color var(--dur-2) var(--ease-io),
+      box-shadow var(--dur-2) var(--ease-io),
+      color var(--dur-1) var(--ease-io);
   }
 
-  .segment + .segment {
-    border-inline-start: 1px solid var(--field-border);
+  /* The iOS hairline between two unpressed segments; it disappears next to the thumb. */
+  .segment + .segment::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block: 7px;
+    inline-size: 1px;
+    background: var(--separator);
+    transition: opacity var(--dur-2) var(--ease-io);
   }
 
-  .segment:first-child {
-    border-start-start-radius: calc(var(--r-control) - 1px);
-    border-end-start-radius: calc(var(--r-control) - 1px);
-  }
-
-  .segment:last-child {
-    border-start-end-radius: calc(var(--r-control) - 1px);
-    border-end-end-radius: calc(var(--r-control) - 1px);
+  .segment[aria-pressed='true']::before,
+  .segment[aria-pressed='true'] + .segment::before {
+    opacity: 0;
   }
 
   .segment:hover:not([aria-disabled='true']):not([aria-pressed='true']) {
-    background: var(--surface-2);
+    color: var(--label);
   }
 
   /* The ring hugs the segment (offset 0) instead of floating over the track border. */
@@ -965,15 +1272,18 @@
     inset-inline-end: calc(100% + var(--s1));
     inset-block-start: 0.5lh;
     translate: 0 -50%;
-    inline-size: 0.75rem;
-    block-size: 0.75rem;
+    inline-size: 0.6875rem;
+    block-size: 0.6875rem;
     visibility: hidden;
+    color: var(--tint);
   }
 
   .segment[aria-pressed='true'] {
-    background: var(--accent-weak);
-    color: var(--accent);
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background: var(--seg-thumb);
+    color: var(--label);
+    box-shadow:
+      inset 0 0 0 1px var(--border),
+      var(--shadow-thumb);
   }
 
   .segment[aria-pressed='true'] .segment-check {
@@ -981,18 +1291,16 @@
   }
 
   /* Busy (the choice is being saved) or unavailable: the same shapes in grey, legible.
-   * The pressed segment keeps its ✓ and inner outline on --surface-2 in --label (15.00 /
-   * 12.24); the others turn --label-2 (7.69 / 7.15). (At opacity .55 the pressed label
-   * was 2.24:1.) */
+   * The pressed thumb sinks to --fill-2 and keeps its ✓ and ring in --label (13.34 /
+   * 10.58); the others stay --label-2. */
   .segment[aria-disabled='true'] {
-    color: var(--label-2);
     cursor: default;
   }
 
   .segment[aria-disabled='true'][aria-pressed='true'] {
-    background: var(--surface-2);
+    background: var(--fill-2);
     color: var(--label);
-    box-shadow: inset 0 0 0 1px var(--field-border);
+    box-shadow: inset 0 0 0 1px var(--border);
   }
 
   .segment[aria-busy='true'] {
@@ -1000,8 +1308,13 @@
   }
 
   .segment-sub {
+    margin-block-start: 1px;
     font: var(--t-caption);
     letter-spacing: var(--ls-caption);
+    color: var(--label-2);
+  }
+
+  .segment[aria-pressed='true'] .segment-sub {
     color: var(--label-2);
   }
 
@@ -1010,10 +1323,9 @@
   }
 
   .segmented.large .segment {
-    min-block-size: calc(var(--h-large) - 2px);
-    gap: 2px;
+    min-block-size: calc(var(--h-choice) - 6px);
     font: var(--t-hero);
-    letter-spacing: var(--ls-hero);
+    letter-spacing: var(--ls-title);
   }
 
   .segmented.large .segment-check {
@@ -1024,7 +1336,7 @@
   /* ---- Status line ------------------------------------------------------------------- */
   .status-line {
     display: grid;
-    gap: 2px;
+    gap: 3px;
     min-inline-size: 0;
   }
 
@@ -1033,7 +1345,8 @@
     align-items: center;
     gap: var(--s2);
     min-inline-size: 0;
-    font-weight: 500;
+    font: var(--t-headline);
+    letter-spacing: var(--ls-headline);
     color: var(--label);
   }
 
@@ -1044,10 +1357,15 @@
 
   .status-detail {
     display: block;
-    padding-inline-start: calc(0.875rem + var(--s2)); /* aligned with the word, not the glyph */
-    font: var(--t-callout);
-    letter-spacing: var(--ls-callout);
+    padding-inline-start: var(--status-indent); /* aligned with the word, not the glyph */
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
     color: var(--label-2);
+  }
+
+  /* An error sentence is the content, not a caption. */
+  .status-detail.is-error {
+    color: var(--label);
   }
 
   .status-detail > .progress {
@@ -1088,8 +1406,9 @@
 
   .fact-detail {
     display: block;
-    font: var(--t-callout);
-    letter-spacing: var(--ls-callout);
+    margin-block-start: 2px;
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
     color: var(--label-2);
   }
 
@@ -1098,7 +1417,7 @@
   }
 
   .facts > dd.is-caution > .fact-detail {
-    padding-inline-start: calc(0.875rem + var(--s2));
+    padding-inline-start: var(--status-indent);
   }
 
   /* 18em of the list's own font size: two columns in the 328 px popup at 100% text,
@@ -1119,14 +1438,14 @@
   .note {
     display: grid;
     grid-template-columns: 1rem minmax(0, 1fr);
-    column-gap: var(--s2);
-    row-gap: 2px;
-    padding: var(--s3) var(--s4) var(--s3) var(--s3);
+    column-gap: 10px;
+    row-gap: var(--s1);
+    padding: 14px var(--s4);
     border-radius: var(--r-group);
     background: var(--caution-weak);
     color: var(--label);
-    font: var(--t-callout);
-    letter-spacing: var(--ls-callout);
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
   }
 
   .callout > .glyph,
@@ -1139,23 +1458,36 @@
 
   .callout-title {
     font: var(--t-headline);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
+    color: var(--label);
   }
 
   .callout-body,
-  .callout-actions {
+  .callout-text,
+  .note-body,
+  .note-text,
+  .callout-actions,
+  .note-actions {
     grid-column: 2;
   }
 
-  .callout-actions {
+  .callout-body,
+  .callout-text,
+  .note-body,
+  .note-text {
+    color: var(--label-2);
+  }
+
+  .callout-actions,
+  .note-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s2);
-    margin-block-start: var(--s2);
+    margin-block-start: 6px;
   }
 
   .note {
-    background: var(--surface-2);
+    background: var(--fill);
   }
 
   .note > .glyph {
@@ -1167,51 +1499,59 @@
   .progress {
     appearance: none;
     display: block;
-    inline-size: 5.5rem;
-    block-size: 4px;
+    inline-size: 92px;
+    block-size: 5px;
     border: 0;
-    border-radius: 2px;
-    background: var(--surface-2);
-    color: var(--accent);
+    border-radius: var(--r-capsule);
+    background: var(--fill-2);
+    color: var(--tint-fill);
     overflow: hidden;
   }
 
   .progress::-webkit-progress-bar {
-    border-radius: 2px;
-    background: var(--surface-2);
+    border-radius: var(--r-capsule);
+    background: var(--fill-2);
   }
 
   .progress::-webkit-progress-value {
-    border-radius: 2px;
-    background: var(--accent);
-    transition: inline-size var(--dur) var(--ease);
+    border-radius: var(--r-capsule);
+    background: var(--tint-fill);
+    transition: inline-size var(--dur-2) var(--ease-io);
   }
 
   /* ---- kbd --------------------------------------------------------------------------- */
   kbd,
   .kbd {
     display: inline-block;
-    padding: 1px 6px;
-    border: 1px solid var(--separator);
-    border-block-end-width: 2px;
-    border-radius: 6px;
-    background: var(--surface);
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-kbd);
+    background: var(--fill);
     color: var(--label-2);
     font: var(--t-caption);
+    font-variant-numeric: tabular-nums;
     letter-spacing: 0.01em;
     white-space: nowrap;
   }
 
-  /* ---- Grouped sections -------------------------------------------------------------- */
+  /* ---- Inset grouped sections -------------------------------------------------------- */
   .section + .section {
-    margin-block-start: var(--s6);
+    margin-block-start: var(--s7);
   }
 
   .section-header {
-    margin: 0 var(--s1) var(--s2);
-    font: var(--t-callout);
-    font-weight: 600;
-    letter-spacing: var(--ls-callout);
+    margin: 0;
+    padding: 0 var(--s4) 7px;
+    font: var(--t-section);
+    letter-spacing: var(--ls-footnote);
+    color: var(--label-2);
+  }
+
+  .section-footer {
+    margin: 0;
+    padding: var(--s2) var(--s4) 0;
+    font: var(--t-footnote);
+    letter-spacing: var(--ls-footnote);
     color: var(--label-2);
   }
 
@@ -1219,57 +1559,80 @@
     margin: 0;
     padding: 0;
     list-style: none;
-    border: 1px solid var(--separator);
+    border: 0;
     border-radius: var(--r-group);
     background: var(--surface);
+    /* Concentric: the first and last rows inherit the group's 18 px corner. */
+    overflow: hidden;
   }
 
   .group-row {
-    padding: var(--s3) var(--s4);
-    transition: background-color var(--dur-fast) var(--ease);
+    position: relative;
+    padding: 11px var(--s4);
+    min-block-size: var(--h-row);
+    transition: background-color var(--dur-1) var(--ease-io);
   }
 
   .group.roomy > .group-row {
-    padding: var(--s4);
+    padding: 14px var(--s4);
   }
 
-  .group-row + .group-row {
-    border-block-start: 1px solid var(--separator);
+  /* The iOS separator: inset to the text, not to the card edge. */
+  .group-row + .group-row::before {
+    content: '';
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--s4) 0;
+    block-size: 1px;
+    background: var(--separator);
   }
 
   .group-row:first-child {
-    border-start-start-radius: calc(var(--r-group) - 1px);
-    border-start-end-radius: calc(var(--r-group) - 1px);
+    border-start-start-radius: var(--r-group);
+    border-start-end-radius: var(--r-group);
   }
 
   .group-row:last-child {
-    border-end-start-radius: calc(var(--r-group) - 1px);
-    border-end-end-radius: calc(var(--r-group) - 1px);
+    border-end-start-radius: var(--r-group);
+    border-end-end-radius: var(--r-group);
   }
 
+  /* A row that has taken over the card edge to edge owns its boundaries too. */
   .group-row.is-confirming {
-    background: var(--surface-2);
+    background: var(--fill);
+  }
+
+  .group-row.is-confirming::before,
+  .group-row.is-confirming + .group-row::before {
+    inset-inline: 0;
   }
 
   .group-row:focus-visible {
-    outline-offset: -2px;
+    outline-offset: -3px;
   }
 
-  /* ---- ⋯ menu (Popover API; one shared element positioned by menu.ts) ---------------- */
+  /* ---- ⋯ menu — GLASS 3 of 3 (Popover API; one shared element positioned by menu.ts) --
+   * A floating popover over list rows. Regular variant, thicker (0.90) because it is
+   * text-heavy. */
   .menu {
     position: fixed;
     inset: auto;
     margin: 0;
-    min-inline-size: 13.75rem;
+    min-inline-size: 14.5rem;
     max-inline-size: min(20rem, calc(100vw - 16px));
-    padding: var(--s1);
+    padding: 6px;
     border: 0;
     border-radius: var(--r-group);
-    background: var(--elevated);
+    background: var(--glass-menu);
+    -webkit-backdrop-filter: blur(32px) saturate(var(--glass-sat));
+    backdrop-filter: blur(32px) saturate(var(--glass-sat));
+    box-shadow:
+      var(--shadow-menu),
+      inset 0 0 0 1px var(--glass-rim),
+      inset 0 1px 0 var(--glass-spec);
     color: var(--label);
-    box-shadow: var(--shadow-menu);
     font: var(--t-body);
-    letter-spacing: var(--ls-body);
+    letter-spacing: var(--ls-headline);
     overflow: visible;
   }
 
@@ -1279,11 +1642,12 @@
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
+    gap: 1px;
     inline-size: 100%;
     min-block-size: var(--h-control);
-    padding: var(--s1) var(--s3);
+    padding: 9px var(--s3);
     border: 0;
-    border-radius: var(--r-control);
+    border-radius: var(--r-menu-item); /* concentric: 18 − 6 */
     background: none;
     color: inherit;
     font: inherit;
@@ -1295,8 +1659,13 @@
   .menu-item:hover,
   .menu-item:focus {
     outline: none;
-    background: var(--accent);
-    color: var(--on-accent);
+    background: var(--tint-fill);
+    color: var(--on-tint);
+  }
+
+  .menu-item:hover .menu-item-note,
+  .menu-item:focus .menu-item-note {
+    color: var(--on-tint);
   }
 
   .menu-item[aria-disabled='true'] {
@@ -1305,39 +1674,50 @@
 
   .menu-item[aria-disabled='true']:hover,
   .menu-item[aria-disabled='true']:focus {
-    background: var(--surface-2);
+    background: transparent;
+    color: var(--label-2);
+  }
+
+  .menu-item[aria-disabled='true']:hover .menu-item-note,
+  .menu-item[aria-disabled='true']:focus .menu-item-note {
     color: var(--label-2);
   }
 
   .menu-item-note {
-    font: var(--t-callout);
-    letter-spacing: var(--ls-callout);
+    font: var(--t-caption);
+    letter-spacing: var(--ls-caption);
     color: var(--label-2);
   }
 
   .menu-sep {
-    block-size: 0;
-    margin: var(--s1) var(--s3);
+    block-size: 1px;
+    margin: 5px 10px;
     border: 0;
-    border-block-start: 1px solid var(--separator);
+    background: var(--glass-rim);
   }
 
   /* ---- Forced colours (Windows high contrast) --------------------------------------- */
   @media (forced-colors: active) {
+    /* Red is the one thing that must survive the system palette. */
     .tone-live {
       forced-color-adjust: none;
-      color: CanvasText;
+      color: #cf0014;
     }
 
+    .btn,
     .btn.prominent,
-    .btn.live {
-      border: 1px solid ButtonText;
+    .btn.live,
+    .btn.icon,
+    .btn.plain {
+      border: 1px solid ButtonBorder;
+      background: ButtonFace;
+      color: ButtonText;
     }
 
     .switch {
       forced-color-adjust: none;
-      border: 1px solid ButtonText;
-      background: Canvas;
+      border: 1px solid ButtonBorder;
+      background: ButtonFace;
     }
 
     .switch::before {
@@ -1350,7 +1730,12 @@
     }
 
     .switch:checked::before {
-      background: HighlightText;
+      background: Canvas;
+    }
+
+    .segmented {
+      border: 1px solid ButtonBorder;
+      background: ButtonFace;
     }
 
     .segment[aria-pressed='true'],
@@ -1359,6 +1744,10 @@
       background: Highlight;
       color: HighlightText;
       box-shadow: none;
+    }
+
+    .segment[aria-pressed='true'] .segment-check {
+      color: HighlightText;
     }
 
     /* Busy / unavailable stay readable in the system's grey text. */
@@ -1372,10 +1761,15 @@
       background: Highlight;
     }
 
+    .group,
     .callout,
     .note,
     .menu {
       border: 1px solid CanvasText;
+    }
+
+    .group-row + .group-row::before {
+      background: CanvasText;
     }
 
     .menu-item:hover,
@@ -1384,18 +1778,33 @@
       background: Highlight;
       color: HighlightText;
     }
+
+    .menu-item:hover .menu-item-note,
+    .menu-item:focus .menu-item-note {
+      color: HighlightText;
+    }
   }
 }
 
 /* ------------------------------------------------------------------------------------ */
 @layer shells {
-  /* Full-tab pages: Meetings (960), Settings (640), microphone (560). Widths include the
-   * side padding: 32/24 at ≥ 720 px, 20/16 below. */
+  /* Full-tab pages: Meetings (1080), Settings (640), microphone (512). --page-max is the
+   * measure — the text column itself — and the side padding sits outside it: 24 at
+   * ≥ 720 px, 16 below. The bar's inner row is the same measure, so the bar's link lines
+   * up with the content's right edge. */
   body.page {
     --page-max: 960px;
     --page-pad: var(--s6);
     min-block-size: 100vh;
     background: var(--bg);
+  }
+
+  /* The bar is sticky, so the scrollport has to start below it: without this, tabbing
+   * backwards up the page parks the focused control — ring and all — behind the glass.
+   * It goes on the root because the viewport takes its scroll padding from html, not
+   * from body; the popup sets its own on body.popup, which really is its scroller. */
+  html:has(> body.page) {
+    scroll-padding-block-start: calc(var(--bar-h) + var(--s2));
   }
 
   /* Meetings gets more than the direction's 960 so titles and bylines aren't cut at
@@ -1408,33 +1817,204 @@
     --page-max: 640px;
   }
 
+  /* The microphone page has no bar to line up with, and its column is specified as an
+   * outer 560 including the padding — so its measure is 560 minus that padding. */
   body.page-permission {
-    --page-max: 560px;
+    --page-max: calc(560px - 2 * var(--page-pad));
   }
 
-  .page-head {
+  /* ---- GLASS 1 of 3 — the floating page bar -------------------------------------------
+   * Transparent at rest; the material, its hairline and the compact title arrive as the
+   * page scrolls. The whole thing is a scroll-driven animation, so no view has to listen
+   * to scroll: `scroll(root block)` is inactive on a page that doesn't scroll, and the
+   * bar simply stays at rest. Below, two fallbacks turn it into a plain sticky material
+   * bar: browsers without scroll-driven animations, and prefers-reduced-motion. */
+  .page-bar {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 40;
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--s4);
+    align-items: center;
+    min-block-size: var(--bar-h);
+    padding: 0 var(--page-pad);
+    background: transparent;
+  }
+
+  .page-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    opacity: 0;
+    background: var(--glass-bar);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    box-shadow:
+      inset 0 1px 0 var(--glass-spec),
+      0 1px 0 var(--glass-rim);
+  }
+
+  .page-bar-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    inline-size: 100%;
     max-inline-size: var(--page-max);
     margin: 0 auto;
-    padding: var(--s8) var(--page-pad) var(--s5);
   }
 
-  .page-head h1 {
-    font: var(--t-title1);
-    letter-spacing: var(--ls-title1);
+  .bar-title {
+    flex: 1;
+    min-inline-size: 0;
+    font: var(--t-bar-title);
+    letter-spacing: var(--ls-title);
+    color: var(--label);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    translate: 0 6px;
   }
 
-  .page-head nav {
+  .bar-spacer {
+    flex: 1;
+  }
+
+  .page-bar nav {
     display: flex;
     gap: var(--s2);
-    margin-inline-end: calc(-1 * var(--s2)); /* plain buttons' text aligns with the edge */
+    margin-inline-end: -10px; /* plain buttons' text aligns with the content edge */
+  }
+
+  /* On glass only --label and --tint-glass may sit; --label-2 is banned here. */
+  .page-bar .btn.plain {
+    color: var(--tint);
+  }
+
+  /* The scroll edge effect: a band of extra blur where the content meets the bar. */
+  .bar-edge {
+    position: sticky;
+    inset-block-start: var(--bar-h);
+    z-index: 39;
+    block-size: 14px;
+    margin-block-end: -14px;
+    pointer-events: none;
+    opacity: 0;
+    -webkit-backdrop-filter: blur(var(--glass-blur-edge));
+    backdrop-filter: blur(var(--glass-blur-edge));
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  }
+
+  @keyframes bar-material {
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes bar-title-in {
+    to {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+
+  @keyframes bar-link-on-glass {
+    to {
+      color: var(--tint-glass);
+    }
+  }
+
+  @supports (animation-timeline: scroll()) {
+    .page-bar::before,
+    .bar-edge,
+    .bar-title,
+    .page-bar .btn.plain {
+      animation-duration: auto;
+      animation-timing-function: var(--ease-io);
+      animation-fill-mode: both;
+      animation-timeline: scroll(root block);
+      animation-range: 0 var(--bar-h);
+    }
+
+    .page-bar::before,
+    .bar-edge {
+      animation-name: bar-material;
+    }
+
+    .bar-title {
+      animation-name: bar-title-in;
+    }
+
+    .page-bar .btn.plain {
+      animation-name: bar-link-on-glass;
+    }
+  }
+
+  /* Fallback: no scroll-driven animations, or the reader asked for less motion. The bar
+   * is then a plain sticky bar that always carries its material and its title — nothing
+   * moves, and content never scrolls under bare glass. */
+  @supports not (animation-timeline: scroll()) {
+    .page-bar::before {
+      opacity: 1;
+    }
+
+    .bar-title {
+      opacity: 1;
+      translate: 0 0;
+    }
+
+    .page-bar .btn.plain {
+      color: var(--tint-glass);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .page-bar::before,
+    .bar-edge,
+    .bar-title,
+    .page-bar .btn.plain {
+      animation-name: none;
+    }
+
+    .page-bar::before {
+      opacity: 1;
+    }
+
+    .bar-title {
+      opacity: 1;
+      translate: 0 0;
+    }
+
+    .page-bar .btn.plain {
+      color: var(--tint-glass);
+    }
+
+    .bar-edge {
+      opacity: 0;
+    }
+  }
+
+  .page-title-block {
+    max-inline-size: calc(var(--page-max) + 2 * var(--page-pad));
+    margin: 0 auto;
+    padding: var(--s2) var(--page-pad) var(--s5);
+  }
+
+  .page-title-block h1 {
+    font: var(--t-large-title);
+    letter-spacing: var(--ls-large-title);
+  }
+
+  .page-lede {
+    margin-block-start: var(--s1);
+    font: var(--t-callout);
+    letter-spacing: var(--ls-callout);
+    color: var(--label-2);
   }
 
   .page-body {
-    max-inline-size: var(--page-max);
+    max-inline-size: calc(var(--page-max) + 2 * var(--page-pad));
     margin: 0 auto;
     padding: 0 var(--page-pad) var(--s12);
   }
@@ -1444,35 +2024,178 @@
       --page-pad: var(--s4);
     }
 
-    .page-head {
-      padding-block-start: var(--s5);
+    .page-title-block {
+      padding-block: 6px var(--s4);
     }
   }
 
-  /* Toolbar popup: 360 wide, no header; the footer sits under a full-width hairline. */
+  /* The microphone page has no bar: nothing scrolls behind anything, so it is opaque. */
+  body.page-permission .page-body {
+    padding-block-start: var(--s8);
+  }
+
+  /* ---- Toolbar popup: 360 wide, the toolbar pinned to the bottom --------------------- */
   body.popup {
     inline-size: 360px;
-    background: var(--surface);
+    background: var(--bg);
   }
 
   .popup-root {
     display: flex;
     flex-direction: column;
-    gap: var(--s4);
-    padding: var(--s4) var(--s4) var(--s2);
+    gap: 14px;
+    padding: var(--s4) var(--s4) var(--s3);
   }
 
+  /* An inset grouped card in the popup: the content layer, always opaque. */
+  .popup-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    padding: 14px var(--s4);
+    border-radius: var(--r-group);
+    background: var(--surface);
+  }
+
+  /* ---- GLASS 2 of 3 — the popup's bottom toolbar --------------------------------------
+   * Material only while the popup actually scrolls. `scroll(nearest block)` is inactive
+   * when the popup fits, and an inactive timeline leaves the animation unapplied, so the
+   * short states get an opaque bar with a hairline instead of faked glass. */
   .popup-foot {
+    position: sticky;
+    inset-block-end: 0;
+    z-index: 40;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--s2);
+    gap: var(--s3);
+    min-block-size: var(--bar-h);
     margin-inline: calc(-1 * var(--s4));
-    padding: var(--s2) var(--s2) 0;
-    border-block-start: 1px solid var(--separator);
+    padding: var(--s2) 10px;
+    background: var(--glass-opaque);
+    box-shadow: 0 -1px 0 var(--separator);
   }
 
-  /* Routing window: content-sized (the window fits itself to it), 20 px padding. */
+  .popup-foot::before {
+    content: '';
+    position: absolute;
+    inset: -14px 0 0;
+    z-index: -1;
+    opacity: 0;
+    background: var(--glass-bar);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    box-shadow:
+      inset 0 -1px 0 var(--glass-spec),
+      0 -1px 0 var(--glass-rim);
+    /* The scroll edge band: an extra 14 px of blur above the toolbar, faded upward. */
+    -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 14px), transparent 100%);
+    mask-image: linear-gradient(to top, #000 calc(100% - 14px), transparent 100%);
+  }
+
+  /* Both keyframes hold one state: what varies is whether the timeline exists at all.
+   * A popup that fits has no scroll range, its timeline is inactive, the animation is
+   * never applied — and the toolbar stays the flat opaque bar declared above. */
+  @keyframes glass-on {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes glass-instead-of-flat {
+    from {
+      background: transparent;
+      box-shadow: none;
+    }
+    to {
+      background: transparent;
+      box-shadow: none;
+    }
+  }
+
+  @supports (animation-timeline: scroll()) {
+    .popup-foot::before {
+      animation: glass-on auto linear both;
+      animation-timeline: scroll(nearest block);
+    }
+
+    /* The material replaces the flat bar's own fill and hairline. */
+    .popup-foot {
+      animation: glass-instead-of-flat auto linear both;
+      animation-timeline: scroll(nearest block);
+    }
+  }
+
+  /* Glass never carries --label-2; the toolbar's links use the vibrant tint. */
+  .popup-foot .btn.plain {
+    color: var(--tint);
+  }
+
+  /* Without scroll-driven animations there is no way to ask whether the popup scrolls, so
+   * the toolbar takes the material and keeps it: content must never pass under bare
+   * glass. Reduced motion does the same — the material is legibility, not motion. */
+  @supports not (animation-timeline: scroll()) {
+    .popup-foot {
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .popup-foot::before {
+      opacity: 1;
+    }
+  }
+
+  /* No scroll-driven material here: the flat opaque bar stays. It keeps its hairline
+   * (the material's own rim sits inside the ::before's masked edge band, so forcing the
+   * glass on would leave the toolbar with no boundary at all), and a popup that doesn't
+   * scroll never shows a material with nothing behind it. */
+  @media (prefers-reduced-motion: reduce) {
+    .popup-foot {
+      animation-name: none;
+      background: var(--glass-opaque);
+      box-shadow: 0 -1px 0 var(--separator);
+    }
+
+    .popup-foot::before {
+      animation-name: none;
+      opacity: 0;
+    }
+  }
+
+  /* `.is-flat` forces the opaque bar back: the short popup states (recording, on a call)
+   * don't scroll, so the material would be faked. It wins in every case above. */
+  .popup-foot.is-flat {
+    animation-name: none;
+    background: var(--glass-opaque);
+    box-shadow: 0 -1px 0 var(--separator);
+  }
+
+  .popup-foot.is-flat::before {
+    display: none;
+  }
+
+  /* Both modes drop the material, and then something else has to carry the separation.
+   * The scroll-edge band can't: its mask fades the last 14 px of ::before away, and takes
+   * the rim shadow sitting on the same box with it — so the scrolling toolbar is sent
+   * down the flat bar's path instead, with --border as its hairline (5.88:1), which is
+   * what the page bar already does in these modes. */
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .popup-foot,
+    .popup-foot.is-flat {
+      animation-name: none;
+      background: var(--glass-opaque);
+      box-shadow: 0 -1px 0 var(--glass-rim);
+    }
+
+    .popup-foot::before {
+      display: none;
+    }
+  }
+
+  /* ---- Routing window: opaque, nothing sits behind a 380 × 280 window ---------------- */
   body.routing {
     background: var(--surface);
   }
@@ -1480,7 +2203,29 @@
   .routing-root {
     display: flex;
     flex-direction: column;
-    padding: var(--s5) var(--s5) var(--s4);
+    padding: 18px var(--s5) var(--s4);
+  }
+
+  /* Chromium forces box-shadow to none here, so every boundary has to be a real border —
+   * and only the edge where content passes under the bar wants one, or the bar reads as a
+   * framed strip rather than a bar. The toolbar carries its own, because ::before is
+   * invisible whenever the popup doesn't scroll. */
+  @media (forced-colors: active) {
+    .page-bar::before {
+      border-block-end: 1px solid CanvasText;
+      background: Canvas;
+    }
+
+    .popup-foot {
+      animation-name: none;
+      border-block-start: 1px solid CanvasText;
+      background: Canvas;
+    }
+
+    .popup-foot::before,
+    .bar-edge {
+      display: none;
+    }
   }
 }
 
@@ -1489,5 +2234,5 @@
  * (The fixture gallery runs outside an extension and can't show this.) */
 body {
   font: var(--t-body);
-  letter-spacing: var(--ls-body);
+  letter-spacing: var(--ls-headline);
 }

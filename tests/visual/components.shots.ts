@@ -25,29 +25,35 @@ import {
 } from '@lib/ui/controls';
 import { h, type Child } from '@lib/ui/dom';
 import { GLYPH_NAMES, svg } from '@lib/ui/icons';
-import { gallery, type Shot } from './harness';
+import { gallery, type Media, type Shot } from './harness';
 
 const noop = () => {};
 
 /** Sheet-only layout: cards in a grid, captions above each state. */
 const SHEET_CSS = `
-  .sheet { padding: 24px; display: grid; gap: 24px; max-width: 1200px; }
-  .sheet h2.cap { font: var(--t-caption); letter-spacing: .02em; color: var(--label-2); text-transform: uppercase; margin: 0 0 8px; }
-  .sheet .card { background: var(--surface); border: 1px solid var(--separator); border-radius: 12px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+  .sheet { padding: 0 24px 64px; display: grid; gap: 28px; max-width: 1080px; margin: 0 auto; }
+  .sheet h2.cap { font: var(--t-section); letter-spacing: var(--ls-footnote); color: var(--label-2); text-transform: uppercase; margin: 0 0 7px; padding-inline: 16px; }
+  .sheet .card { background: var(--surface); border: 0; border-radius: var(--r-group); padding: 18px 16px; display: grid; gap: 18px; min-width: 0; }
   .sheet .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; align-items: start; }
-  .sheet .line { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-  .sheet .state { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+  .sheet .line { display: flex; flex-wrap: wrap; gap: 14px 14px; align-items: center; }
+  .sheet .state { display: grid; gap: 6px; justify-items: start; min-width: 0; }
   .sheet .state > small { font: var(--t-caption); color: var(--label-2); }
   .sheet .state > .field { justify-self: stretch; }
   .sheet .glyphs { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 12px; }
   .sheet .glyphs div { display: grid; justify-items: center; gap: 6px; font: var(--t-caption); color: var(--label-2); }
   .sheet .glyphs .big { font-size: 32px; color: var(--label); }
-  .sheet .popup-frame { width: 360px; max-width: 100%; border: 1px solid var(--separator); border-radius: 8px; overflow: hidden; }
+  .sheet .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sheet .sw { width: 96px; }
+  .sheet .sw i { display: block; height: 40px; border-radius: 10px; border: 1px solid var(--separator); }
+  .sheet .sw b { display: block; font: var(--t-caption); font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .sheet .sw span { font: var(--t-caption); color: var(--label-2); }
+  .sheet .popup-frame { width: 360px; max-width: 100%; border-radius: var(--r-group); overflow: hidden; background: var(--bg); }
+  .sheet .popup-frame.scrolls { height: 260px; overflow: hidden auto; }
   .sheet .w328 { width: 328px; max-width: 100%; }
   .sheet .demo-row { display: grid; grid-template-columns: minmax(0, 1fr) 236px auto; gap: 16px; align-items: start; }
   @media (width < 720px) {
-    .sheet { padding: 16px; }
-    .sheet .card { padding: 12px; }
+    .sheet { padding: 0 16px 48px; }
+    .sheet .card { padding: 14px 12px; }
     .sheet .demo-row { grid-template-columns: minmax(0, 1fr) auto; }
     .sheet .demo-row > :first-child, .sheet .demo-row > .status-line { grid-column: 1 / -1; }
     .sheet .demo-row > :last-child { grid-column: 1 / -1; justify-self: end; }
@@ -60,6 +66,44 @@ function state(caption: string, ...children: Child[]): HTMLElement {
 
 function card(title: string, ...children: Child[]): HTMLElement {
   return h('section', null, h('h2', { class: 'cap' }, title), h('div', { class: 'card' }, ...children));
+}
+
+/** Every token that carries meaning, with what it is allowed to mean. */
+function palette(): HTMLElement {
+  const sw = (token: string, note: string) =>
+    h(
+      'div',
+      { class: 'sw' },
+      h('i', { style: `background:var(${token})` }),
+      h('b', null, token),
+      h('span', null, note),
+    );
+  return card(
+    'Colour — the whole palette, with what each one is allowed to mean',
+    h(
+      'div',
+      { class: 'swatches' },
+      sw('--bg', 'grouped'),
+      sw('--surface', 'rows'),
+      sw('--fill', 'buttons'),
+      sw('--fill-2', 'pressed'),
+      sw('--border', '≥ 3:1'),
+      sw('--label', 'text'),
+      sw('--label-2', 'secondary'),
+    ),
+    h(
+      'div',
+      { class: 'swatches' },
+      sw('--tint', 'links'),
+      sw('--tint-glass', 'on glass'),
+      sw('--tint-weak', 'selected'),
+      sw('--prominent', 'Manet navy'),
+      sw('--live', 'recording'),
+      sw('--caution', 'needs you'),
+      sw('--caution-weak', 'callout'),
+      sw('--done', 'saved'),
+    ),
+  );
 }
 
 function glyphs(): HTMLElement {
@@ -107,12 +151,14 @@ function glyphs(): HTMLElement {
 
 function type(): HTMLElement {
   return card(
-    'Type (Inter, rem)',
-    h('p', { class: 't-title1' }, 'Meetings — Title 1, 22/28 600'),
+    'Type — Inter, restated in an iOS idiom',
+    h('p', { class: 't-large-title' }, 'Meetings — Large title, 30/36 700'),
+    h('p', { class: 't-title2' }, 'Include your voice — Title 2, 21/26 600'),
     h('p', { class: 't-title3' }, 'Weekly product sync — Title 3, 17/22 600'),
-    h('p', { class: 't-headline' }, 'Onboarding — Lumind × Kera — Headline 14/20 600'),
-    h('p', { class: 't-body' }, 'Each meeting is transcribed and saved to Notion — Body 14/20'),
-    h('p', { class: 't-callout l2' }, 'Marie Curie · Tom Martin · you · qrs-tuvw-xyz — Callout 13/18'),
+    h('p', { class: 't-headline' }, 'Onboarding — Lumind × Kera — Headline 15/20 600'),
+    h('p', { class: 't-body' }, 'Each meeting is transcribed and saved to Notion — Body 15/20'),
+    h('p', { class: 't-callout l2' }, 'Marie Curie · Tom Martin · you · qrs-tuvw-xyz — Callout 14/19'),
+    h('p', { class: 't-footnote l2' }, 'Gemini is unavailable right now (503) — Footnote 13/18'),
     h('p', { class: 't-caption l2' }, 'RECENT · ✓ Saved — Caption 12/16 500'),
     h(
       'p',
@@ -170,7 +216,7 @@ function buttons(): HTMLElement {
         ),
         h(
           'p',
-          { class: 't-callout', style: 'color:var(--caution)' },
+          { class: 't-footnote', style: 'color:var(--caution)' },
           'Chrome blocked the microphone. ',
           button('Fix in Chrome…', { kind: 'link' }),
         ),
@@ -467,7 +513,11 @@ function structure(): HTMLElement {
           h(
             'div',
             { class: 'popup-root' },
-            h('p', { class: 't-title3', style: 'display:flex;align-items:center;gap:8px;color:var(--live)' }, svg('live', { class: 'tone-live' }), 'Recording', h('span', { class: 'num', style: 'margin-left:auto;font-weight:500;color:var(--label)' }, '12:48')),
+            h(
+              'div',
+              { class: 'popup-card' },
+              h('p', { class: 't-title3', style: 'display:flex;align-items:center;gap:8px;color:var(--live)' }, svg('live', { class: 'tone-live' }), 'Recording', h('span', { class: 'num', style: 'margin-left:auto;font-weight:500;color:var(--label)' }, '12:48')),
+            ),
             button('Stop recording', { kind: 'live', hero: true }),
             h('nav', { class: 'popup-foot' }, button('Meetings · 1 needs you', { kind: 'plain' }), button('Settings', { kind: 'plain' })),
           ),
@@ -481,10 +531,24 @@ function renderSheet(): void {
   document.title = 'Components';
   document.body.className = 'page page-meetings';
   const style = h('style', null, SHEET_CSS);
+  // The real page shell: the floating glass bar, its scroll-edge band and the large title.
+  const bar = h(
+    'header',
+    { class: 'page-bar' },
+    h(
+      'div',
+      { class: 'page-bar-inner' },
+      h('span', { class: 'bar-title', 'aria-hidden': 'true' }, 'Components'),
+      h('span', { class: 'bar-spacer' }),
+      h('nav', { 'aria-label': 'Pages' }, button('Settings', { kind: 'plain' })),
+    ),
+  );
+  const edge = h('div', { class: 'bar-edge', 'aria-hidden': 'true' });
+  const titleBlock = h('div', { class: 'page-title-block' }, h('h1', { class: 't-large-title' }, 'Components'));
   const sheet = h(
     'div',
     { class: 'sheet' },
-    h('header', { class: 'page-head', style: 'padding:0;margin:0' }, h('h1', null, 'Components'), h('nav', null, button('Settings', { kind: 'plain' }))),
+    palette(),
     glyphs(),
     type(),
     buttons(),
@@ -493,10 +557,10 @@ function renderSheet(): void {
     blocks(),
     structure(),
   );
-  document.body.replaceChildren(style, sheet);
+  document.body.replaceChildren(style, bar, edge, titleBlock, sheet);
   // Static demo of the menu highlight (real menus highlight on :hover/:focus).
   const demo = sheet.querySelector<HTMLElement>('[data-demo="highlight"]');
-  if (demo) demo.style.cssText = 'background:var(--accent);color:var(--on-accent)';
+  if (demo) demo.style.cssText = 'background:var(--tint-fill);color:var(--on-tint)';
   assertNoHorizontalOverflow();
 }
 
@@ -535,9 +599,112 @@ const choices = [
   { value: 'personal' as const, label: 'Personal' },
 ];
 
+/* Playwright has no prefers-reduced-transparency knob, so the fallback is shown by
+ * injecting exactly what that media query sets in styles.css — its tokens and, since the
+ * popup toolbar needs a rule and not just a token, its rules too. An unlayered <style>
+ * beats every layer, so this lands on top of the shells layer the same way the real
+ * media query does. */
+const REDUCED_TRANSPARENCY_CSS =
+  ':root{--glass-blur:0px;--glass-blur-edge:0px;--glass-sat:1;--glass-bar:var(--glass-opaque);' +
+  '--glass-menu:var(--surface);--glass-spec:transparent;--glass-rim:var(--border);--tint-glass:var(--tint);}' +
+  '.popup-foot,.popup-foot.is-flat{animation-name:none;background:var(--glass-opaque);' +
+  'box-shadow:0 -1px 0 var(--glass-rim);}.popup-foot::before{display:none;}';
+
+/**
+ * The sheet scrolled far enough for the floating bar to take its material: the one shot
+ * where the glass layer is actually doing its job. Also the surface each accessibility
+ * fallback is photographed on, because it is the one with glass on it.
+ * `at` picks the scroll offset: 430 is well past the bar's 0 → --bar-h animation range,
+ * 26 sits inside it, where the material, the compact title and the link colour are all
+ * half way across.
+ */
+function scrolled(name: string, o: { media?: Media; reducedTransparency?: boolean; at?: number } = {}): Shot {
+  return {
+    name,
+    width: 960,
+    height: 640,
+    media: o.media,
+    render() {
+      renderSheet();
+      if (o.reducedTransparency) document.body.append(h('style', null, REDUCED_TRANSPARENCY_CSS));
+      window.scrollTo(0, o.at ?? 430);
+    },
+  };
+}
+
+/** The focus ring where it is hardest to see: on the bar's own link, over the material. */
+function barFocusShot(): Shot {
+  return {
+    name: 'components-focus-plain-on-glass',
+    width: 960,
+    height: 200,
+    render() {
+      renderSheet();
+      window.scrollTo(0, 430);
+      const link = document.querySelector<HTMLElement>('.page-bar .btn.plain');
+      link?.focus({ preventScroll: true, focusVisible: true } as FocusOptions);
+      if (!link?.matches(':focus-visible')) throw new Error('plain-on-glass: focus ring not visible');
+    },
+  };
+}
+
+/** A 360 popup frame: `scrolls` gives it a scroll range, which is what makes its toolbar glass. */
+function popupFrame(caption: string, scrolls: boolean): HTMLElement {
+  const card = (title: string, sub: string) =>
+    h('div', { class: 'popup-card' }, h('p', { class: 't-title3' }, title), h('p', { class: 't-callout l2' }, sub));
+  const frame = h(
+    'div',
+    { class: `popup-frame${scrolls ? ' scrolls' : ''}` },
+    h(
+      'div',
+      { class: 'popup-root' },
+      card('On a call', 'qrs-tuvw-xyz · Marie Curie, Tom Martin, you'),
+      button('Start recording', { kind: 'prominent', hero: true }),
+      scrolls ? card('Earlier today', 'Pricing call with Acme · saved to Notion') : null,
+      scrolls ? card('Yesterday', 'Design review · saved to Notion') : null,
+      h('nav', { class: `popup-foot${scrolls ? '' : ' is-flat'}` }, button('Meetings · 1 needs you', { kind: 'plain' }), button('Settings', { kind: 'plain' })),
+    ),
+  );
+  return h('div', { class: 'state' }, h('small', null, caption), frame);
+}
+
+/**
+ * The popup toolbar in both of its states side by side — glass (the frame scrolls) and
+ * flat (it doesn't). Every mode that drops the material has to hand the boundary to a
+ * hairline, and this is the shot that shows whether it arrived.
+ */
+function popupToolbar(name: string, o: { media?: Media; reducedTransparency?: boolean } = {}): Shot {
+  return {
+    name,
+    width: 800,
+    height: 340,
+    media: o.media,
+    render() {
+      document.body.className = 'page page-meetings';
+      const root = h('div', { class: 'sheet' }, h('div', { class: 'line', style: 'align-items:start' }, popupFrame('scrolling — glass', true), popupFrame('fits — flat', false)));
+      document.body.replaceChildren(h('style', null, SHEET_CSS), root);
+      if (o.reducedTransparency) document.body.append(h('style', null, REDUCED_TRANSPARENCY_CSS));
+      const scroller = root.querySelector<HTMLElement>('.popup-frame.scrolls');
+      if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      assertNoHorizontalOverflow();
+    },
+  };
+}
+
 gallery('components', [
   { name: 'components-960', width: 960, height: 900, full: true, render: renderSheet },
   { name: 'components-390', width: 390, height: 900, full: true, render: renderSheet },
+  scrolled('components-bar-scrolled'),
+  scrolled('components-bar-mid-scroll', { at: 26 }),
+  scrolled('components-fallback-reduced-motion', { media: { reducedMotion: true } }),
+  scrolled('components-fallback-contrast-more', { media: { moreContrast: true } }),
+  scrolled('components-fallback-forced-colors', { media: { forcedColors: true } }),
+  scrolled('components-fallback-reduced-transparency', { reducedTransparency: true }),
+  popupToolbar('components-popup-toolbar'),
+  popupToolbar('components-popup-toolbar-contrast-more', { media: { moreContrast: true } }),
+  popupToolbar('components-popup-toolbar-forced-colors', { media: { forcedColors: true } }),
+  popupToolbar('components-popup-toolbar-reduced-transparency', { reducedTransparency: true }),
+  barFocusShot(),
   focusShot(
     'buttons',
     () => h('div', { class: 'line' }, button('Open in Notion'), button('Continue', { kind: 'prominent' }), button('Stop recording', { kind: 'live' })),

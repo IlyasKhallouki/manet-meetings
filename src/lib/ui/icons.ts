@@ -11,7 +11,7 @@
 export const GLYPHS = {
   /** ● Recording right now. Always --live. */
   live: 'M2.5 8a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0Z',
-  /** ◐ Starting / Transcribing / Summarizing / Saving to Notion. Always --label-2. */
+  /** ◐ Starting / Transcribing / Summarizing / Saving to Notion. Always --tint. */
   working: 'M2 8a6 6 0 1 0 12 0a6 6 0 1 0 -12 0ZM8 3.5a4.5 4.5 0 0 1 0 9Z',
   /** ▲ Needs you. Always --caution. */
   caution:
