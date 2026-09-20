@@ -5,18 +5,23 @@
  * rule under body.routing (or a class only this surface uses).
  *
  * The window is 380 wide and fitted to this content's height (main.ts), so nothing here
- * may depend on the viewport height. At 100% text the choose state is 20 + 22 + 2 + 18
- * + 16 + 18 + 8 + 48 + 12 + 28 + 16 = 208 px tall (226 with a two-line byline).
+ * may depend on the viewport height. At 100% text the choose state is 18 + 22 + 3 + 18
+ * + 14 + 18 + 8 + 56 + 14 + 30 + 16 = 217 px tall (235 with a two-line byline).
  *
- * The one surface-specific control state is the default destination: a navy segment
- * (--prominent, "the main thing to do here") carrying the 3 px countdown bar, shown only
- * while nothing is chosen. Style, not size, marks it (buttons.md › Style). A choice takes
- * the shared pressed look from the click on (not the grey busy look; see .is-chosen).
+ * iOS 26: nothing sits behind a 380 × 280 window, so it is opaque throughout — no glass.
+ * Team | Personal are two big capsules, 56 px tall, 8 px apart (the shared .segmented
+ * keeps its roles, roving focus and ✓, but its track is dissolved here: at this size two
+ * separate capsules read as two destinations, not as one switch). The one surface-specific
+ * state is the default destination: a navy capsule (--prominent, "the main thing to do
+ * here") carrying the 4 px countdown bar, shown only while nothing is chosen. Style, not
+ * size, marks it (buttons.md › Style). A choice takes the shared pressed look from the
+ * click on (not the grey busy look; see .is-chosen).
  *
- * CONTRAST (light / dark): label + subtitle on the default 14.64 / 7.60; drain bar vs the
- * fill 8.80 / 4.96; focus ring vs its 2 px surface gap 5.53 / 8.58; ▲ error text on
- * surface 6.79 / 9.85; a choice being sent (--accent on --accent-weak) 4.83 / 7.57, its
- * subtitle 6.71 / 6.32; the inert other segment (--label-2 on surface) 7.69 / 7.15.
+ * CONTRAST (light / dark): label + subtitle on the default 14.64 / 9.22; drain bar vs the
+ * fill 10.90 / 6.54; focus ring vs its 2 px surface gap 5.83 / 7.52; ▲ error text on
+ * surface 7.10 / 10.13; a choice being sent (--tint on --tint-weak) 5.01 / 6.67, its
+ * subtitle 5.27 / 6.47; the resting capsule (--label on --fill) 14.78 / 12.42 inside a
+ * --border ring (3.22 / 3.51).
  */
 
 body.routing .routing-root {
@@ -26,8 +31,8 @@ body.routing .routing-root {
 /* ---- Meeting ------------------------------------------------------------------------ */
 body.routing .route-head {
   display: grid;
-  gap: 2px;
-  margin-block-end: var(--s4);
+  gap: 3px;
+  margin-block-end: 14px;
   min-inline-size: 0;
 }
 
@@ -40,6 +45,8 @@ body.routing .route-title {
 }
 
 body.routing .route-byline {
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
   overflow-wrap: anywhere;
 }
@@ -52,23 +59,47 @@ body.routing .route-body {
 }
 
 body.routing .route-question {
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }
 
-/* Two equal halves; subtitles wrap at large text instead of widening the window. */
+/* Two equal capsules, 8 px apart: the segmented track's own padding, border and fill are
+ * dissolved so each half is a control in its own right. */
 body.routing .route-choice {
   inline-size: auto;
   min-inline-size: 0;
+  gap: var(--s2);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-/* 12 px sides: "Shared with the team" fits on one line in a 169 px half at 100% text;
- * the ✓ of a pressed segment (8 px in, 11 px wide) still clears the centred label.
- * Block padding is 5 px + the 3 px drain below, in rem so it grows with the text: at 100%
- * 5 + 33 (label 15, gap 2, subtitle 16) + 8 = 46, so min-block-size keeps the 48 px; at
- * 150% it is 7.5 above and 10.5 below, clear of the focus ring's 2 px gap and the drain. */
+/* No hairline between two capsules that don't touch. */
+body.routing .route-choice .segment + .segment::before {
+  content: none;
+}
+
+/* A real border, not an inset shadow: box-shadow isn't painted under forced colours, and
+ * a capsule with no boundary there would be no control at all.
+ * 12 px sides: "Shared with the team" fits on one line in a 165 px half at 100% text;
+ * the ✓ of a pressed segment (8 px in, 13 px wide) still clears the centred label.
+ * Block padding is 5 px + the 4 px drain below, in rem so it grows with the text: at 100%
+ * 1 + 5 + 39 (label 22, gap 1, subtitle 16) + 9 + 1 = 55, so min-block-size keeps the
+ * 56 px; at 150% it is 7.5 above and 11.5 below, clear of the focus ring's 2 px gap and
+ * of the drain. */
 body.routing .route-choice .segment {
   min-inline-size: 0;
-  padding: 0.3125rem var(--s3) calc(0.3125rem + 3px);
+  min-block-size: var(--h-choice);
+  padding: 0.3125rem var(--s3) calc(0.3125rem + 4px);
+  border: 1px solid var(--border);
+  background: var(--fill);
+  color: var(--label);
+}
+
+body.routing .route-choice .segment:hover:not([aria-disabled='true']):not([aria-pressed='true']) {
+  background: var(--fill-2);
 }
 
 body.routing .route-choice .segment-label,
@@ -78,9 +109,10 @@ body.routing .route-choice .segment-sub {
   text-align: center;
 }
 
-/* The default: navy fill, the countdown drains along its bottom edge. */
+/* The default: navy fill, no outline, the countdown drains along its bottom edge. */
 body.routing .segment.is-default {
-  overflow: hidden; /* clips the drain bar to the segment's corners */
+  overflow: hidden; /* clips the drain bar to the capsule's corners */
+  border-color: transparent;
   background: var(--prominent);
   color: var(--on-prominent);
 }
@@ -97,8 +129,9 @@ body.routing .segment.is-default:active:not([aria-disabled='true']) {
   background: var(--prominent-pressed);
 }
 
-/* The accent ring hugs the segment (offset 0); on a fill of the same hue (dark mode:
- * #8AC0F2 on #8AC0F2) it would vanish, so a 2 px surface gap separates ring and fill. */
+/* The tint ring hugs the capsule (offset 0); on a fill of the same hue (dark mode:
+ * a pale sky fill under a pale sky ring) it would vanish, so a 2 px surface gap separates
+ * ring and fill. */
 body.routing .segment.is-default:focus-visible {
   box-shadow: inset 0 0 0 2px var(--surface);
 }
@@ -113,27 +146,22 @@ body.routing .route-drain {
   position: absolute;
   inset-inline: 0;
   inset-block-end: 0;
-  block-size: 3px;
+  block-size: 4px;
   background: var(--on-prominent);
-  opacity: 0.75; /* 8.80:1 against the fill (judges: ≥ 3:1) */
+  opacity: 0.85;
   transform-origin: left center;
   pointer-events: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  body.routing .route-drain {
-    opacity: 0.8; /* 4.96:1 */
-  }
-}
-
-/* The choice being sent, then "✓ Team": the shared pressed look (accent-weak, 1 px accent
- * ring, ✓) at full strength from the click on, while the other segment turns --label-2.
+/* The choice being sent, then "✓ Team": the shared pressed look (tint-weak, 1 px tint
+ * ring, ✓) at full strength from the click on, while the other capsule turns --label-2.
  * Not the grey busy look of rows: the send takes milliseconds and the window closes
  * 400 ms later, so a grey step before the blue one would only flash. */
 body.routing .segment.is-chosen[aria-pressed='true'] {
-  background: var(--accent-weak);
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--tint);
+  background: var(--tint-weak);
+  color: var(--tint);
+  box-shadow: none;
 }
 
 body.routing .route-error {
@@ -141,8 +169,8 @@ body.routing .route-error {
   gap: var(--s2);
   margin-block-start: var(--s1);
   color: var(--caution);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
 }
 
 /* Two or three short lines: balanced, so no "Meetings." or "2 minutes." sits alone. */
@@ -153,9 +181,9 @@ body.routing .route-foot > p {
 
 body.routing .route-error > .glyph {
   flex: none;
-  inline-size: 1rem;
-  block-size: 1rem;
-  margin-block-start: 1px; /* centred on the first 18 px line */
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  margin-block-start: 2px; /* centred on the first 18 px line */
 }
 
 /* ---- Countdown and Pause ------------------------------------------------------------ */
@@ -165,15 +193,15 @@ body.routing .route-foot {
   justify-content: space-between;
   gap: var(--s3);
   min-block-size: var(--h-plain); /* the same height with or without the Pause button */
-  margin-block-start: var(--s3);
+  margin-block-start: 14px;
   color: var(--label-2);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
 }
 
 body.routing .route-foot > .btn {
   flex: none;
-  margin-inline-end: calc(-1 * var(--s2)); /* the label, not the hit area, meets the edge */
+  margin-inline-end: -10px; /* the label, not the hit area, meets the edge */
 }
 
 /* ---- Handled and missing ------------------------------------------------------------ */
@@ -212,7 +240,7 @@ body.routing .route-title + .route-actions {
   }
 
   /* A pressed segment is a Highlight fill (styles.css); its subtitle follows, and the
-   * choice being sent keeps that fill rather than the accent override above. */
+   * choice being sent keeps that fill rather than the tint override above. */
   body.routing .segment.is-chosen[aria-pressed='true'] {
     background: Highlight;
     color: HighlightText;

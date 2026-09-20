@@ -4,19 +4,25 @@
  * shared components without !important. Every page loads every surface file: scope each
  * rule under body.popup (or a class only this surface uses).
  *
- * Use the tokens (--label-2, --s4, --t-callout…) and shared components (.btn, .field,
+ * Use the tokens (--label-2, --s4, --t-footnote…) and shared components (.btn, .field,
  * .segmented, .facts, .status-line, .group…) documented at the top of styles.css; adjust
  * layout here, don't restyle the components. Needs a new shared component or token? Ask
  * the foundation owner rather than adding it here.
  *
- * The popup (360 wide, 16 px padding, 16 px between blocks — see .popup-root in styles.css):
- *   section.state      h1.headline (17/22 600; --live while recording) + .clock (17/22 500,
- *                      tabular) / .state-sub (13/18 --label-2, one line) / dl.facts
- *   .hero-block        the one 40 px button, the ▲ error under it, the hint + kbd (13/18)
- *   callout | note     one setup block at most
- *   section.recent     not on a call only: .section-header + two-line rows,
+ * iOS 26: the popup is a grouped background (--bg) carrying opaque cards, under one piece
+ * of Liquid Glass — the bottom toolbar, which takes its material only while the popup
+ * actually scrolls (styles.css › GLASS 2 of 3). Nothing else here is glass.
+ *
+ * The popup (360 wide, 16 px padding, 14 px between blocks — see .popup-root in styles.css):
+ *   section.state.popup-card   an inset grouped card (--surface, r18, 14/16 padding):
+ *                      h1.headline (17/22 600; --live while recording) + .clock (17/22 500,
+ *                      tabular) / 12 / .state-sub (14/19 --label-2, one line) / 12 / dl.facts
+ *   .hero-block        the one 48 px capsule, the ▲ error under it, the hint + kbd (13/18)
+ *   callout | note     one setup block at most, r18, on --caution-weak / --fill
+ *   section.recent     not on a call only: .section-header + an inset grouped card of
+ *                      two-line rows, hairlines inset to the text —
  *                      glyph · title (… Open in Notion) / status · step · when · length
- *   nav.popup-foot     Meetings (· N needs you) … Settings; sticky once the body scrolls
+ *   nav.popup-foot     Meetings (· N needs you) … Settings; the glass toolbar
  * At most 600 px tall (Chrome's cap): past it the body scrolls, not the window.
  * Signature: the roll (.roll) — names in --label-2, the speaker in --label with a 2 px
  * underline. Colour + underline only, so a speaker change never re-flows the line.
@@ -31,7 +37,9 @@
 /* ---- Chrome's 800 × 600 cap ------------------------------------------------------------
  * Past 600 px Chrome scrolls the window, and its scrollbar would eat into the fixed 360 px
  * body and add a sideways scrollbar. So the body is the scroller, at most 600 tall: its
- * scrollbar sits inside the 360 px, and the footer stays pinned at the bottom. */
+ * scrollbar sits inside the 360 px, and the footer stays pinned at the bottom. That body
+ * scroller is also what the toolbar's glass reads: `scroll(nearest block)` is inactive
+ * while the popup fits, and the bar stays flat and opaque. */
 html:has(> body.popup) {
   overflow: hidden; /* not visible: body's own overflow then applies to the body */
 }
@@ -41,35 +49,89 @@ body.popup {
   max-block-size: 600px;
   overflow: hidden auto;
   overscroll-behavior: contain;
-  scroll-padding-block-end: 3rem; /* a focused control never lands under the footer */
+  /* A focused control never lands under the toolbar. The bar is --bar-h at rest, but it
+   * grows when its label wraps at Chrome's larger font sizes (63 px at 150 %), so the
+   * clearance is the bar plus a line of text rather than a fixed 52. */
+  scroll-padding-block-end: calc(var(--bar-h) + 1rem);
 }
 
+/* The toolbar is the last block and sits on the popup's bottom edge; the 14 px gap above
+ * it replaces the root's bottom padding. */
 body.popup .popup-root {
   padding-block-end: 0;
 }
 
-body.popup .popup-foot {
-  position: sticky;
-  inset-block-end: 0;
-  padding-block-end: var(--s2);
-  background: var(--surface);
+/* At Chrome's larger font sizes "Meetings · 1 needs you" outgrows its half of the 360 px
+ * toolbar. The label wraps instead of pushing Settings past the edge: the bar grows, the
+ * words stay. */
+body.popup .popup-foot .btn {
+  min-inline-size: 0;
+  white-space: normal;
+  text-wrap: balance; /* "Meetings ·" / "1 needs you", not a lone "you" */
 }
 
-/* ---- State: headline, sub line, facts ------------------------------------------------ */
+/* ---- The toolbar's links, on glass and off it ----------------------------------------
+ * Only --label and --tint-glass survive the worst composite under this bar: the navy
+ * Record capsule (or the red Stop one) scrolling beneath it, where --tint falls to
+ * 3.89:1. So the links take --tint-glass exactly when the bar takes its material — and
+ * that state is derived the same way the material is, from the popup's scroll timeline,
+ * so no view has to listen to scroll. A popup that fits has no scroll range, the
+ * animation never applies, and the links keep the page's brighter --tint on the flat
+ * opaque bar. (Under reduced transparency and prefers-contrast: more, --tint-glass is
+ * --tint: there is no composite left to survive.)
+ * light: --tint-glass over the glass composite — a row 8.86, the navy capsule 5.92, the
+ * red one 6.21; on the flat bar 8.33, where --tint reads 5.48. Dark: --tint holds
+ * everywhere (7.91 / 5.04 / 6.87) and --tint-glass is the same colour. */
+@keyframes popup-foot-on-glass {
+  from {
+    color: var(--tint-glass);
+  }
+  to {
+    color: var(--tint-glass);
+  }
+}
+
+@supports (animation-timeline: scroll()) {
+  body.popup .popup-foot .btn.plain {
+    animation: popup-foot-on-glass auto linear both;
+    animation-timeline: scroll(nearest block);
+  }
+}
+
+/* Where the bar is material for good (no scroll timeline, or reduced motion), so are its
+ * links — it matches styles.css's own fallbacks for the material itself. */
+@supports not (animation-timeline: scroll()) {
+  body.popup .popup-foot .btn.plain {
+    color: var(--tint-glass);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.popup .popup-foot .btn.plain {
+    animation-name: none;
+    color: var(--tint-glass);
+  }
+}
+
+/* `.is-flat` forces the opaque bar back, and the links with it. */
+body.popup .popup-foot.is-flat .btn.plain {
+  animation-name: none;
+  color: var(--tint);
+}
+
+/* ---- State: a card with the headline, the sub line and the facts --------------------- */
 body.popup .state {
-  display: grid;
-  gap: var(--s4);
   min-inline-size: 0;
 }
 
-/* The one orchestrated moment: idle ⇄ recording cross-fades (opacity only, 200 ms). */
+/* The one orchestrated moment: idle ⇄ recording cross-fades (opacity only, 220 ms). */
 body.popup .state.is-entering {
-  animation: popup-fade-in var(--dur) var(--ease);
+  animation: popup-fade-in var(--dur-2) var(--ease-io);
 }
 
 body.popup .state-head-block {
   display: grid;
-  gap: 2px;
+  gap: var(--s3);
   min-inline-size: 0;
 }
 
@@ -92,7 +154,7 @@ body.popup .headline.is-live {
   color: var(--live);
 }
 
-/* 10 px dot on the 17 px line: a steady dot, no pulse (nothing loops). */
+/* 14 px dot on the 22 px line: a steady dot, no pulse (nothing loops). */
 body.popup .headline > .glyph {
   inline-size: 0.875rem;
   block-size: 0.875rem;
@@ -111,7 +173,7 @@ body.popup .clock {
   margin-inline-start: auto;
   font: var(--t-title3);
   font-weight: 500;
-  letter-spacing: var(--ls-title3);
+  letter-spacing: var(--ls-title);
   color: var(--label);
 }
 
@@ -152,12 +214,12 @@ body.popup .state-sub.is-wrapping {
   display: block;
 }
 
-/* "Go to call" sits on the 18 px sub line without growing it; its text lines up with the
+/* "Go to call" sits on the sub line without growing it; its text lines up with the
  * clock's right edge. */
 body.popup .go-to-call {
   flex: none;
-  margin-block: calc((1.125rem - var(--h-plain)) / 2);
-  margin-inline-end: calc(-1 * var(--s2));
+  margin-block: calc((1lh - var(--h-plain)) / 2);
+  margin-inline-end: -10px; /* .btn.plain's own side padding */
 }
 
 body.popup .state-loading {
@@ -169,14 +231,14 @@ body.popup .facts > dd {
   overflow-wrap: anywhere;
 }
 
-/* ▲ No captions for 6 min — under the roll, set like every other caution value (14/20,
+/* ▲ No captions for 6 min — under the roll, set like every other caution value (15/20,
  * 14 px ▲ centred on the first line); its explanation lines up with the words. */
 body.popup .fact-warning {
   display: flex;
   gap: var(--s2);
   margin-block-start: 2px; /* clears the speaker's 2 px underline */
   font: var(--t-body);
-  letter-spacing: var(--ls-body);
+  letter-spacing: var(--ls-headline);
   color: var(--caution);
 }
 
@@ -189,7 +251,7 @@ body.popup .fact-warning > .glyph {
 
 body.popup .fact-warning-detail {
   display: block;
-  padding-inline-start: calc(0.875rem + var(--s2));
+  padding-inline-start: var(--status-indent);
 }
 
 /* "Allow microphone…" / "Fix in Chrome…" on a line of its own under the explanation: 4 px
@@ -212,7 +274,7 @@ body.popup .roll-item {
 }
 
 body.popup .roll-item.is-new {
-  animation: popup-fade-in var(--dur-thumb) var(--ease);
+  animation: popup-fade-in var(--dur-2) var(--ease-io);
 }
 
 body.popup .roll-name.is-speaking {
@@ -227,21 +289,22 @@ body.popup .roll-more {
 }
 
 /* ---- Hero ---------------------------------------------------------------------------- */
+/* The 48 px capsule, then the ▲ error and the hint, on the popup's own 14 px rhythm. */
 body.popup .hero-block {
   display: grid;
-  gap: var(--s2);
+  gap: 14px;
 }
 
-/* Record → Stop: navy to red in place, over the same 200 ms as the state cross-fade. */
+/* Record → Stop: navy to red in place, over the same 220 ms as the state cross-fade. */
 body.popup .hero-btn {
-  transition-duration: var(--dur);
+  transition-duration: var(--dur-2);
 }
 
 body.popup .hero-error {
   display: flex;
   gap: var(--s2);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--caution);
 }
 
@@ -260,9 +323,9 @@ body.popup .hero-hint {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--s3);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  gap: var(--s2);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }
 
@@ -271,44 +334,55 @@ body.popup .hero-shortcut {
 }
 
 /* ---- Recent -------------------------------------------------------------------------- */
+/* The header is inset 2 px, not the grouped list's 16: at 360 px the popup's own 16 px
+ * gutter already carries the inset, and 32 px would read as a second margin. */
 body.popup .recent .section-header {
-  margin-block-end: var(--s1);
+  padding-inline: 2px;
 }
 
+/* An inset grouped card: rows clipped to its 18 px corners, hairlines inset to the text. */
 body.popup .recent-list {
   margin: 0;
   padding: 0;
   list-style: none;
+  border-radius: var(--r-group);
+  background: var(--surface);
+  overflow: hidden;
 }
 
 body.popup .recent-row {
-  display: grid;
-  grid-template-columns: 0.875rem minmax(0, 1fr);
-  column-gap: var(--s2);
-  padding-block: var(--s2);
+  position: relative;
+  min-block-size: var(--h-row);
+  padding: 11px var(--s4);
 }
 
-body.popup .recent-row + .recent-row {
-  border-block-start: 1px solid var(--separator);
-}
-
-body.popup .recent-row > .glyph {
-  inline-size: 0.875rem;
-  block-size: 0.875rem;
-  margin-block-start: 3px; /* centred on the 20 px title line */
+/* The iOS separator: inset to the text, not to the card edge. */
+body.popup .recent-row + .recent-row::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--s4) 0;
+  block-size: 1px;
+  background: var(--separator);
 }
 
 body.popup .recent-body {
   display: grid;
+  row-gap: 2px;
   min-inline-size: 0;
 }
 
-/* Line 1: the title (one line, ellipsis) and, once saved, Open in Notion. */
+/* Line 1: the glyph, the title (one line, ellipsis) and, once saved, Open in Notion. */
 body.popup .recent-line {
   display: flex;
-  align-items: baseline;
-  gap: var(--s3);
+  align-items: center;
+  gap: var(--s2);
   min-inline-size: 0;
+}
+
+body.popup .recent-line > .glyph {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
 }
 
 body.popup .recent-title {
@@ -317,13 +391,14 @@ body.popup .recent-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
+  font: var(--t-headline);
+  letter-spacing: var(--ls-headline);
 }
 
 body.popup .recent-action {
   flex: none;
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  font: var(--t-caption);
+  letter-spacing: var(--ls-caption);
   white-space: nowrap;
 }
 
@@ -336,8 +411,8 @@ body.popup .recent-meta {
   flex-wrap: wrap;
   block-size: 1lh;
   overflow: hidden;
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }
 

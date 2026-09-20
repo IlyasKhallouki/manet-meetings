@@ -4,12 +4,14 @@
  * shared components without !important. Every page loads every surface file: scope each
  * rule under body.page-permission (or a class only this surface uses).
  *
- * One column (560 including padding, from the shell), 12vh from the top, text on the
- * left edge: tile → 16 → headline → 8 → why (15/22, 60ch) → 12 → what's next (13/18) →
- * 24 → the one button → 12 → a hint or a ▲ line.
+ * iOS 26: no bar and nothing scrolls behind anything, so the page is opaque throughout —
+ * no glass. One column (560 including padding, from the shell), 12vh from the top, text
+ * on the left edge, a single 16 px rhythm: 60 px r18 tile → 16 → large title (30/36) →
+ * 16 → why (15/20, 60ch) → 16 → what's next (13/18) → 24 → the one capsule (44 px, 24 px
+ * sides) → 16 → a hint or a ▲ line.
  *
- * CONTRAST (light / dark): 24 px tile glyphs on --surface-2 — mic (--label-2) 6.50 / 6.16,
- * ✓ (--done) 4.81 / 7.82, ▲ (--caution) 5.74 / 8.48; ▲ line text on --bg 6.16 / 10.99.
+ * CONTRAST (light / dark): 30 px tile glyphs on --fill — mic (--label-2) 5.10 / 5.96,
+ * ✓ (--done) 4.51 / 6.99, ▲ (--caution) 5.91 / 8.28; ▲ line text on --bg 6.41 / 11.83.
  */
 
 body.page-permission .page-body {
@@ -23,53 +25,56 @@ body.page-permission .perm {
   min-inline-size: 0;
 }
 
-/* A glyph in a well, not a logo: the mic, then ✓ or ▲ once Chrome has answered. */
+/* A glyph in a well, not a logo: the mic, then ✓ or ▲ once Chrome has answered. The tile
+ * takes the grouped card's 18 px corner — one radius for every container on the page. */
 body.page-permission .perm-tile {
   display: grid;
   place-items: center;
-  inline-size: 2.5rem;
-  block-size: 2.5rem;
-  border-radius: 10px; /* a quarter of the tile, as in the mock */
-  background: var(--surface-2);
+  inline-size: 3.75rem;
+  block-size: 3.75rem;
+  border-radius: var(--r-group);
+  background: var(--fill);
+  /* No colour here: the view's tone class (.tone-none / .tone-caution / .tone-done) owns
+   * the glyph, and a surface rule would beat it. */
 }
 
-/* 24 px on the 16-unit grid: the mic draws about 17 × 21, the ✓ disc 21, the ▲ 20, the
- * weight the mock's 22 px mic has in its 40 px tile. At 20 px they read as a bullet. */
+/* 30 px on the 16-unit grid: half the tile, the weight the mock's mic has in its 60 px
+ * tile. Below about 24 px a glyph in a well this size reads as a bullet. */
 body.page-permission .perm-tile > .glyph {
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
+  inline-size: 1.875rem;
+  block-size: 1.875rem;
 }
 
 body.page-permission .perm h1 {
   margin-block-start: var(--s4);
 }
 
-/* 15/22: the reason is the page's body copy, one step above the 14 px UI text. */
+/* The reason is the page's body copy: the shared 15/20, at most 60ch. */
 body.page-permission .perm-lead {
   max-inline-size: 60ch;
   text-wrap: pretty; /* fewer one-word last lines */
-  margin-block-start: var(--s2);
-  font: 400 0.9375rem/1.375rem var(--font);
-  letter-spacing: var(--ls-hero);
+  margin-block-start: var(--s4);
+  font: var(--t-body);
+  letter-spacing: var(--ls-headline);
   color: var(--label);
 }
 
 body.page-permission .perm-note {
   max-inline-size: 60ch;
-  margin-block-start: var(--s3);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  margin-block-start: var(--s4);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }
 
 body.page-permission .perm-steps {
   display: grid;
-  gap: var(--s1);
+  gap: 6px;
   max-inline-size: 60ch;
-  margin-block-start: var(--s3);
-  padding-inline-start: 1.5rem;
-  font: 400 0.9375rem/1.375rem var(--font);
-  letter-spacing: var(--ls-hero);
+  margin-block-start: var(--s4);
+  padding-inline-start: 1.375rem;
+  font: var(--t-body);
+  letter-spacing: var(--ls-headline);
 }
 
 body.page-permission .perm-steps > li {
@@ -88,17 +93,20 @@ body.page-permission .perm-actions {
   margin-block-start: var(--s6);
 }
 
+/* The page's one decision: the capsules are 44 px tall with 24 px sides, a step above the
+ * 34 px controls the dense surfaces use. */
 body.page-permission .perm-actions > .btn {
-  min-inline-size: 7.5rem;
+  min-block-size: var(--s11);
+  padding-inline: var(--s6);
 }
 
 body.page-permission .perm-hint,
 body.page-permission .perm-alert,
 body.page-permission .perm-url {
   max-inline-size: 60ch;
-  margin-block-start: var(--s3);
-  font: var(--t-callout);
-  letter-spacing: var(--ls-callout);
+  margin-block-start: var(--s4);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
   color: var(--label-2);
 }
 
@@ -115,18 +123,14 @@ body.page-permission .perm-alert > span {
 
 body.page-permission .perm-alert > .glyph {
   flex: none;
-  inline-size: 1rem;
-  block-size: 1rem;
-  margin-block-start: 1px; /* centred on the first 18 px line */
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  margin-block-start: 2px; /* centred on the first 18 px line */
 }
 
 /* The fallback address: mono, selected whole in one click. It wraps at any character, so
  * lines fill to the edge and no break lands on a hyphen that reads as part of the address
  * ("chrome-" / "extension"), which invites a mistyped paste. */
-body.page-permission .perm-url {
-  margin-block-start: var(--s4);
-}
-
 body.page-permission .perm-url code {
   color: var(--label);
   word-break: break-all;

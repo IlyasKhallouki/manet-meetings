@@ -75,11 +75,11 @@ describe('routing window layout (real CSS, 380 px)', () => {
     expect(overflowing(root)).toEqual([]);
   });
 
-  it('gives Team and Personal equal halves, 48 px tall, subtitles on one line', () => {
+  it('gives Team and Personal equal halves, 56 px tall, subtitles on one line', () => {
     const root = render(meta);
     const [team, personal] = [...root.querySelectorAll<HTMLElement>('.segment')].map((s) => s.getBoundingClientRect());
     expect(Math.abs(team!.width - personal!.width)).toBeLessThanOrEqual(1);
-    expect(team!.height).toBeGreaterThanOrEqual(46);
+    expect(team!.height).toBeGreaterThanOrEqual(54);
     const sub = root.querySelector<HTMLElement>('.is-default .segment-sub')!;
     expect(sub.getBoundingClientRect().height).toBeLessThanOrEqual(17);
   });
@@ -96,9 +96,9 @@ describe('routing window layout (real CSS, 380 px)', () => {
     expect(overflowing(root)).toEqual([]);
   });
 
-  it('keeps 48 px at 100% and room around the text at 150%, clear of the drain bar', () => {
+  it('keeps 56 px at 100% and room around the text at 150%, clear of the drain bar', () => {
     const at100 = render(meta);
-    expect(at100.querySelector('.route-choice')!.getBoundingClientRect().height).toBeCloseTo(48, 0);
+    expect(at100.querySelector('.route-choice')!.getBoundingClientRect().height).toBeCloseTo(56, 0);
 
     const root = render(meta, 24);
     const segment = root.querySelector<HTMLElement>('.segment.is-default')!.getBoundingClientRect();
@@ -107,7 +107,7 @@ describe('routing window layout (real CSS, 380 px)', () => {
     const drain = root.querySelector<HTMLElement>('.is-default .route-drain')!.getBoundingClientRect();
     // Beyond the focus ring's 2 px surface gap, with room to spare.
     expect(label.top - segment.top).toBeGreaterThanOrEqual(7);
-    // The wrapped subtitle ends well above the 3 px drain bar (inset 2 px while focused).
+    // The wrapped subtitle ends well above the 4 px drain bar (inset 2 px while focused).
     expect(drain.top - sub.bottom).toBeGreaterThanOrEqual(5);
   });
 

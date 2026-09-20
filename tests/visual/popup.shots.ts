@@ -4,6 +4,9 @@
  * the real popup, up to Chrome's 600 px cap (the body scrolls past it, the footer stays).
  * The `cap-*` shots are a fixed 360 × 600 window and assert that the footer stays in view
  * and nothing scrolls sideways.
+ * The `fallback-*` shots are the toolbar — one of the three glass surfaces — under each
+ * accessibility setting that drops or keeps the material, on a popup long enough to scroll
+ * (and one that fits, for the mode the two take differently).
  */
 import type { SessionMeta, SpeakerInfo } from '@lib/types';
 import {
@@ -13,7 +16,7 @@ import {
   type PopupState,
 } from '@lib/ui/popupView';
 import popupHtml from '../../entrypoints/popup/index.html?raw';
-import { FMT, gallery, never, ok, shell, type Shot } from './harness';
+import { FMT, gallery, type Media, never, ok, shell, type Shot } from './harness';
 import { NOW, SESSIONS, session } from './scenarios';
 
 const MIN = 60_000;
@@ -172,6 +175,44 @@ const TALLEST = model(
   { mic: 'denied', setup: ['name', 'token', 'team-database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 3 },
 );
 
+/* Playwright has no prefers-reduced-transparency knob, so that fallback is shown by
+ * injecting exactly what the media query sets in styles.css: the tokens, and the
+ * toolbar's own rules (the opaque fill and the hairline that replaces the material). */
+const REDUCED_TRANSPARENCY_CSS =
+  ':root{--glass-blur:0px;--glass-blur-edge:0px;--glass-sat:1;--glass-bar:var(--glass-opaque);' +
+  '--glass-menu:var(--surface);--glass-spec:transparent;--glass-rim:var(--border);--tint-glass:var(--tint);}' +
+  '.popup-foot,.popup-foot.is-flat{animation-name:none;background:var(--glass-opaque);' +
+  'box-shadow:0 -1px 0 var(--glass-rim);}.popup-foot::before{display:none;}';
+
+/**
+ * Each accessibility fallback, photographed on the one popup whose toolbar is really
+ * glass: the tallest on-a-call state, past Chrome's cap, so the body scrolls, the
+ * timeline is live and content passes under the bar. The flat and the glass toolbars
+ * take different paths through styles.css, and only this one takes the glass path — so
+ * this is where the material going opaque has to hand its boundary back.
+ * `short` photographs a popup that fits instead: its toolbar is the flat opaque bar in
+ * every mode but reduced motion, which has no way to ask whether the popup scrolls and
+ * takes the material anyway.
+ */
+function fallback(mode: string, o: { media?: Media; reducedTransparency?: boolean; short?: boolean } = {}): Shot {
+  const base = o.short
+    ? popup(`fallback-${mode}`, model(onCall, { mic: 'prompt', recent: recentFor('route', 'proc', 'saved'), needsYou: 2 }))
+    : capped(`fallback-${mode}`, model(recording()), { then: stopThen(TALLEST) });
+  return {
+    ...base,
+    media: o.media,
+    async render() {
+      await base.render();
+      // shell() replaces the body's children, so this style never reaches the next shot.
+      if (o.reducedTransparency) {
+        const css = document.createElement('style');
+        css.textContent = REDUCED_TRANSPARENCY_CSS;
+        document.body.append(css);
+      }
+    },
+  };
+}
+
 gallery('popup', [
   // A · Recording, healthy: the roll, the latest speaker underlined.
   popup('recording', model(recording())),
@@ -296,4 +337,25 @@ gallery('popup', [
     model({ kind: 'not-meet', onMeet: false }, { setup: ['name', 'token', 'team-database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 1 }),
     { largeText: true },
   ),
+  // Keyboard focus on the toolbar's own link while the bar is material: the ring has to
+  // read on glass, not only on the flat bar (popup-focus-link).
+  capped('focus-foot-link-on-glass', model(recording()), {
+    then: async (root, update) => {
+      await stopThen(TALLEST)!(root, update);
+      root.querySelector<HTMLElement>('[data-key="dashboard"]')!.focus({ preventScroll: true });
+    },
+  }),
+  // Each accessibility fallback on the glass toolbar. Reduced transparency and more
+  // contrast drop the material and must put a hairline back; forced colours replaces it
+  // with a single CanvasText rule (one, not one per layer); reduced motion keeps the
+  // material for good, because the material is legibility rather than motion.
+  fallback('reduced-motion', { media: { reducedMotion: true } }),
+  fallback('contrast-more', { media: { moreContrast: true } }),
+  fallback('forced-colors', { media: { forcedColors: true } }),
+  fallback('reduced-transparency', { reducedTransparency: true }),
+  // The one fallback a popup that fits takes differently: reduced motion cannot ask
+  // whether the popup scrolls, so the toolbar keeps the material over a page that never
+  // moves under it — where the blur has nothing to blur and only a boundary separates
+  // the bar from the page.
+  fallback('reduced-motion-short', { media: { reducedMotion: true }, short: true }),
 ]);

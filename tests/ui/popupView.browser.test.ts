@@ -376,8 +376,9 @@ describe('popup: the roll', () => {
     const warning = dd.querySelector('.fact-warning')!;
     expect(text(warning)).toBe('No captions for 6 min');
     expect(warning.querySelector('svg.glyph-caution')).not.toBeNull();
-    // Set like every other caution value: 14 px words, a 14 px ▲.
-    expect(getComputedStyle(warning).fontSize).toBe('14px');
+    // Set like every other caution value: the fact list's own words (15 px), a 14 px ▲.
+    expect(getComputedStyle(warning).fontSize).toBe(getComputedStyle(dd.querySelector('.fact-value')!).fontSize);
+    expect(getComputedStyle(warning).fontSize).toBe('15px');
     expect(warning.querySelector('svg')!.getBoundingClientRect().width).toBeCloseTo(14, 0);
     expect(text(dd.querySelector('.fact-warning-detail'))).toBe('If people are talking, check that captions (CC) are on in Meet.');
   });
@@ -548,6 +549,41 @@ describe('popup: facts, setup and links', () => {
       expect(foot().bottom).toBeLessThanOrEqual(bottom() + 0.5);
       body.scrollTop = body.scrollHeight;
       expect(foot().bottom).toBeLessThanOrEqual(bottom() + 0.5);
+    } finally {
+      document.documentElement.style.fontSize = '';
+      document.body.style.width = '';
+      document.body.style.minHeight = '';
+      document.body.scrollTop = 0;
+    }
+  });
+
+  /* The toolbar is sticky, so scroll-padding-block-end has to clear it — and the bar is
+   * taller than --bar-h once its label wraps at Chrome's larger font sizes. */
+  it('never parks a focused control under the sticky toolbar at 150% text', () => {
+    document.documentElement.style.fontSize = '150%';
+    document.body.style.width = '360px';
+    document.body.style.minHeight = '0';
+    try {
+      view().update(
+        model({
+          state: { ...onCall, title: 'Onboarding — Lumind × Kera: pricing, pilots and the Q4 roadmap review' },
+          mic: 'denied',
+          setup: ['name', 'token', 'team-database'],
+          needsYou: 3, // the label wraps at 150%, so the bar is taller than --bar-h
+        }),
+        T0,
+      );
+      const foot = root.querySelector('.popup-foot')!;
+      // The reserve has to cover the bar as rendered, not the 52 px it is at rest.
+      const pad = parseFloat(getComputedStyle(document.body).scrollPaddingBlockEnd);
+      expect(pad).toBeGreaterThanOrEqual(foot.getBoundingClientRect().height);
+      const controls = [...root.querySelectorAll<HTMLElement>('button, a[href]')].filter((el) => !el.closest('.popup-foot'));
+      expect(controls.length).toBeGreaterThan(0);
+      for (const el of controls) {
+        document.body.scrollTop = 0;
+        el.focus();
+        expect(el.getBoundingClientRect().bottom).toBeLessThanOrEqual(foot.getBoundingClientRect().top + 0.5);
+      }
     } finally {
       document.documentElement.style.fontSize = '';
       document.body.style.width = '';

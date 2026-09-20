@@ -480,7 +480,8 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   const slot = (tag: 'div' | 'section', attrs: Record<string, string> = {}) => h(tag, { ...attrs, hidden: true });
   const headSlot = h('div', { class: 'state-head-block' });
   const factsSlot = h('div', { class: 'state-facts', hidden: true });
-  const stateEl = h('section', { class: 'state', 'data-role': 'state' }, headSlot, factsSlot);
+  // An inset grouped card (styles.css › .popup-card): the state is the popup's content layer.
+  const stateEl = h('section', { class: 'state popup-card', 'data-role': 'state' }, headSlot, factsSlot);
   const stoppedSlot = slot('div');
   const setupSlot = slot('div');
   const recentSlot = slot('div');
@@ -795,13 +796,15 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
     return h(
       'li',
       { class: 'recent-row', 'data-id': row.id },
-      toneGlyph(row.tone),
       h(
         'div',
         { class: 'recent-body' },
         h(
           'div',
           { class: 'recent-line' },
+          // The glyph hangs at the start of the title line; the status line below runs the
+          // full width of the row, so a detail is never squeezed out by an indent.
+          toneGlyph(row.tone),
           h('span', { class: row.isCode ? 'recent-title mono' : 'recent-title', title: row.title }, row.title),
           url
             ? button('Open in Notion', {
