@@ -48,4 +48,6 @@ jobs:
         with:
           name: manet-meetings-chrome
           path: .output/*-chrome.zip
+          # .output starts with a dot, and the action skips hidden paths by default.
+          include-hidden-files: true
           if-no-files-found: error
