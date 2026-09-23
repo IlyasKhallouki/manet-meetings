@@ -1,9 +1,11 @@
 /**
  * Settings in the states of the Native Restraint wireframe (brief/direction-native.md ›
- * Surface: settings) plus the setup checklist: filled with per-field results, first run,
- * setup just finished, pending Check / mic blocked / advice, and 150% text.
+ * Surface: settings) plus the setup checklist: filled with per-field and per-profile
+ * results, first run, setup just finished, pending Check / mic blocked / advice, and 150%
+ * text.
  * Every shot asserts there is no horizontal scroll.
  */
+import { starterProfiles } from '@lib/profiles';
 import { DEFAULT_SETTINGS } from '@lib/settingsSchema';
 import type { VerifyResult } from '@lib/notion/verify';
 import type { Settings } from '@lib/types';
@@ -20,8 +22,7 @@ const FILLED: Settings = {
   ...FULL_SETTINGS,
   displayName: 'Ilya',
   geminiApiKey: '',
-  notionTeamDbId: TEAM_DB,
-  notionPersonalDbId: PERSONAL_DB,
+  profiles: starterProfiles(TEAM_DB, PERSONAL_DB),
   customVocabulary: ['Lumind', 'Manet', 'OPFS'],
 };
 
@@ -59,13 +60,14 @@ function page(settings: Settings, mic: MicPermission, overrides: Partial<Options
       verifyGemini: async () => ({ ok: true }),
       verifyNotion: notion,
       openPermissionPage: () => {},
+      openProfile: () => {},
       ...overrides,
     },
     { savedMs: 600_000 },
   );
   view.load(settings);
   view.setMic(mic);
-  return view;
+  return { view, current: () => current };
 }
 
 function noSideScroll(): void {
@@ -73,7 +75,7 @@ function noSideScroll(): void {
   if (over > 0) throw new Error(`horizontal overflow: ${over}px`);
 }
 
-/** The wireframe's WIDE state: ✓ Saved, a ready and a not-shared database, an invalid code. */
+/** The wireframe's WIDE state: ✓ Saved, a ready and a not-shared profile database, an invalid code. */
 async function filled(): Promise<void> {
   page(FILLED, 'prompt');
   await commit('displayName', 'Ilya Kaplan');
@@ -90,10 +92,12 @@ async function firstRun(): Promise<void> {
 
 /** Filled in during this visit: the checklist stays where it was and confirms. */
 async function setupDone(): Promise<void> {
-  page(EMPTY, 'granted');
+  const { view, current } = page(EMPTY, 'granted');
   await commit('displayName', 'Ilya Kaplan');
   await commit('notionToken', 'ntn_example_token_0000000000000000000000000000');
-  await commit('notionTeamDbId', TEAM_DB);
+  // The profile editor saved Team's database; storage changes reach Settings through load().
+  view.load({ ...current(), profiles: starterProfiles(TEAM_DB) });
+  await wait();
   noSideScroll();
 }
 
@@ -103,7 +107,7 @@ async function states(): Promise<void> {
   await commit('languageCodes', 'en-US, fr-CA');
   q<HTMLButtonElement>('[data-role="check-gemini"]').click();
   await commit('retentionDays', '400');
-  q('[name="notionTeamDbId"]').focus();
+  q('[data-key="profile-team"]').focus();
   await wait();
   noSideScroll();
 }
@@ -155,7 +159,7 @@ gallery('settings', [
   statesShot,
   scrolledShot,
   shot('large-text-390', 390, largeText),
-  // Accessibility settings: switches, Team | Personal, focus, the checklist glyphs and the
+  // Accessibility settings: switches, the profile rows, focus, the checklist glyphs and the
   // field messages must survive the system palette and read in more contrast. (Reduced
   // motion only removes the "✓ Saved" fade, which a still can't show.)
   variant(statesShot, 'forced-colors', { forcedColors: true }),

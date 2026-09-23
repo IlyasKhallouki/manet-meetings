@@ -7,8 +7,16 @@ import type { FieldName } from './settingsForm';
 
 const RESULT_PREFIX = 'result:';
 
-/** A page, or Settings opened on one field: '/options.html#geminiApiKey' focuses the key. */
-export type PagePath = '/dashboard.html' | '/permission.html' | '/options.html' | `/options.html#${FieldName}`;
+/**
+ * A page, or Settings opened on one field: '/options.html#geminiApiKey' focuses the key,
+ * '/options.html#profile/<id>' shows that profile's editor.
+ */
+export type PagePath =
+  | '/dashboard.html'
+  | '/permission.html'
+  | '/options.html'
+  | `/options.html#${FieldName}`
+  | `/options.html#profile/${string}`;
 
 /**
  * Focuses a tab that already shows the page, or opens a new one. With a #field, an open

@@ -1,31 +1,32 @@
 /**
- * Settings: grouped sections (You → Notion → Transcription → Recording) that apply as you
- * change them. There is no Save button (SPEC §5):
+ * Settings: grouped sections (You → Notion → Profiles → Transcription → Recording) that
+ * apply as you change them. There is no Save button (SPEC §5):
  *   - text fields and secrets commit on blur or Enter, never while typing;
  *   - a value that fails validation is never written: the saved one stays in effect and
  *     the fix shows under the field (settingsForm.parseField);
- *   - switches and Team | Personal commit on activation;
+ *   - switches commit on activation;
  *   - each commit writes only its own field (handlers.update → settings.ts updateSettings),
  *     one at a time, and shows "✓ Saved" beside the label for 2 s (role=status).
- * Check results sit under the field they describe and say when they tested a value that
- * isn't saved. While meetings can't be saved to Notion, a checklist at the top lists what
- * is missing; each item focuses its field, as options.html#<setting> does (focus()), which
- * the other pages open through extension.ts openSettings(field).
+ * Profiles are listed, one row each with its database's last check; a row opens the
+ * profile editor (handlers.openProfile, profileEditorView.ts), which edits the profile.
+ * Check results sit under the field or on the row they describe and say when they tested
+ * a value that isn't saved. While meetings can't be saved to Notion, a checklist at the
+ * top lists what is missing; each item focuses its field, as options.html#<setting> does
+ * (focus()), which the other pages open through extension.ts openSettings(field).
  *
  * Loading, saving and verification come in as handlers, so the page renders in any DOM.
  */
 import type { VerifyResult } from '../notion/verify';
+import { defaultProfile, newProfile } from '../profiles';
 import { MAX_VOCABULARY } from '../transcribe/requests';
-import type { Route, Settings } from '../types';
+import type { Profile, Settings } from '../types';
 import {
   button,
   field,
   secretInput,
   section,
-  segmented,
   setDisabled,
   setFieldMessage,
-  setSegmented,
   switchInput,
   textInput,
   visuallyHidden,
@@ -34,11 +35,12 @@ import {
 import { h, type Child } from './dom';
 import { svg, type Glyph } from './icons';
 import type { MicPermission } from './mic';
+import type { ProfileField } from './profileEditorView';
 import {
   formValue,
-  notionCheckMessages,
   parseField,
   parseVocabulary,
+  profileCheckMessages,
   setupChecklist,
   setupComplete,
   type CheckMessage,
@@ -50,6 +52,8 @@ export interface OptionsHandlers {
   verifyGemini(apiKey: string): Promise<{ ok: true } | { ok: false; error: string }>;
   verifyNotion(token: string, databaseId: string): Promise<VerifyResult>;
   openPermissionPage(): void;
+  /** Shows a profile's editor (options.html#profile/<id>), on `field` when given. */
+  openProfile(profileId: string, field?: ProfileField): void;
 }
 
 export interface OptionsView {
@@ -61,7 +65,8 @@ export interface OptionsView {
   setMic(permission: MicPermission): void;
   /**
    * Moves focus to a setting by its name (options.html#geminiApiKey): a field, a switch,
-   * or the pressed Team | Personal segment. False, and focus stays, for any other name.
+   * 'profiles' (the first profile's row) or 'profile-<id>' (that profile's row, back from
+   * its editor). False, and focus stays, for any other name.
    */
   focus(name: string): boolean;
   /**
@@ -78,15 +83,7 @@ export interface OptionsTiming {
   fadeMs: number;
 }
 
-type TextName =
-  | 'displayName'
-  | 'notionToken'
-  | 'notionTeamDbId'
-  | 'notionPersonalDbId'
-  | 'geminiApiKey'
-  | 'customVocabulary'
-  | 'languageCodes'
-  | 'retentionDays';
+type TextName = 'displayName' | 'notionToken' | 'geminiApiKey' | 'customVocabulary' | 'languageCodes' | 'retentionDays';
 type SwitchName = 'includeMic' | 'autoTranscribe';
 
 /** What a field's message slot shows, so a newer kind can replace or keep it. */
@@ -110,12 +107,6 @@ interface ToggleRow {
   saved: HTMLElement;
   msg: HTMLElement;
 }
-
-/**
- * What to put in a database field, not an address: people paste app.notion.com or
- * notion.so links (both work), and a sample URL would look like neither.
- */
-const DATABASE_PLACEHOLDER = 'Paste the database link';
 
 const GLYPH: Record<MessageTone, Glyph> = { caution: 'caution', done: 'done', neutral: 'info' };
 const MESSAGE_KINDS_CLEARED_BY_A_SAVE: MessageKind[] = ['invalid', 'save', 'note'];
@@ -251,8 +242,10 @@ export function createOptionsView(
     if (f.name === 'customVocabulary') renderCount();
     // A Check result describes the value that was checked, not this one.
     clearMessage(f, ['check']);
-    if (f.name === 'notionToken') {
-      for (const db of ['notionTeamDbId', 'notionPersonalDbId'] as const) clearMessage(texts.get(db)!, ['check']);
+    if (f.name === 'notionToken' && checks.size) {
+      // The rows' results were checked with the token that was there.
+      checks.clear();
+      renderProfiles();
     }
     const result = parseField(f.name, f.input.value);
     if (f.message === 'invalid') {
@@ -331,9 +324,9 @@ export function createOptionsView(
     }
   }
 
-  // ---- Switches and Team | Personal ---------------------------------------------------------
+  // ---- Switches ------------------------------------------------------------------------------
   const switches = new Map<SwitchName, HTMLInputElement>();
-  const toggleRows = new Map<SwitchName | 'defaultRoute', ToggleRow>();
+  const toggleRows = new Map<SwitchName, ToggleRow>();
 
   function switchField(name: SwitchName, label: string, hint: string, extra: HTMLElement | null = null): HTMLElement {
     const saved = savedSlot(name);
@@ -378,59 +371,6 @@ export function createOptionsView(
       if (name === 'includeMic') renderMic();
     } finally {
       setDisabled(input, false);
-    }
-  }
-
-  const ROUTES: { value: Route; label: string }[] = [
-    { value: 'team', label: 'Team' },
-    { value: 'personal', label: 'Personal' },
-  ];
-  const route = segmented<Route>({
-    labelledBy: 'defaultRoute-label',
-    options: ROUTES,
-    value: null,
-    onSelect: (value) => void commitRoute(value),
-    attrs: { 'data-role': 'defaultRoute', 'aria-describedby': 'defaultRoute-hint defaultRoute-msg' },
-  });
-  const segments = () => [...route.querySelectorAll<HTMLElement>('.segment')];
-
-  function routeField(): HTMLElement {
-    const saved = savedSlot('defaultRoute');
-    const msg = h('p', { class: 'field-msg', id: 'defaultRoute-msg', role: 'status' });
-    toggleRows.set('defaultRoute', { label: 'Default destination', saved, msg });
-    return h(
-      'div',
-      { class: 'field' },
-      h(
-        'div',
-        { class: 'field-head' },
-        h('span', { class: 'field-label', id: 'defaultRoute-label' }, 'Default destination'),
-        saved,
-      ),
-      route,
-      msg,
-      h(
-        'p',
-        { class: 'hint', id: 'defaultRoute-hint' },
-        'Preselected when a call ends, and used if you don’t choose within a minute.',
-      ),
-    );
-  }
-
-  async function commitRoute(value: Route): Promise<void> {
-    if (!stored || value === stored.defaultRoute) return;
-    const row = toggleRows.get('defaultRoute')!;
-    for (const s of segments()) setDisabled(s, true);
-    try {
-      await write({ defaultRoute: value });
-      setSegmented(route, value);
-      renderMessage(row.msg, null);
-      flashSaved(row.saved, row.label);
-      afterSave();
-    } catch (err) {
-      renderMessage(row.msg, `Couldn’t save: ${errorText(err)}`);
-    } finally {
-      for (const s of segments()) setDisabled(s, false);
     }
   }
 
@@ -498,61 +438,147 @@ export function createOptionsView(
 
   const checkNotionButton = button('Check', {
     class: 'settings-check',
-    onClick: () => void checkNotion(),
+    onClick: () => void checkDatabases(),
     attrs: {
       'data-role': 'check-notion',
-      'aria-label': 'Check both databases',
+      'aria-label': 'Check databases',
       'aria-describedby': 'check-notion-hint',
     },
   });
 
-  async function checkNotion(): Promise<void> {
+  /**
+   * Checks every profile's database with the token in the Token field. A token problem
+   * shows once, under the token; everything else on each profile's row.
+   */
+  async function checkDatabases(): Promise<void> {
     const token = texts.get('notionToken')!;
-    const dbs = [texts.get('notionTeamDbId')!, texts.get('notionPersonalDbId')!];
-    busy(checkNotionButton, true, 'Check', 'both databases');
+    busy(checkNotionButton, true, 'Check', 'databases');
     try {
       await settled();
-      for (const f of [token, ...dbs]) clearMessage(f, ['check']);
+      clearMessage(token, ['check']);
       const tokenValue = token.input.value.trim();
       if (!tokenValue) {
         showMessage(token, 'check', 'Paste a token first.', 'caution');
         return;
       }
-      if (token.message === 'invalid') return;
-      const tokenUnsaved = stored !== null && tokenValue !== stored.notionToken;
-      // A field showing a fix isn't checked: the fix stays.
-      const checked = dbs.map((f) => f.message !== 'invalid');
-      const [team, personal] = await Promise.all(
-        dbs.map(async (f, i): Promise<VerifyResult | null> => {
-          const id = f.input.value.trim();
-          if (!checked[i] || !id) return null;
-          try {
-            return await handlers.verifyNotion(tokenValue, id);
-          } catch (err) {
-            return { ok: false, problems: [errorText(err)] };
-          }
-        }),
+      if (token.message === 'invalid' || !stored) return;
+      const tokenUnsaved = tokenValue !== stored.notionToken;
+      const profiles = stored.profiles;
+      const results = new Map<string, VerifyResult | null>(
+        await Promise.all(
+          profiles.map(async (p): Promise<[string, VerifyResult | null]> => {
+            const id = p.databaseId.trim();
+            if (!id) return [p.id, null];
+            try {
+              return [p.id, await handlers.verifyNotion(tokenValue, id)];
+            } catch (err) {
+              return [p.id, { ok: false, problems: [errorText(err)] }];
+            }
+          }),
+        ),
       );
-      const messages = notionCheckMessages({ team: team ?? null, personal: personal ?? null });
+      const messages = profileCheckMessages(results);
+      checks.clear();
       if (messages.token) {
         const note = tokenUnsaved ? ' Checked the token in the field, which isn’t saved.' : '';
         showMessage(token, 'check', `${messages.token.text}${note}`, messages.token.tone);
-        return;
+      } else {
+        for (const p of profiles) {
+          const message = messages.profiles.get(p.id);
+          if (!message || results.get(p.id) === null) continue;
+          const note = tokenUnsaved ? ' Checked with the token in the field, which isn’t saved.' : '';
+          checks.set(p.id, { databaseId: p.databaseId, message: { ...message, text: `${message.text}${note}` } });
+        }
       }
-      [messages.team, messages.personal].forEach((message: CheckMessage | undefined, i) => {
-        const f = dbs[i]!;
-        if (!message || !checked[i]) return;
-        const unsaved =
-          stored !== null && f.input.value.trim() !== formValue(stored, f.name)
-            ? ' Checked the link in the field, which isn’t saved.'
-            : tokenUnsaved && message.tone !== 'neutral'
-              ? ' Checked with the token in the field, which isn’t saved.'
-              : '';
-        showMessage(f, 'check', `${message.text}${unsaved}`, message.tone);
-      });
+      renderProfiles();
     } finally {
-      busy(checkNotionButton, false, 'Check', 'both databases');
+      busy(checkNotionButton, false, 'Check', 'databases');
     }
+  }
+
+  // ---- Profiles ------------------------------------------------------------------------------
+  /** Each profile's last check, for the database it checked (a new link isn't checked). */
+  const checks = new Map<string, { databaseId: string; message: CheckMessage }>();
+  const profileRows = new Map<string, HTMLButtonElement>();
+
+  const addProfileMsg = h('p', { class: 'field-msg', id: 'add-profile-msg', role: 'status' });
+  const addProfileButton = button('Add profile', {
+    kind: 'link',
+    onClick: () => void addProfile(),
+    attrs: { 'data-key': 'add-profile', 'aria-describedby': 'add-profile-msg' },
+  });
+  const addProfileRow = h('div', { class: 'profile-add' }, addProfileButton, addProfileMsg);
+
+  async function addProfile(): Promise<void> {
+    if (!stored) return;
+    const created = newProfile(stored.profiles);
+    setDisabled(addProfileButton, true);
+    try {
+      await write({ profiles: [...stored.profiles, created] });
+      renderMessage(addProfileMsg, null);
+      renderProfiles();
+      afterSave();
+      handlers.openProfile(created.id);
+    } catch (err) {
+      renderMessage(addProfileMsg, `Couldn’t add a profile: ${errorText(err)}`);
+    } finally {
+      setDisabled(addProfileButton, false);
+    }
+  }
+
+  /** The line under a profile's name: its database's state. */
+  function databaseLine(profile: Profile): { tone: MessageTone | null; text: string } {
+    if (!profile.databaseId.trim()) return { tone: 'caution', text: 'No database yet' };
+    const check = checks.get(profile.id);
+    if (check && check.databaseId === profile.databaseId) return check.message;
+    return { tone: null, text: 'Not checked' };
+  }
+
+  function profileRow(profile: Profile): HTMLButtonElement {
+    let row = profileRows.get(profile.id);
+    if (!row) {
+      const id = profile.id;
+      row = h('button', { type: 'button', class: 'profile-row', 'data-key': `profile-${id}` });
+      row.addEventListener('click', () => handlers.openProfile(id));
+      profileRows.set(id, row);
+    }
+    const line = databaseLine(profile);
+    const isDefault = stored !== null && defaultProfile(stored).id === profile.id;
+    row.replaceChildren(
+      h(
+        'span',
+        { class: 'profile-row-text' },
+        h(
+          'span',
+          { class: 'profile-row-head' },
+          h('span', { class: 'profile-row-name' }, profile.name),
+          isDefault ? h('span', { class: 'profile-row-tag' }, 'Default') : null,
+        ),
+        h(
+          'span',
+          { class: 'profile-row-db', 'data-tone': line.tone ?? 'none' },
+          line.tone ? svg(GLYPH[line.tone], { class: `tone-${line.tone}` }) : null,
+          h('span', null, line.text),
+        ),
+      ),
+      svg('chevron', { class: 'profile-row-chevron' }),
+    );
+    return row;
+  }
+
+  function renderProfiles(): void {
+    if (!stored) return;
+    const ids = new Set(stored.profiles.map((p) => p.id));
+    for (const id of [...profileRows.keys()]) {
+      if (ids.has(id)) continue;
+      profileRows.delete(id);
+      checks.delete(id);
+    }
+    const rows: HTMLElement[] = [...stored.profiles.map(profileRow), addProfileRow, checkDatabasesRow];
+    for (const row of rows) row.classList.add('group-row');
+    const children = [...profilesGroup.children];
+    // Only rebuilt when rows come, go or move, so a focused row keeps focus.
+    if (children.length !== rows.length || children.some((c, i) => c !== rows[i])) profilesGroup.replaceChildren(...rows);
   }
 
   // ---- Setup checklist -----------------------------------------------------------------------
@@ -605,7 +631,11 @@ export function createOptionsView(
           svg(state, { class: `tone-${state}` }),
           button([item.label, visuallyHidden(`, ${spoken}`)], {
             kind: 'link',
-            onClick: () => focusField(item.key),
+            onClick: () => {
+              // The default profile's database is in its editor.
+              if (item.key === 'profiles') handlers.openProfile(defaultProfile(stored!).id, 'databaseId');
+              else focusField(item.key);
+            },
           }),
           item.optional ? h('span', { class: 'setup-optional' }, 'optional') : null,
         );
@@ -619,9 +649,8 @@ export function createOptionsView(
   function controlFor(name: string): HTMLElement | null {
     if (texts.has(name as TextName)) return texts.get(name as TextName)!.input;
     if (switches.has(name as SwitchName)) return switches.get(name as SwitchName)!;
-    if (name === 'defaultRoute') {
-      return segments().find((s) => s.getAttribute('aria-pressed') === 'true') ?? segments()[0] ?? null;
-    }
+    if (name === 'profiles') return profileRows.get(stored?.profiles[0]?.id ?? '') ?? null;
+    if (name.startsWith('profile-')) return profileRows.get(name.slice('profile-'.length)) ?? null;
     return null;
   }
 
@@ -638,6 +667,20 @@ export function createOptionsView(
   }
 
   // ---- Page ----------------------------------------------------------------------------------
+  const checkDatabasesRow = h(
+    'div',
+    { class: 'settings-action' },
+    h(
+      'div',
+      { class: 'settings-action-text' },
+      h('p', { class: 'field-label' }, 'Check databases'),
+      h('p', { class: 'hint', id: 'check-notion-hint' }, 'Checks access and the columns Manet Meetings writes.'),
+    ),
+    checkNotionButton,
+  );
+  const profilesSection = section({ title: 'Profiles', id: 'settings-profiles', rows: [] });
+  const profilesGroup = profilesSection.querySelector<HTMLElement>('.group')!;
+
   const lede = h('p', { class: 'settings-lede', 'data-role': 'lede' }, 'Changes are saved as you make them.');
 
   const notionToken = secretInput({ id: 'notionToken', name: 'notionToken', placeholder: 'Not set' });
@@ -679,33 +722,12 @@ export function createOptionsView(
           hint: [
             'A personal access token from ',
             link('https://www.notion.so/developers/tokens', 'notion.so/developers/tokens'),
-            ', or an integration secret shared with both databases.',
+            ', or an integration secret shared with every profile’s database.',
           ],
         }),
-        textField(
-          'notionTeamDbId',
-          'Team database',
-          textInput({ id: 'notionTeamDbId', name: 'notionTeamDbId', placeholder: DATABASE_PLACEHOLDER }),
-        ),
-        textField(
-          'notionPersonalDbId',
-          'Personal database',
-          textInput({ id: 'notionPersonalDbId', name: 'notionPersonalDbId', placeholder: DATABASE_PLACEHOLDER }),
-        ),
-        h(
-          'div',
-          { class: 'settings-action' },
-          h(
-            'div',
-            { class: 'settings-action-text' },
-            h('p', { class: 'field-label' }, 'Check both databases'),
-            h('p', { class: 'hint', id: 'check-notion-hint' }, 'Checks access and the columns Manet Meetings writes.'),
-          ),
-          checkNotionButton,
-        ),
-        routeField(),
       ],
     }),
+    profilesSection,
     section({
       title: 'Transcription',
       id: 'settings-transcription',
@@ -793,7 +815,7 @@ export function createOptionsView(
       for (const [name, input] of switches) {
         if (input.getAttribute('aria-disabled') !== 'true') input.checked = settings[name];
       }
-      if (!segments().some((s) => s.getAttribute('aria-disabled') === 'true')) setSegmented(route, settings.defaultRoute);
+      renderProfiles();
       renderCount();
       renderMic();
       renderSetup();

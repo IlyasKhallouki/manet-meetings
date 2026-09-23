@@ -315,7 +315,7 @@ export const IDLE_SPEAKERS: FactView = {
 export type SetupGap = 'name' | 'token' | 'database';
 
 /** The Settings field that fixes each gap ("Open settings" lands on the first one). */
-const GAP_FIELD: Record<SetupGap, FieldName> = { name: 'displayName', token: 'notionToken', database: 'notionTeamDbId' };
+const GAP_FIELD: Record<SetupGap, FieldName> = { name: 'displayName', token: 'notionToken', database: 'profiles' };
 
 /** Mirrors missingForSave(settings, the default profile), as items the popup can name in a sentence. */
 export function setupGaps(settings: Settings): SetupGap[] {

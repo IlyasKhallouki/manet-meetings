@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@lib/ui/styles.css';
 import { verifyApiKey } from '@lib/gemini/rest';
 import type { VerifyResult } from '@lib/notion/verify';
@@ -6,6 +6,8 @@ import { verifyDatabase } from '@lib/notion/verify';
 import { starterProfiles } from '@lib/profiles';
 import type { Settings } from '@lib/types';
 import { createOptionsView, type OptionsHandlers } from '@lib/ui/optionsView';
+
+const DB = '1a2b3c4d5e6f40718293a4b5c6d7e8f9';
 
 const SETTINGS: Settings = {
   geminiApiKey: 'manet-test-invalid-key',
@@ -99,6 +101,7 @@ function store(initial: Settings = SETTINGS, overrides: Partial<OptionsHandlers>
     verifyGemini: (k) => verifyApiKey(k),
     verifyNotion: (token, db) => verifyDatabase(token, db),
     openPermissionPage: () => void calls.push('openPermissionPage'),
+    openProfile: vi.fn(),
     ...overrides,
   };
   return { patches, calls, handlers, current: () => current };
@@ -113,6 +116,7 @@ describe('settings page layout', () => {
     expect([...root.querySelectorAll('.section-header')].map(text)).toEqual([
       'You',
       'Notion',
+      'Profiles',
       'Transcription',
       'Recording',
     ]);
@@ -130,12 +134,6 @@ describe('settings page layout', () => {
     expect(field('displayName').value).toBe('Ilya');
     expect(field('geminiApiKey').value).toBe('manet-test-invalid-key');
     expect(field('notionToken').value).toBe('ntn_example');
-    expect(field('notionTeamDbId').value).toBe(SETTINGS.notionTeamDbId);
-    expect(field('notionPersonalDbId').value).toBe('');
-    const route = root.querySelector('[data-role="defaultRoute"]')!;
-    expect(route.getAttribute('role')).toBe('group');
-    expect(route.querySelector('[data-value="personal"]')!.getAttribute('aria-pressed')).toBe('true');
-    expect(route.querySelector('[data-value="team"]')!.getAttribute('aria-pressed')).toBe('false');
     expect(field('autoTranscribe').checked).toBe(false);
     expect(field('autoTranscribe').getAttribute('role')).toBe('switch');
     expect(field('retentionDays').value).toBe('14');
@@ -146,16 +144,11 @@ describe('settings page layout', () => {
     for (const el of root.querySelectorAll<HTMLInputElement>('input, textarea')) {
       expect(text(el.labels?.[0]), el.name).not.toBe('');
     }
-    const routeLabel = document.getElementById(route.getAttribute('aria-labelledby')!);
-    expect(text(routeLabel)).toBe('Default destination');
   });
 
-  it('asks for the database link people copy, not a notion.so address it would not look like', () => {
+  it('shows no placeholder that looks like an address', () => {
     const view = createOptionsView(root, store(EMPTY).handlers, FAST);
     view.load(EMPTY);
-    for (const name of ['notionTeamDbId', 'notionPersonalDbId']) {
-      expect(field(name).placeholder, name).toBe('Paste the database link');
-    }
     for (const el of root.querySelectorAll<HTMLInputElement>('[placeholder]')) {
       expect(el.placeholder, el.name).not.toMatch(/notion\.so|https?:/);
     }
@@ -163,14 +156,12 @@ describe('settings page layout', () => {
 });
 
 describe('links to a field (options.html#<field>)', () => {
-  it('focuses the field a link names: text, secrets, switches and the default destination', () => {
+  it('focuses the field a link names: text, secrets, switches and the Profiles group', () => {
     const view = createOptionsView(root, store().handlers, FAST);
     view.load(SETTINGS);
     const names = [
       'displayName',
       'notionToken',
-      'notionTeamDbId',
-      'notionPersonalDbId',
       'geminiApiKey',
       'customVocabulary',
       'languageCodes',
@@ -182,16 +173,19 @@ describe('links to a field (options.html#<field>)', () => {
       expect(view.focus(name), name).toBe(true);
       expect(document.activeElement, name).toBe(field(name));
     }
-    expect(view.focus('defaultRoute')).toBe(true);
-    // The pressed segment: Personal in SETTINGS.
-    expect(document.activeElement).toBe(root.querySelector('[data-role="defaultRoute"] [data-value="personal"]'));
+    // The Profiles group: its first row.
+    expect(view.focus('profiles')).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('[data-key="profile-team"]'));
+    // A profile's own row (back from its editor).
+    expect(view.focus('profile-personal')).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('[data-key="profile-personal"]'));
   });
 
   it('leaves focus alone for anything that is not a setting', () => {
     const view = createOptionsView(root, store().handlers, FAST);
     view.load(SETTINGS);
     field('displayName').focus();
-    for (const name of ['', 'nope', 'settings-notion', 'defaultRoute-label', 'toString']) {
+    for (const name of ['', 'nope', 'settings-notion', 'defaultRoute', 'notionTeamDbId', 'profile-nope', 'toString']) {
       expect(view.focus(name), name).toBe(false);
     }
     expect(document.activeElement).toBe(field('displayName'));
@@ -384,27 +378,6 @@ describe('instant apply', () => {
     expect(auto.checked).toBe(true);
   });
 
-  it('sets the default destination with Team | Personal: arrows move focus, activation saves', async () => {
-    const s = store();
-    const view = createOptionsView(root, s.handlers, FAST);
-    view.load(SETTINGS);
-    const route = root.querySelector<HTMLElement>('[data-role="defaultRoute"]')!;
-    const team = route.querySelector<HTMLButtonElement>('[data-value="team"]')!;
-    const personal = route.querySelector<HTMLButtonElement>('[data-value="personal"]')!;
-    personal.focus();
-    key(personal, 'ArrowLeft');
-    expect(document.activeElement).toBe(team);
-    await tick(20);
-    expect(s.patches).toEqual([]);
-
-    team.click();
-    await until(() => s.patches.length === 1);
-    expect(s.patches).toEqual([{ defaultRoute: 'team' }]);
-    await until(() => team.getAttribute('aria-pressed') === 'true');
-    expect(personal.getAttribute('aria-pressed')).toBe('false');
-    expect(text(saved('defaultRoute'))).toMatch(/Saved$/);
-  });
-
   it('says why a write failed and tries again on the next commit', async () => {
     let fail = true;
     const s = store();
@@ -456,17 +429,19 @@ describe('setup checklist', () => {
   const item = (k: string) => setup()!.querySelector<HTMLElement>(`[data-item="${k}"]`)!;
 
   it('lists what saving to Notion still needs, and each item goes to its field', async () => {
-    const initial = { ...EMPTY, displayName: 'Ilya' };
-    const view = createOptionsView(root, store(initial).handlers, FAST);
+    const initial = { ...EMPTY, displayName: 'Ilya', profiles: starterProfiles('', '') };
+    const s = store(initial);
+    const view = createOptionsView(root, s.handlers, FAST);
     view.load(initial);
     expect(setup()!.dataset.state).toBe('incomplete');
     expect(text(setup()!.querySelector('h2'))).toBe('Meetings can’t be saved to Notion yet');
     expect([...setup()!.querySelectorAll('[data-item]')].map((li) => li.getAttribute('data-item'))).toEqual([
       'displayName',
       'notionToken',
-      'notionTeamDbId',
+      'profiles',
       'geminiApiKey',
     ]);
+    expect(text(item('profiles'))).toMatch(/^Database for Team/);
     expect(item('displayName').dataset.done).toBe('true');
     expect(item('displayName').querySelector('.glyph-done')).not.toBeNull();
     expect(item('notionToken').dataset.done).toBe('false');
@@ -477,22 +452,26 @@ describe('setup checklist', () => {
     item('notionToken').querySelector('button')!.click();
     expect(document.activeElement).toBe(field('notionToken'));
 
+    // The database item opens the default profile's editor on its database field.
+    item('profiles').querySelector('button')!.click();
+    expect(s.handlers.openProfile).toHaveBeenCalledWith('team', 'databaseId');
+
     type(field('notionToken'), 'ntn_x');
     field('notionToken').blur();
     await until(() => item('notionToken').dataset.done === 'true');
     expect(setup()!.dataset.state).toBe('incomplete');
-    type(field('notionTeamDbId'), 'https://www.notion.so/lumind/Meetings-0123456789abcdef0123456789abcdef');
-    field('notionTeamDbId').blur();
+    // The editor saves the database; storage changes reach the page through load().
+    view.load({ ...s.current(), profiles: starterProfiles('https://www.notion.so/lumind/Meetings-0123456789abcdef0123456789abcdef', '') });
     // Stays in place (nothing below it moves) and turns into a confirmation.
     await until(() => setup()!.dataset.state === 'complete');
     expect(text(setup()!.querySelector('h2'))).toBe('Meetings will be saved to Notion');
     expect(text(setup()!.querySelector('[role="status"]'))).toMatch(/saved to Notion/);
   });
 
-  it('adds the Personal database when that is the default destination', () => {
+  it('asks for the database of whichever profile is the default', () => {
     const view = createOptionsView(root, store(EMPTY).handlers, FAST);
-    view.load({ ...EMPTY, defaultRoute: 'personal' });
-    expect(setup()!.querySelector('[data-item="notionPersonalDbId"]')).not.toBeNull();
+    view.load({ ...EMPTY, profiles: starterProfiles('', ''), defaultProfileId: 'personal' });
+    expect(text(item('profiles'))).toMatch(/^Database for Personal/);
   });
 });
 
@@ -545,44 +524,6 @@ describe('Check buttons', () => {
     expect(text(msg('geminiApiKey'))).toBe('The key works. Checked the key in the field, which isn’t saved.');
   });
 
-  it('checks both databases and puts each result under its own field', async () => {
-    const asked: string[] = [];
-    const verifyNotion = async (_token: string, db: string): Promise<VerifyResult> => {
-      asked.push(db);
-      return { ok: true, title: 'Meetings' };
-    };
-    const view = createOptionsView(root, store(SETTINGS, { verifyNotion }).handlers, FAST);
-    view.load(SETTINGS);
-    const check = root.querySelector<HTMLButtonElement>('[data-role="check-notion"]')!;
-    expect(text(check)).toBe('Check');
-    expect(check.getAttribute('aria-label')).toBe('Check both databases');
-    check.click();
-    await until(() => text(msg('notionTeamDbId')) !== '');
-    expect(asked).toEqual([SETTINGS.notionTeamDbId]);
-    expect(text(msg('notionTeamDbId'))).toBe('“Meetings” is ready.');
-    expect(msg('notionTeamDbId').dataset.tone).toBe('done');
-    expect(text(msg('notionPersonalDbId'))).toBe('Not set yet. Add it to save meetings to Personal.');
-    expect(msg('notionPersonalDbId').dataset.tone).toBe('neutral');
-  });
-
-  it('skips a database whose field holds no link and keeps its fix', async () => {
-    const asked: string[] = [];
-    const s = store(SETTINGS, {
-      verifyNotion: async (_t, db) => {
-        asked.push(db);
-        return { ok: true, title: 'Meetings' };
-      },
-    });
-    const view = createOptionsView(root, s.handlers, FAST);
-    view.load(SETTINGS);
-    type(field('notionPersonalDbId'), 'my personal db');
-    field('notionPersonalDbId').blur();
-    root.querySelector<HTMLButtonElement>('[data-role="check-notion"]')!.click();
-    await until(() => text(msg('notionTeamDbId')) !== '');
-    expect(asked).toEqual([SETTINGS.notionTeamDbId]);
-    expect(text(msg('notionPersonalDbId'))).toBe('Paste the database link or ID from Notion.');
-  });
-
   it('reports a rejected token once, under the token', async () => {
     // What verifyDatabase says for a 401. (The real API can't be called from this page:
     // Notion sends no CORS headers; the extension gets through with host permissions.)
@@ -591,17 +532,20 @@ describe('Check buttons', () => {
       problems: ['Notion rejected this token. Copy it again from Notion.'],
       tokenProblem: true,
     };
-    const verifyNotion = () => new Promise<VerifyResult>((r) => setTimeout(() => r(rejected), 30));
+    const verifyNotion = vi.fn(() => new Promise<VerifyResult>((r) => setTimeout(() => r(rejected), 30)));
     const view = createOptionsView(root, store(SETTINGS, { verifyNotion }).handlers, FAST);
-    view.load({ ...SETTINGS, notionPersonalDbId: '0f1e2d3c4b5a69788796a5b4c3d2e1f0' });
+    view.load({ ...SETTINGS, profiles: starterProfiles(DB, '0f1e2d3c4b5a69788796a5b4c3d2e1f0') });
     const check = root.querySelector<HTMLButtonElement>('[data-role="check-notion"]')!;
     check.click();
     expect(text(check)).toBe('Checking…');
     await until(() => text(check) === 'Check');
+    expect(verifyNotion).toHaveBeenCalledTimes(2);
     expect(text(msg('notionToken'))).toBe('Notion rejected this token. Copy it again from Notion.');
     expect(field('notionToken').getAttribute('aria-invalid')).toBe('true');
-    expect(text(msg('notionTeamDbId'))).toBe('');
-    expect(text(msg('notionPersonalDbId'))).toBe('');
+    // Not repeated on each profile.
+    for (const id of ['team', 'personal']) {
+      expect(text(root.querySelector(`[data-key="profile-${id}"]`))).not.toContain('rejected');
+    }
   });
 
   it('asks for a token before checking databases', async () => {
@@ -613,6 +557,93 @@ describe('Check buttons', () => {
     await until(() => text(msg('notionToken')) !== '');
     expect(text(msg('notionToken'))).toBe('Paste a token first.');
     expect(asked).toEqual([]);
+  });
+});
+
+describe('Profiles group', () => {
+  const row = (id: string) => root.querySelector<HTMLElement>(`[data-key="profile-${id}"]`)!;
+
+  it('lists the profiles with the default marked, and opens one', () => {
+    const s = store({ ...SETTINGS, profiles: starterProfiles(DB, ''), defaultProfileId: 'team' });
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(s.current());
+    const rows = [...root.querySelectorAll('[data-key^="profile-"]')];
+    expect(rows.map((r) => r.querySelector('.profile-row-name')?.textContent)).toEqual(['Team', 'Personal']);
+    expect(rows[0]!.textContent).toContain('Default');
+    expect(rows[1]!.textContent).not.toContain('Default');
+    expect(rows[0]!.textContent).toContain('Not checked');
+    expect(rows[1]!.textContent).toContain('No database yet');
+    (rows[1] as HTMLElement).click();
+    expect(s.handlers.openProfile).toHaveBeenCalledWith('personal');
+  });
+
+  it('adds a profile and opens it', async () => {
+    const s = store();
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    root.querySelector<HTMLButtonElement>('[data-key="add-profile"]')!.click();
+    await until(() => s.patches.length === 1);
+    const saved = s.patches.at(-1)!.profiles!;
+    expect(saved.map((p) => p.id).slice(0, 2)).toEqual(['team', 'personal']);
+    expect(saved.at(-1)!.name).toBe('New profile');
+    await until(() => vi.mocked(s.handlers.openProfile).mock.calls.length === 1);
+    expect(s.handlers.openProfile).toHaveBeenCalledWith(saved.at(-1)!.id);
+    // The list follows what was stored.
+    expect(root.querySelectorAll('[data-key^="profile-"]')).toHaveLength(3);
+  });
+
+  it('checks every profile’s database and shows the result on its row', async () => {
+    const verifyNotion = vi
+      .fn<OptionsHandlers['verifyNotion']>()
+      .mockResolvedValueOnce({ ok: true, title: 'Team meetings' })
+      .mockResolvedValueOnce({ ok: false, problems: ['This database isn’t shared with your token.'] });
+    const s = store({ ...SETTINGS, profiles: starterProfiles(DB, DB) }, { verifyNotion });
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(s.current());
+    const check = root.querySelector<HTMLButtonElement>('[data-role="check-notion"]')!;
+    expect(check.getAttribute('aria-label')).toBe('Check databases');
+    check.click();
+    await until(() => text(check) === 'Check');
+    expect(verifyNotion.mock.calls).toEqual([
+      ['ntn_example', DB],
+      ['ntn_example', DB],
+    ]);
+    expect(row('team').textContent).toContain('“Team meetings” is ready.');
+    expect(row('team').querySelector('[data-tone="done"]')).not.toBeNull();
+    expect(row('personal').textContent).toContain('This database isn’t shared with your token.');
+    expect(row('personal').querySelector('[data-tone="caution"]')).not.toBeNull();
+  });
+
+  it('checks with the token in the field, and skips profiles without a database', async () => {
+    const verifyNotion = vi.fn<OptionsHandlers['verifyNotion']>(async () => ({ ok: true, title: 'Meetings' }));
+    const s = store(SETTINGS, { verifyNotion });
+    s.handlers.update = () => Promise.reject(new Error('Storage is full.'));
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    type(field('notionToken'), 'ntn_new');
+    field('notionToken').blur();
+    const check = root.querySelector<HTMLButtonElement>('[data-role="check-notion"]')!;
+    check.click();
+    await until(() => text(check) === 'Check' && verifyNotion.mock.calls.length > 0);
+    expect(verifyNotion.mock.calls).toEqual([['ntn_new', DB]]);
+    expect(text(row('team'))).toContain('“Meetings” is ready. Checked with the token in the field, which isn’t saved.');
+    expect(text(row('personal'))).toContain('No database yet');
+  });
+
+  it('forgets a result once the profile’s database changes', async () => {
+    const s = store(SETTINGS, { verifyNotion: async () => ({ ok: true, title: 'Meetings' }) });
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    root.querySelector<HTMLButtonElement>('[data-role="check-notion"]')!.click();
+    await until(() => text(row('team')).includes('is ready'));
+    view.load({ ...SETTINGS, profiles: starterProfiles('0f1e2d3c4b5a69788796a5b4c3d2e1f0', '') });
+    expect(text(row('team'))).toContain('Not checked');
+  });
+
+  it('no longer shows database fields or a default destination', () => {
+    const view = createOptionsView(root, store().handlers, FAST);
+    view.load(SETTINGS);
+    expect(root.querySelector('#notionTeamDbId, #notionPersonalDbId, [data-role="defaultRoute"]')).toBeNull();
   });
 });
 

@@ -1,14 +1,15 @@
 /**
  * The Settings page's form as plain strings and booleans, and its parsing back into
- * Settings, one field at a time (instant apply) or all at once. Also the setup checklist
- * and the wording of Check results. Pure (no chrome.* and no settings.ts, which touches
- * storage on import), so the rules are testable anywhere.
+ * Settings, one field at a time (instant apply) or all at once. Profiles aren't form
+ * fields: the Profiles group lists them and the profile editor edits them. Also the setup
+ * checklist and the wording of Check results. Pure (no chrome.* and no settings.ts, which
+ * touches storage on import), so the rules are testable anywhere.
  */
 import type { VerifyResult } from '../notion/verify';
-import { parseNotionId } from '../notion/ids';
+import { defaultProfile } from '../profiles';
 import { missingForSave } from '../settingsSchema';
 import { MAX_VOCABULARY } from '../transcribe/requests';
-import type { Profile, Route, Settings } from '../types';
+import type { Profile, Settings } from '../types';
 
 export const MAX_RETENTION_DAYS = 365;
 
@@ -16,9 +17,6 @@ export interface SettingsFormValues {
   displayName: string;
   geminiApiKey: string;
   notionToken: string;
-  notionTeamDbId: string;
-  notionPersonalDbId: string;
-  defaultRoute: string;
   autoTranscribe: boolean;
   retentionDays: string;
   /** One term per line. */
@@ -28,7 +26,8 @@ export interface SettingsFormValues {
   includeMic: boolean;
 }
 
-export type FieldName = keyof SettingsFormValues;
+/** What options.html#<name> and openSettings(name) point at: a field, or the Profiles group. */
+export type FieldName = keyof SettingsFormValues | 'profiles';
 
 export type SettingsErrors = Partial<Record<keyof Settings, string>>;
 
@@ -82,9 +81,6 @@ export function settingsToForm(s: Settings): SettingsFormValues {
     displayName: s.displayName,
     geminiApiKey: s.geminiApiKey,
     notionToken: s.notionToken,
-    notionTeamDbId: s.notionTeamDbId,
-    notionPersonalDbId: s.notionPersonalDbId,
-    defaultRoute: s.defaultRoute,
     autoTranscribe: s.autoTranscribe,
     retentionDays: String(s.retentionDays),
     customVocabulary: s.customVocabulary.join('\n'),
@@ -94,7 +90,7 @@ export function settingsToForm(s: Settings): SettingsFormValues {
 }
 
 /** One stored setting as its field shows it. */
-export function formValue<K extends FieldName>(s: Settings, name: K): SettingsFormValues[K] {
+export function formValue<K extends keyof SettingsFormValues>(s: Settings, name: K): SettingsFormValues[K] {
   return settingsToForm(s)[name];
 }
 
@@ -170,7 +166,7 @@ export function languageCodeWarning(codes: readonly string[]): string | undefine
 const trimmed = (v: string) => v.trim();
 
 /** Parses one field. The rules parseSettingsForm applies to the whole form. */
-export function parseField<K extends FieldName>(name: K, value: SettingsFormValues[K]): FieldResult {
+export function parseField<K extends keyof SettingsFormValues>(name: K, value: SettingsFormValues[K]): FieldResult {
   const text = typeof value === 'string' ? value : '';
   switch (name) {
     case 'displayName':
@@ -183,17 +179,6 @@ export function parseField<K extends FieldName>(name: K, value: SettingsFormValu
       }
       return { ok: true, patch: { [name]: v } };
     }
-    case 'notionTeamDbId':
-    case 'notionPersonalDbId': {
-      // Kept as pasted: the Notion store resolves links, slugs and bare ids itself.
-      const v = trimmed(text);
-      if (v && !parseNotionId(v)) return { ok: false, error: 'Paste the database link or ID from Notion.' };
-      return { ok: true, patch: { [name]: v } };
-    }
-    case 'defaultRoute':
-      return value === 'team' || value === 'personal'
-        ? { ok: true, patch: { defaultRoute: value } }
-        : { ok: false, error: 'Choose Team or Personal.' };
     case 'autoTranscribe':
     case 'includeMic':
       return { ok: true, patch: { [name]: value === true } };
@@ -228,12 +213,9 @@ export function parseField<K extends FieldName>(name: K, value: SettingsFormValu
   }
 }
 
-const FIELDS: FieldName[] = [
+const FIELDS: (keyof SettingsFormValues)[] = [
   'geminiApiKey',
   'notionToken',
-  'notionTeamDbId',
-  'notionPersonalDbId',
-  'defaultRoute',
   'autoTranscribe',
   'retentionDays',
   'displayName',
@@ -263,8 +245,8 @@ export function parseSettingsForm(v: SettingsFormValues): ParsedSettings {
 // Setup checklist
 
 export interface SetupItem {
-  /** The field the item focuses. */
-  key: 'displayName' | 'notionToken' | 'notionTeamDbId' | 'notionPersonalDbId' | 'geminiApiKey';
+  /** The field the item focuses; `profiles`: the default profile's database, in its editor. */
+  key: 'displayName' | 'notionToken' | 'profiles' | 'geminiApiKey';
   label: string;
   done: boolean;
   /** Not needed to save meetings (the Gemini key: without it, transcripts come from captions). */
@@ -273,22 +255,17 @@ export interface SetupItem {
 
 /**
  * What Settings asks for while meetings can't be saved: the fields missingForSave checks
- * (the Team database always, the Personal one too when it is the default), then the
- * optional Gemini key.
+ * (the default profile's database, which the popup preselects and the shortcut uses), then
+ * the optional Gemini key.
  */
 export function setupChecklist(s: Settings): SetupItem[] {
-  const item = (key: SetupItem['key'], label: string, optional = false): SetupItem => ({
-    key,
-    label,
-    done: s[key].trim() !== '',
-    optional,
-  });
+  const filled = (value: string) => value.trim() !== '';
+  const profile = defaultProfile(s);
   return [
-    item('displayName', 'Your name'),
-    item('notionToken', 'Notion token'),
-    item('notionTeamDbId', 'Team database'),
-    ...(s.defaultRoute === 'personal' ? [item('notionPersonalDbId', 'Personal database')] : []),
-    item('geminiApiKey', 'Gemini API key', true),
+    { key: 'displayName', label: 'Your name', done: filled(s.displayName), optional: false },
+    { key: 'notionToken', label: 'Notion token', done: filled(s.notionToken), optional: false },
+    { key: 'profiles', label: `Database for ${profile.name}`, done: filled(profile.databaseId), optional: false },
+    { key: 'geminiApiKey', label: 'Gemini API key', done: filled(s.geminiApiKey), optional: true },
   ];
 }
 
@@ -301,9 +278,8 @@ const MISSING_FIELDS: [RegExp, SetupItem['key']][] = [
   [/^your name$/i, 'displayName'],
   // missingForSave's phrases ('a Notion token', 'the Team profile’s database') and older records' names.
   [/notion (integration )?token/i, 'notionToken'],
-  [/profile’s database/i, 'notionTeamDbId'],
-  [/team database/i, 'notionTeamDbId'],
-  [/personal database/i, 'notionPersonalDbId'],
+  [/profile’s database/i, 'profiles'],
+  [/(team|personal) database/i, 'profiles'],
   [/gemini api key/i, 'geminiApiKey'],
 ];
 
@@ -324,7 +300,7 @@ export interface CheckMessage {
   text: string;
 }
 
-/** Check result under a profile's database field, or (Task 12) a route's own. */
+/** Check result for a profile's database: under its field in the editor, or on its row. */
 export function databaseCheckMessage(result: VerifyResult | null): CheckMessage {
   if (!result) return { tone: 'neutral', text: 'No database yet. Add one to save meetings with this profile.' };
   if (result.ok) return { tone: 'done', text: `${quoted(result.title)} is ready.` };
@@ -332,26 +308,20 @@ export function databaseCheckMessage(result: VerifyResult | null): CheckMessage 
   return { tone: 'caution', text: result.problems.join(' ') };
 }
 
-function databaseMessage(result: VerifyResult | null, route: Route): CheckMessage {
-  if (!result) {
-    const name = route === 'team' ? 'Team' : 'Personal';
-    return { tone: 'neutral', text: `Not set yet. Add it to save meetings to ${name}.` };
-  }
-  return databaseCheckMessage(result);
-}
-
 /**
- * Where each Check both databases result goes: a token problem once, under the token
- * (review M4: not twice, under each database); otherwise one line under each database.
- * `null`: the database field is empty, so it wasn't checked.
+ * Where each Check databases result goes, by profile id: a token problem once, under the
+ * token (review M4: not repeated on every profile), and nothing on the profiles; otherwise
+ * one message per profile. `null`: the profile has no database, so it wasn't checked.
  */
-export function notionCheckMessages(results: {
-  team: VerifyResult | null;
-  personal: VerifyResult | null;
-}): { token?: CheckMessage; team?: CheckMessage; personal?: CheckMessage } {
-  for (const r of [results.team, results.personal]) {
+export function profileCheckMessages(results: ReadonlyMap<string, VerifyResult | null>): {
+  token?: CheckMessage;
+  profiles: Map<string, CheckMessage>;
+} {
+  for (const r of results.values()) {
     // notion/verify.ts flags what the token, not the database, is at fault for.
-    if (r && !r.ok && r.tokenProblem) return { token: { tone: 'caution', text: r.problems.join(' ') } };
+    if (r && !r.ok && r.tokenProblem) {
+      return { token: { tone: 'caution', text: r.problems.join(' ') }, profiles: new Map() };
+    }
   }
-  return { team: databaseMessage(results.team, 'team'), personal: databaseMessage(results.personal, 'personal') };
+  return { profiles: new Map([...results].map(([id, r]) => [id, databaseCheckMessage(r)])) };
 }

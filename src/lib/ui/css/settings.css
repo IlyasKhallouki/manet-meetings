@@ -15,7 +15,10 @@
  *   .settings-lede     "Changes are saved as you make them." under the title
  *   .setup             the checklist while meetings can't be saved to Notion (amber, like
  *                      .callout) → a quiet confirmation once everything is in
- *   .settings-action   "Check both databases" label + hint, with its button trailing
+ *   .profile-row       a profile in the Profiles group: a full-width button (name, a
+ *                      Default tag, its database line) that opens the profile editor
+ *   .profile-add       the Add profile row
+ *   .settings-action   "Check databases" label + hint, with its button trailing
  *   .settings-days     the Keep audio number field and its unit
  *   .settings-mic      the microphone status line under the switch
  *   .settings-privacy  the closing footnote
@@ -189,6 +192,122 @@ body.page-settings .field-head > .saved {
 
 body.page-settings .field-head > .saved > .glyph {
   align-self: center;
+}
+
+/* ---- Profiles group -------------------------------------------------------------------- */
+/* Each profile is a row-sized button: the whole row opens the editor, like an iOS
+ * disclosure row, with the chevron trailing. The group's own row padding and hairlines
+ * apply (it is a .group-row); only the button's own chrome is reset here. */
+body.page-settings .profile-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  inline-size: 100%;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: var(--label);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  body.page-settings .profile-row:hover {
+    background: var(--fill);
+  }
+}
+
+body.page-settings .profile-row:active {
+  background: var(--fill);
+}
+
+body.page-settings .profile-row-text {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+body.page-settings .profile-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s2);
+  min-inline-size: 0;
+}
+
+body.page-settings .profile-row-name {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  font: var(--t-body);
+  letter-spacing: var(--ls-body);
+}
+
+/* "Default": a quiet capsule after the name. */
+body.page-settings .profile-row-tag {
+  flex: none;
+  padding: 0 var(--s2);
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--label-2);
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
+}
+
+@media (forced-colors: active) {
+  body.page-settings .profile-row-tag {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* The database line: the same glyph + text as a .field-msg, in its tone. */
+body.page-settings .profile-row-db {
+  display: flex;
+  gap: 6px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  font: var(--t-footnote);
+  letter-spacing: var(--ls-footnote);
+  color: var(--label-2);
+}
+
+body.page-settings .profile-row-db > .glyph {
+  flex: none;
+  margin-block-start: 2px;
+  inline-size: 1rem;
+  block-size: 1rem;
+}
+
+body.page-settings .profile-row-db[data-tone='caution'] {
+  color: var(--caution);
+}
+
+body.page-settings .profile-row-db[data-tone='done'] {
+  color: var(--done);
+}
+
+/* The chevron points down; a disclosure row's points to the trailing edge. */
+body.page-settings .profile-row-chevron {
+  flex: none;
+  inline-size: 0.8em;
+  block-size: 0.8em;
+  color: var(--label-3);
+  transform: rotate(-90deg);
+}
+
+body.page-settings .profile-row-chevron:dir(rtl) {
+  transform: rotate(90deg);
+}
+
+body.page-settings .profile-add {
+  display: grid;
+  gap: var(--s1);
+  justify-items: start;
+}
+
+body.page-settings .profile-add > .field-msg:empty {
+  display: none;
 }
 
 /* ---- Profile editor -------------------------------------------------------------------- */

@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { defaultProfile, starterProfiles } from '@lib/profiles';
 import { DEFAULT_SETTINGS } from '@lib/settings';
+import { normalizeSettings } from '@lib/settingsSchema';
+import type { VerifyResult } from '@lib/notion/verify';
 import type { Settings } from '@lib/types';
 import {
   firstMissingField,
   formValue,
   languageCodeWarning,
-  notionCheckMessages,
   parseField,
   parseLanguageCodes,
   parseSettingsForm,
   parseVocabulary,
+  profileCheckMessages,
   settingsToForm,
   setupChecklist,
   setupComplete,
@@ -44,11 +46,24 @@ function form(patch: Partial<SettingsFormValues> = {}): SettingsFormValues {
 
 describe('settingsToForm / parseSettingsForm', () => {
   it('round-trips every field', () => {
-    // profiles and defaultProfileId aren't form fields yet, so they don't round-trip here.
+    // Profiles (and the legacy database fields they replaced) are edited in the profile
+    // editor, not in these fields, so they don't round-trip here.
     for (const s of [DEFAULT_SETTINGS, FILLED]) {
-      const { profiles: _profiles, defaultProfileId: _defaultProfileId, ...expected } = s;
+      const {
+        profiles: _profiles,
+        defaultProfileId: _defaultProfileId,
+        notionTeamDbId: _team,
+        notionPersonalDbId: _personal,
+        defaultRoute: _route,
+        ...expected
+      } = s;
       expect(parseSettingsForm(settingsToForm(s))).toEqual({ ok: true, settings: expected });
     }
+  });
+
+  it('has no database or default destination fields: profiles hold those', () => {
+    const v = settingsToForm(FILLED) as unknown as Record<string, unknown>;
+    for (const name of ['notionTeamDbId', 'notionPersonalDbId', 'defaultRoute']) expect(v, name).not.toHaveProperty(name);
   });
 
   it('writes list fields the way the user edits them', () => {
@@ -60,27 +75,23 @@ describe('settingsToForm / parseSettingsForm', () => {
     expect(formValue(FILLED, 'includeMic')).toBe(false);
   });
 
-  it('trims keys, ids and the name', () => {
+  it('trims keys and the name', () => {
     const r = parseSettingsForm(
       form({
         geminiApiKey: '  AIzaKey \n',
         notionToken: ' ntn_x ',
-        notionTeamDbId: ' 1a2b3c4d5e6f40718293a4b5c6d7e8f9 ',
         displayName: '  Marie   Curie ',
       }),
     );
     expect(r.ok && r.settings).toMatchObject({
       geminiApiKey: 'AIzaKey',
       notionToken: 'ntn_x',
-      notionTeamDbId: '1a2b3c4d5e6f40718293a4b5c6d7e8f9',
       displayName: 'Marie Curie',
     });
   });
 
-  it('accepts empty keys and ids (settings can be filled in gradually)', () => {
-    const r = parseSettingsForm(
-      form({ geminiApiKey: '', notionToken: '', notionTeamDbId: '', notionPersonalDbId: '', displayName: '' }),
-    );
+  it('accepts empty keys (settings can be filled in gradually)', () => {
+    const r = parseSettingsForm(form({ geminiApiKey: '', notionToken: '', displayName: '' }));
     expect(r.ok).toBe(true);
   });
 
@@ -91,14 +102,6 @@ describe('settingsToForm / parseSettingsForm', () => {
     expect(Object.keys(r.errors).sort()).toEqual(['geminiApiKey', 'notionToken']);
     expect(r.errors.geminiApiKey).toBe('This has spaces in it. Paste the key again.');
     expect(r.errors.notionToken).toBe('This has spaces in it. Paste the token again.');
-  });
-
-  it('rejects database fields that hold no Notion id', () => {
-    const r = parseSettingsForm(form({ notionTeamDbId: 'Team meetings', notionPersonalDbId: 'https://example.com/x' }));
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.errors.notionTeamDbId).toBe('Paste the database link or ID from Notion.');
-    expect(r.errors.notionPersonalDbId).toBe('Paste the database link or ID from Notion.');
   });
 
   it('validates retention days as a whole number from 0 to 365', () => {
@@ -117,11 +120,6 @@ describe('settingsToForm / parseSettingsForm', () => {
     }
   });
 
-  it('rejects an unknown route', () => {
-    const r = parseSettingsForm(form({ defaultRoute: 'shared' }));
-    expect(!r.ok && r.errors.defaultRoute).toBe('Choose Team or Personal.');
-  });
-
   it('saves language codes Gemini does not list, with a warning', () => {
     const r = parseSettingsForm(form({ languageCodes: 'fr, cmn-hans-cn' }));
     expect(r.ok).toBe(true);
@@ -132,8 +130,8 @@ describe('settingsToForm / parseSettingsForm', () => {
   });
 
   it('reports every problem at once', () => {
-    const r = parseSettingsForm(form({ retentionDays: 'x', languageCodes: 'english', notionTeamDbId: 'nope' }));
-    expect(!r.ok && Object.keys(r.errors).sort()).toEqual(['languageCodes', 'notionTeamDbId', 'retentionDays']);
+    const r = parseSettingsForm(form({ retentionDays: 'x', languageCodes: 'english', notionToken: 'ntn x' }));
+    expect(!r.ok && Object.keys(r.errors).sort()).toEqual(['languageCodes', 'notionToken', 'retentionDays']);
   });
 });
 
@@ -147,7 +145,6 @@ describe('parseField (one field at a time, for instant apply)', () => {
     });
     expect(parseField('languageCodes', 'fr-fr, EN-us')).toEqual({ ok: true, patch: { languageCodes: ['fr-FR', 'en-US'] } });
     expect(parseField('includeMic', false)).toEqual({ ok: true, patch: { includeMic: false } });
-    expect(parseField('defaultRoute', 'team')).toEqual({ ok: true, patch: { defaultRoute: 'team' } });
     expect(parseField('notionToken', ' ntn_x ')).toEqual({ ok: true, patch: { notionToken: 'ntn_x' } });
   });
 
@@ -156,10 +153,6 @@ describe('parseField (one field at a time, for instant apply)', () => {
     expect(parseField('geminiApiKey', 'AIza abc')).toEqual({
       ok: false,
       error: 'This has spaces in it. Paste the key again.',
-    });
-    expect(parseField('notionPersonalDbId', 'my personal db')).toEqual({
-      ok: false,
-      error: 'Paste the database link or ID from Notion.',
     });
     expect(parseField('languageCodes', 'english!!')).toEqual({
       ok: false,
@@ -294,68 +287,90 @@ describe('setupProblems', () => {
 describe('setupChecklist', () => {
   const view = (s: Settings) => setupChecklist(s).map((i) => [i.key, i.label, i.done, i.optional]);
 
-  it('lists name, token and Team database as required, and the Gemini key as optional', () => {
+  it('lists name, token and the default profile’s database as required, and the Gemini key as optional', () => {
     expect(view(DEFAULT_SETTINGS)).toEqual([
       ['displayName', 'Your name', false, false],
       ['notionToken', 'Notion token', false, false],
-      ['notionTeamDbId', 'Team database', false, false],
+      ['profiles', 'Database for Team', false, false],
       ['geminiApiKey', 'Gemini API key', false, true],
     ]);
     expect(setupComplete(setupChecklist(DEFAULT_SETTINGS))).toBe(false);
   });
 
-  it('adds the Personal database when meetings go to Personal by default', () => {
-    const s = { ...FILLED, notionPersonalDbId: '' };
-    expect(view(s)).toContainEqual(['notionPersonalDbId', 'Personal database', false, false]);
+  it('asks for the database of whichever profile is the default', () => {
+    const s = { ...FILLED, profiles: starterProfiles('', ''), defaultProfileId: 'personal' };
+    expect(view(s)).toContainEqual(['profiles', 'Database for Personal', false, false]);
     expect(setupComplete(setupChecklist(s))).toBe(false);
   });
 
   it('is complete once every required item is done, whatever the Gemini key', () => {
-    const s = { ...FILLED, defaultRoute: 'team' as const, geminiApiKey: '' };
+    const s = { ...FILLED, geminiApiKey: '' };
     expect(setupChecklist(s).every((i) => i.done || i.optional)).toBe(true);
     expect(setupComplete(setupChecklist(s))).toBe(true);
     expect(setupComplete(setupChecklist(FILLED))).toBe(true);
   });
 });
 
-describe('notionCheckMessages', () => {
-  it('reports a ready database by its Notion title', () => {
-    expect(notionCheckMessages({ team: { ok: true, title: 'Meetings' }, personal: null })).toEqual({
-      team: { tone: 'done', text: '“Meetings” is ready.' },
-      personal: { tone: 'neutral', text: 'Not set yet. Add it to save meetings to Personal.' },
-    });
+describe('setupChecklist with profiles', () => {
+  it('asks for the default profile’s database', () => {
+    const s = normalizeSettings({ displayName: 'Ilyas', notionToken: 'ntn_x', profiles: starterProfiles('', 'db'), defaultProfileId: 'personal' });
+    expect(setupChecklist(s)).toEqual([
+      { key: 'displayName', label: 'Your name', done: true, optional: false },
+      { key: 'notionToken', label: 'Notion token', done: true, optional: false },
+      { key: 'profiles', label: 'Database for Personal', done: true, optional: false },
+      { key: 'geminiApiKey', label: 'Gemini API key', done: false, optional: true },
+    ]);
   });
 
-  it('reports a token problem once, under the token, instead of under each database', () => {
+  it('sends a missing profile database to the Profiles group', () => {
+    expect(firstMissingField(['the Client meeting profile’s database'])).toBe('profiles');
+    expect(firstMissingField(['Notion team database id'])).toBe('profiles');
+  });
+});
+
+describe('profileCheckMessages', () => {
+  it('reports a ready database by its Notion title, and an empty one as not set', () => {
+    const r = profileCheckMessages(new Map([['team', { ok: true, title: 'Meetings' }], ['personal', null]]));
+    expect(r.token).toBeUndefined();
+    expect(r.profiles).toEqual(
+      new Map([
+        ['team', { tone: 'done', text: '“Meetings” is ready.' }],
+        ['personal', { tone: 'neutral', text: 'No database yet. Add one to save meetings with this profile.' }],
+      ]),
+    );
+  });
+
+  it('reports a token problem once, under the token, instead of on each profile', () => {
     // verifyDatabase flags what the token is at fault for (notion/verify.ts tokenProblem).
     const rejected = {
       ok: false as const,
       problems: ['Notion rejected this token. Copy it again from Notion.'],
       tokenProblem: true as const,
     };
-    expect(notionCheckMessages({ team: rejected, personal: rejected })).toEqual({
+    expect(profileCheckMessages(new Map([['team', rejected], ['personal', rejected]]))).toEqual({
       token: { tone: 'caution', text: 'Notion rejected this token. Copy it again from Notion.' },
+      profiles: new Map(),
     });
     // One database is enough to blame the token.
-    expect(notionCheckMessages({ team: { ok: true, title: 'Meetings' }, personal: rejected })).toEqual({
-      token: { tone: 'caution', text: 'Notion rejected this token. Copy it again from Notion.' },
+    expect(profileCheckMessages(new Map<string, VerifyResult | null>([['team', { ok: true, title: 'Meetings' }], ['personal', rejected]])).token).toEqual({
+      tone: 'caution',
+      text: 'Notion rejected this token. Copy it again from Notion.',
     });
   });
 
-  it('puts each database problem under its own database, as verifyDatabase words it', () => {
-    const r = notionCheckMessages({
-      team: {
-        ok: false,
-        problems: ['This database isn’t shared with your token. In Notion, open it and choose ••• › Connections.'],
-      },
-      personal: { ok: false, problems: ['Add a Date property named “Date”.', 'Change “Route” to a Select property. It’s Text now.'] },
-    });
+  it('puts each database problem on its own profile, as verifyDatabase words it', () => {
+    const r = profileCheckMessages(
+      new Map<string, VerifyResult | null>([
+        ['team', { ok: false, problems: ['This database isn’t shared with your token. In Notion, open it and choose ••• › Connections.'] }],
+        ['client', { ok: false, problems: ['Add a Date property named “Date”.', 'Change “Route” to a Select property. It’s Text now.'] }],
+      ]),
+    );
     expect(r.token).toBeUndefined();
-    expect(r.team).toEqual({
+    expect(r.profiles.get('team')).toEqual({
       tone: 'caution',
       text: 'This database isn’t shared with your token. In Notion, open it and choose ••• › Connections.',
     });
-    expect(r.personal).toEqual({
+    expect(r.profiles.get('client')).toEqual({
       tone: 'caution',
       text: 'Add a Date property named “Date”. Change “Route” to a Select property. It’s Text now.',
     });
@@ -367,11 +382,11 @@ describe('firstMissingField', () => {
     // missingForSave's words, in its own order (token, database, name).
     expect(firstMissingField(['Notion integration token', 'Notion team database id', 'Your name'])).toBe('displayName');
     expect(firstMissingField(['Notion integration token', 'Notion team database id'])).toBe('notionToken');
-    expect(firstMissingField(['Notion personal database id'])).toBe('notionPersonalDbId');
-    expect(firstMissingField(['Notion team database id'])).toBe('notionTeamDbId');
+    expect(firstMissingField(['Notion personal database id'])).toBe('profiles');
+    expect(firstMissingField(['Notion team database id'])).toBe('profiles');
     expect(firstMissingField(['Gemini API key'])).toBe('geminiApiKey');
     expect(firstMissingField(['a Notion token', 'the Client profile’s database'])).toBe('notionToken');
-    expect(firstMissingField(['the Client profile’s database'])).toBe('notionTeamDbId');
+    expect(firstMissingField(['the Client profile’s database'])).toBe('profiles');
     expect(firstMissingField([])).toBeUndefined();
     expect(firstMissingField(['Something new'])).toBeUndefined();
   });
