@@ -5,10 +5,11 @@
  * text.
  * Every shot asserts there is no horizontal scroll.
  */
+import { buildConfigFile, serializeConfig } from '@lib/config';
 import { starterProfiles } from '@lib/profiles';
 import { DEFAULT_SETTINGS } from '@lib/settingsSchema';
 import type { VerifyResult } from '@lib/notion/verify';
-import type { Settings } from '@lib/types';
+import type { Profile, Settings } from '@lib/types';
 import type { MicPermission } from '@lib/ui/mic';
 import { createOptionsView, type OptionsHandlers } from '@lib/ui/optionsView';
 import optionsHtml from '../../entrypoints/options/index.html?raw';
@@ -120,6 +121,45 @@ async function largeText(): Promise<void> {
   noSideScroll();
 }
 
+/** A colleague's config, with one changed profile, one new profile and no keys. */
+const IMPORTED_PROFILES: Profile[] = [
+  ...starterProfiles(TEAM_DB, PERSONAL_DB).map((p) => (p.id === 'team' ? { ...p, prompt: 'Weekly team sync, led by Ilya.' } : p)),
+  { ...starterProfiles(TEAM_DB, PERSONAL_DB)[0]!, id: 'client', name: 'Client meeting', databaseId: '' },
+];
+
+/** Export open, keys switched on: the caution note shows under the switch. */
+async function shareExport(): Promise<void> {
+  page(FILLED, 'prompt');
+  q<HTMLButtonElement>('[data-key="export"]').click();
+  q<HTMLInputElement>('[data-key="export-keys"]').click();
+  await wait();
+  noSideScroll();
+}
+
+/** A file chosen: the merge preview, before Import is pressed. */
+async function shareImportPreview(): Promise<void> {
+  page(FILLED, 'prompt');
+  const file = buildConfigFile(
+    { ...FILLED, profiles: IMPORTED_PROFILES, defaultProfileId: 'client' },
+    { name: 'Acme team', includeKeys: false, now: Date.UTC(2026, 8, 20, 9, 0) },
+  );
+  const input = q<HTMLInputElement>('input[type="file"]');
+  Object.defineProperty(input, 'files', { value: [new File([serializeConfig(file)], 'manet-config.json')], configurable: true });
+  input.dispatchEvent(new Event('change'));
+  await wait(60);
+  noSideScroll();
+}
+
+/** A file that isn't a Manet config: the error under the Import button. */
+async function shareImportError(): Promise<void> {
+  page(FILLED, 'prompt');
+  const input = q<HTMLInputElement>('input[type="file"]');
+  Object.defineProperty(input, 'files', { value: [new File(['{"not":"a config"}'], 'notes.json')], configurable: true });
+  input.dispatchEvent(new Event('change'));
+  await wait(60);
+  noSideScroll();
+}
+
 /**
  * Focusing a field scrolls the page, and the floating bar reads the scroll: a full-page
  * shot is of the page as you land on it, so every one of them ends back at the top. The
@@ -160,6 +200,9 @@ gallery('settings', [
   statesShot,
   scrolledShot,
   shot('large-text-390', 390, largeText),
+  shot('share-export-1100', 1100, shareExport),
+  shot('share-import-preview-1100', 1100, shareImportPreview),
+  shot('share-import-error-1100', 1100, shareImportError),
   // Accessibility settings: switches, the profile rows, focus, the checklist glyphs and the
   // field messages must survive the system palette and read in more contrast. (Reduced
   // motion only removes the "✓ Saved" fade, which a still can't show.)
