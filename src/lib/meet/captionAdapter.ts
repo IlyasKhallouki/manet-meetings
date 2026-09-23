@@ -1,5 +1,5 @@
 /**
- * Every Google Meet DOM selector and UI string Manet relies on lives in this file, so a
+ * Every Google Meet DOM selector and UI string Minute Book relies on lives in this file, so a
  * Meet redesign is a one-file fix. Meet ships obfuscated class names and jsname
  * attributes that change between builds, so each lookup tries jsname / role / aria
  * hooks first, then class names, then the shape of the markup, and every export returns

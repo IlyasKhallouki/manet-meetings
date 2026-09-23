@@ -98,7 +98,7 @@ minute (switch speakers, pause, correct yourself). It downloads
 version of the caption panel.
 
 ```js
-// Manet: record Google Meet's caption DOM for fixtures. Paste into DevTools on a live call.
+// Minute Book: record Google Meet's caption DOM for fixtures. Paste into DevTools on a live call.
 (async () => {
   const SECONDS = 60;
   const AVATAR = 'https://lh3.googleusercontent.com/a/default-user=s192-c-mo';

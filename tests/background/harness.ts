@@ -326,7 +326,7 @@ export function setupHarness() {
 
   vi.spyOn(fakeBrowser.runtime, 'getManifest').mockReturnValue({
     manifest_version: 3,
-    name: 'Manet Meetings',
+    name: 'Minute Book',
     version: '0.0.0',
     content_scripts: [{ matches: ['https://meet.google.com/*'], js: ['content-scripts/content.js'] }],
   } as never);

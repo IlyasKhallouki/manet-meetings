@@ -215,7 +215,7 @@ export function createDashboardView(
     'div',
     { class: 'group meetings-empty', 'data-role': 'empty', tabindex: '-1', hidden: true },
     h('h2', { class: 'meetings-empty-title' }, 'No meetings yet'),
-    h('p', null, 'Join a Google Meet call, click Manet Meetings in the toolbar and choose Record this call.'),
+    h('p', null, 'Join a Google Meet call, click Minute Book in the toolbar and choose Record this call.'),
     pinHint,
   );
   const footnote = h('p', { class: 'meetings-footnote', 'data-role': 'storage', hidden: true });

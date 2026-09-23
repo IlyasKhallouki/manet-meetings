@@ -22,7 +22,7 @@ function setup(current: Settings = normalizeSettings({ displayName: 'Ilyas', gem
   const settle = () => new Promise((r) => setTimeout(r, 0));
   async function choose(text: string) {
     const input = element.querySelector<HTMLInputElement>('input[type="file"]')!;
-    const file = new File([text], 'manet-config.json', { type: 'application/json' });
+    const file = new File([text], 'minute-book-config.json', { type: 'application/json' });
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
     input.dispatchEvent(new Event('change'));
     await vi.waitFor(() => {
@@ -44,7 +44,7 @@ describe('Share', () => {
     name.value = 'Acme team';
     el('export-go').click();
     const [fileName, text] = handlers.download.mock.calls[0]!;
-    expect(fileName).toBe('manet-config-acme-team.json');
+    expect(fileName).toBe('minute-book-config-acme-team.json');
     const parsed = parseConfigFile(text);
     expect(parsed.ok && parsed.file.keys).toBeFalsy();
     expect(text).not.toContain('Ilyas');
@@ -93,7 +93,7 @@ describe('Share', () => {
     const { choose, element, handlers } = setup();
     await choose('{"hello": 1}');
     expect(element.querySelector('[role="alert"]')?.textContent).toBe(
-      'This file isn’t a Manet Meetings config. Choose a file exported from Settings › Share.',
+      'This file isn’t a Minute Book config. Choose a file exported from Settings › Share.',
     );
     expect(handlers.apply).not.toHaveBeenCalled();
   });

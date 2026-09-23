@@ -130,7 +130,7 @@ describe('settings page layout', () => {
     expect(text(root.querySelector('[data-role="lede"]'))).toBe('Changes are saved as you make them.');
     expect(button('Save')).toBeUndefined();
     expect(root.querySelector('form')).toBeNull();
-    expect(text(root.querySelector('[data-role="privacy"]'))).toMatch(/stay in this browser.*There is no Manet Meetings server\.$/);
+    expect(text(root.querySelector('[data-role="privacy"]'))).toMatch(/stay in this browser.*There is no Minute Book server\.$/);
     // Settings are complete: no checklist.
     expect(root.querySelector('[data-role="setup"]')).toBeNull();
   });
@@ -687,7 +687,7 @@ describe('Share group', () => {
   /** Picks a config file exported from `from` and waits for its preview. */
   async function chooseConfig(from: Settings): Promise<HTMLElement> {
     const input = root.querySelector<HTMLInputElement>('#settings-share input[type="file"]')!;
-    const file = new File([serializeConfig(buildConfigFile(from, { name: 'Acme team', includeKeys: false }))], 'manet-config.json', {
+    const file = new File([serializeConfig(buildConfigFile(from, { name: 'Acme team', includeKeys: false }))], 'minute-book-config.json', {
       type: 'application/json',
     });
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
@@ -731,7 +731,7 @@ describe('Share group', () => {
     root.querySelector<HTMLInputElement>('[data-key="export-name"]')!.value = 'Acme team';
     root.querySelector<HTMLButtonElement>('[data-key="export-go"]')!.click();
     const [fileName, contents] = vi.mocked(s.handlers.share.download).mock.calls[0]!;
-    expect(fileName).toBe('manet-config-acme-team.json');
+    expect(fileName).toBe('minute-book-config-acme-team.json');
     const parsed = parseConfigFile(contents);
     expect(parsed.ok && parsed.file.profiles.map((p) => p.id)).toEqual(['team', 'personal']);
   });
@@ -744,7 +744,7 @@ describe('Share group', () => {
     const client = { ...starterProfiles(DB)[0]!, id: 'client', name: 'Client meeting' };
     const team = { ...SETTINGS, retentionDays: 30, profiles: [...starterProfiles(DB, ''), client] };
     const input = root.querySelector<HTMLInputElement>('#settings-share input[type="file"]')!;
-    const file = new File([serializeConfig(buildConfigFile(team, { name: 'Acme team', includeKeys: false }))], 'manet-config.json', {
+    const file = new File([serializeConfig(buildConfigFile(team, { name: 'Acme team', includeKeys: false }))], 'minute-book-config.json', {
       type: 'application/json',
     });
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
@@ -783,7 +783,7 @@ describe('microphone', () => {
     expect(s.calls).toEqual(['openPermissionPage']);
 
     view.setMic('denied');
-    expect(text(mic())).toBe('Chrome blocks the microphone for Manet Meetings. Fix in Chrome…');
+    expect(text(mic())).toBe('Chrome blocks the microphone for Minute Book. Fix in Chrome…');
     button('Fix in Chrome…')!.click();
     expect(s.calls).toEqual(['openPermissionPage', 'openPermissionPage']);
 

@@ -138,7 +138,7 @@ export function createPermissionView(
         'p',
         { class: 'perm-lead' },
         "Meet doesn’t play your own voice back to you, so the call audio only has the other people. " +
-          "To include what you say, Manet Meetings also records your microphone, only while you’re recording a call.",
+          "To include what you say, Minute Book also records your microphone, only while you’re recording a call.",
       ),
       h(
         'p',
@@ -158,12 +158,12 @@ export function createPermissionView(
       h(
         'p',
         { class: 'perm-lead' },
-        'Chrome blocks the microphone for Manet Meetings, so only the other people will be recorded. To allow it:',
+        'Chrome blocks the microphone for Minute Book, so only the other people will be recorded. To allow it:',
       ),
       h(
         'ol',
         { class: 'perm-steps' },
-        h('li', null, 'Open site settings for Manet Meetings.'),
+        h('li', null, 'Open site settings for Minute Book.'),
         h('li', null, 'Set Microphone to Allow.'),
         h('li', null, 'Come back here and choose Try again.'),
       ),
@@ -182,7 +182,7 @@ export function createPermissionView(
     return [
       tile('done', 'tone-done'),
       h('h1', { class: 't-title1' }, HEADLINE.granted),
-      h('p', { class: 'perm-lead' }, 'Chrome now allows the microphone for Manet Meetings. You can close this tab.'),
+      h('p', { class: 'perm-lead' }, 'Chrome now allows the microphone for Minute Book. You can close this tab.'),
       h('div', { class: 'perm-actions' }, action('Close tab', 'bordered', 'close', () => handlers.close())),
     ];
   }

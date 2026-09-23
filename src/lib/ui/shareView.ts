@@ -1,5 +1,5 @@
 /**
- * Settings › Share: export the stored profiles and settings to a manet-config file, and
+ * Settings › Share: export the stored profiles and settings to a config file, and
  * import one back. Export opens an inline form in its own row; import reads a chosen file,
  * previews what it would change (profileConfig() does the diffing), and applies the merge
  * in one write, merged into the settings stored when that write runs. Pure DOM, driven entirely by the handlers it's given, so it renders the
@@ -97,7 +97,7 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
   const exportButton = button('Export config…', { attrs: { 'data-key': 'export' }, onClick: () => openExport() });
   const exportActionBar = h('div', { class: 'settings-action' }, exportButton);
 
-  const nameInput = textInput({ id: 'export-name', 'data-key': 'export-name', value: 'Manet config' });
+  const nameInput = textInput({ id: 'export-name', 'data-key': 'export-name', value: 'Minute Book config' });
   const nameField = field({ id: 'export-name', label: 'Name', control: nameInput });
 
   const keysCaution = h(
@@ -138,7 +138,7 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
   let exportDoneTimer: ReturnType<typeof setTimeout> | undefined;
 
   function openExport(): void {
-    nameInput.value = 'Manet config';
+    nameInput.value = 'Minute Book config';
     keysRow.querySelector('input')!.checked = false;
     keysCaution.hidden = true;
     clearTimeout(exportDoneTimer);

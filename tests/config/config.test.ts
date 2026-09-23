@@ -56,8 +56,8 @@ describe('buildConfigFile', () => {
   });
 
   it('names the file after the config', () => {
-    expect(configFileName('Acme team / EMEA')).toBe('manet-config-acme-team-emea.json');
-    expect(configFileName('  ')).toBe('manet-config.json');
+    expect(configFileName('Acme team / EMEA')).toBe('minute-book-config-acme-team-emea.json');
+    expect(configFileName('  ')).toBe('minute-book-config.json');
   });
 
   it('returns copies, not live references into the source settings', () => {
@@ -87,23 +87,23 @@ describe('parseConfigFile', () => {
     expect(r).toEqual({ ok: true, file: good });
   });
 
-  it('rejects what isn’t a Manet config', () => {
-    const notConfig = 'This file isn’t a Manet Meetings config. Choose a file exported from Settings › Share.';
+  it('rejects what isn’t a Minute Book config', () => {
+    const notConfig = 'This file isn’t a Minute Book config. Choose a file exported from Settings › Share.';
     expect(error('{nope')).toBe(notConfig);
     expect(error({ ...good, format: 'other' })).toBe(notConfig);
     expect(error([])).toBe(notConfig);
-    expect(error('x'.repeat(1_000_001))).toBe('This file is too large to be a Manet Meetings config.');
+    expect(error('x'.repeat(1_000_001))).toBe('This file is too large to be a Minute Book config.');
   });
 
   it('measures size in UTF-8 bytes, not UTF-16 units', () => {
     const notTooLarge = 'é'.repeat(400_000); // 800,000 bytes, 400,000 UTF-16 units
-    expect(error(notTooLarge)).toBe('This file isn’t a Manet Meetings config. Choose a file exported from Settings › Share.');
+    expect(error(notTooLarge)).toBe('This file isn’t a Minute Book config. Choose a file exported from Settings › Share.');
     const tooLarge = 'é'.repeat(500_001); // 1,000,002 bytes
-    expect(error(tooLarge)).toBe('This file is too large to be a Manet Meetings config.');
+    expect(error(tooLarge)).toBe('This file is too large to be a Minute Book config.');
   });
 
   it('asks for a newer version for a newer file', () => {
-    expect(error({ ...good, version: 2 })).toBe('This file needs a newer version of Manet Meetings.');
+    expect(error({ ...good, version: 2 })).toBe('This file needs a newer version of Minute Book.');
   });
 
   it('names the first problem with a profile', () => {

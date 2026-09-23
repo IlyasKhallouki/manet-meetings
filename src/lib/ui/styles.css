@@ -1,4 +1,4 @@
-/* Manet Meetings — the design system every extension page shares.
+/* Minute Book — the design system every extension page shares.
  *
  * "iOS 26, two layers, honestly." The CONTENT layer is an inset grouped list on a grouped
  * background — opaque, flat, generous concentric radii, capsule controls. The FUNCTIONAL
@@ -194,7 +194,7 @@
 @import url('./css/permission.css') layer(surface);
 
 /* Inter — SIL Open Font License 1.1 (fonts/OFL.txt). Variable weight 400–700, one file per
- * subset; unicode-ranges as in the Manet product UI's inter.css. `fallback`: a local file
+ * subset; unicode-ranges as in Inter's own inter.css. `fallback`: a local file
  * loads within the 100 ms block period, so text never flashes in the system font. */
 @font-face {
   font-family: 'Inter';
@@ -222,7 +222,7 @@
     color-scheme: light dark;
 
     /* ---- Content layer: grouped background + inset grouped surfaces ------------------ */
-    --bg: #f2f3f7; /* systemGroupedBackground, cooled 2° toward Manet navy */
+    --bg: #f2f3f7; /* systemGroupedBackground, cooled 2° toward the navy accent */
     --surface: #ffffff; /* secondarySystemGroupedBackground: groups, rows, popup cards, fields */
     --fill: #e9eaef; /* secondarySystemFill: bordered buttons, segmented track, note, tiles */
     --fill-2: #dddfe6; /* pressed */
@@ -244,7 +244,7 @@
     --label-3: #6e7480; /* placeholder */
     --placeholder: var(--label-3);
 
-    /* ---- Tint: iOS systemBlue pulled onto Manet's link blue #016DCF ------------------ */
+    /* ---- Tint: iOS systemBlue pulled onto the link blue #016DCF ------------------ */
     --tint: #0b62c9; /* links, focus ring, selected, ◐ working */
     --tint-glass: #0a4a8c; /* the vibrant variant used ONLY on the glass layer */
     --tint-fill: #0b62c9; /* switch on, progress fill, menu keyboard highlight */
@@ -254,7 +254,7 @@
     --accent-weak: var(--tint-weak);
     --on-accent: var(--on-tint);
 
-    /* ---- Prominent: Manet navy, the ONE filled button per view ----------------------- */
+    /* ---- Prominent: navy, the ONE filled button per view ----------------------- */
     --prominent: #032a4a;
     --prominent-hover: #0a3a61;
     --prominent-pressed: #021e36;
@@ -411,7 +411,7 @@
       --on-tint: #ffffff;
       --tint-weak: #14283e;
 
-      /* Navy can't survive on near-black: it inverts to Manet's pale sky, one step
+      /* Navy can't survive on near-black: it inverts to a pale sky, one step
        * brighter than --tint so the single filled button still outranks every link. */
       --prominent: #a8cdf7;
       --prominent-hover: #bcd8f9;

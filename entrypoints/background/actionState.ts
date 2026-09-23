@@ -88,7 +88,7 @@ function problemTitle(problem: RecordingProblem, locale?: string): string {
 }
 
 function idleTitle(needsYouCount: number, shortcut: string | null): string {
-  const record = `Manet Meetings: record this call${shortcut ? ` (${shortcut})` : ''}`;
+  const record = `Minute Book: record this call${shortcut ? ` (${shortcut})` : ''}`;
   if (needsYouCount === 0) return record;
   const count = needsYouCount === 1 ? '1 meeting needs you' : `${needsYouCount} meetings need you`;
   return `${record} · ${count}`;

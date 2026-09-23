@@ -1,4 +1,4 @@
-# Manet Meetings
+# Minute Book
 
 A Chrome extension that records Google Meet calls, transcribes them with Gemini and files
 them into Notion: one page per meeting with a summary, action items and a speaker-labelled
@@ -51,7 +51,10 @@ the audio or Gemini fails, the caption-only transcript is still saved, with
 
 Chrome 116 or newer.
 
-From CI: download the `manet-meetings-chrome` artifact from the latest green run and unzip
+From a release: download `minute-book-<version>-chrome.zip` from the repository's
+Releases page and unzip it. Each version tag (`v0.2.0`) publishes one.
+
+From CI: download the `minute-book-chrome` artifact from the latest green run and unzip
 it.
 
 From source:
@@ -137,7 +140,7 @@ databases contain data sources.
 
 ## Using it
 
-1. Join a Meet call, click Manet Meetings in the toolbar and, above *Record this call*, a
+1. Join a Meet call, click Minute Book in the toolbar and, above *Record this call*, a
    Profile row shows which profile the meeting will use (it's hidden when you only have
    one). Pick a different one if you need to, then choose Record this call (or press
    <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>, which always uses the default profile).
@@ -231,6 +234,10 @@ pnpm typecheck
 pnpm shots        # renders every page state to UI_SHOTS_DIR, for design review
 pnpm zip          # packed extension in .output/
 ```
+
+To release, set the version in `package.json`, commit it to `main`, then push an
+annotated tag named after it (`git tag -a v0.3.0`). The tag's message becomes the release
+notes, and the Release workflow attaches the packed extension.
 
 Tests run against real dependencies. The integration tests only run when their keys are
 set, either in the shell or in a git-ignored `.env.test.local`:
@@ -335,7 +342,7 @@ The places most likely to break quietly, and what to check first.
 ## Design
 
 The pages follow the iOS 26 visual language: inset grouped lists on a grouped background,
-capsule controls, Inter, and Manet's navy for the single filled button on a screen. Liquid
+capsule controls, Inter, and a navy accent for the single filled button on a screen. Liquid
 Glass appears on exactly three floating surfaces, each over content that really scrolls:
 the page bar on Meetings and Settings, the popup's bottom toolbar, and the ⋯ menu. Rows,
 cards and the microphone page stay opaque, and a test enforces that budget. Reduced

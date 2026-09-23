@@ -287,7 +287,7 @@ export function audioFact(state: PopupState, mic: MicPermission, includeMic: boo
       return {
         label: 'Audio',
         value: 'Call only',
-        detail: 'Chrome blocks your mic for Manet Meetings, so your voice won’t be in the recording.',
+        detail: 'Chrome blocks your mic for Minute Book, so your voice won’t be in the recording.',
         action: { key: 'grant-mic', label: 'Fix in Chrome…' },
       };
     case 'prompt':
@@ -563,7 +563,7 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   });
   const footer = h(
     'nav',
-    { class: 'popup-foot', 'aria-label': 'Manet Meetings' },
+    { class: 'popup-foot', 'aria-label': 'Minute Book' },
     meetingsButton,
     button('Settings', { kind: 'plain', attrs: { 'data-key': 'settings' }, onClick: () => handlers.openSettings() }),
   );

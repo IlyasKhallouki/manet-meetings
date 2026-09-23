@@ -14,7 +14,7 @@ const CLIENT: NoteSection[] = [
 ];
 
 const FRENCH_MEETING = [
-  'Claire Dupont: Bonjour à tous. Aujourd’hui on fait le point sur la sortie de Manet Meetings.',
+  'Claire Dupont: Bonjour à tous. Aujourd’hui on fait le point sur la sortie de Minute Book.',
   'Paul Martin: La version 1.2 est prête, il reste les tests sur Chrome. Je m’en occupe d’ici jeudi.',
   'Ilya K.: OK. Et pour Notion, the new template is almost done, I will share it by Friday.',
   'Claire Dupont: Parfait. On valide donc la sortie de la version 1.2 lundi prochain.',

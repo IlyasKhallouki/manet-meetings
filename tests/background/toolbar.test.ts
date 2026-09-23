@@ -55,14 +55,14 @@ describe('toolbar button while idle', () => {
   it('shows the idle icon and how to record, with the real shortcut', async () => {
     expect(h.icon()).toBe('idle');
     expect(await h.badge()).toBe('');
-    expect(await h.badgeTitle()).toBe('Manet Meetings: record this call (Alt+Shift+R)');
+    expect(await h.badgeTitle()).toBe('Minute Book: record this call (Alt+Shift+R)');
   });
 
   it('leaves the shortcut out when none is set', async () => {
     h.shortcut.value = '';
     const next = h.createManager();
     await next.boot();
-    expect(await h.badgeTitle()).toBe('Manet Meetings: record this call');
+    expect(await h.badgeTitle()).toBe('Minute Book: record this call');
   });
 
   it('counts meetings that need you in amber, and clears the count when they are resolved', async () => {
@@ -74,7 +74,7 @@ describe('toolbar button while idle', () => {
     await m.idle();
     expect(await h.badge()).toBe('2');
     expect(await h.badgeColors()).toEqual(AMBER);
-    expect(await h.badgeTitle()).toBe('Manet Meetings: record this call (Alt+Shift+R) · 2 meetings need you');
+    expect(await h.badgeTitle()).toBe('Minute Book: record this call (Alt+Shift+R) · 2 meetings need you');
 
     await m.transcribe('aaa-bbbb-ccc_20260919T060000Z');
     await m.idle();

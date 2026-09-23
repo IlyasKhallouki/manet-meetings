@@ -144,13 +144,13 @@ async function shareImportPreview(): Promise<void> {
     { name: 'Acme team', includeKeys: false, now: Date.UTC(2026, 8, 20, 9, 0) },
   );
   const input = q<HTMLInputElement>('input[type="file"]');
-  Object.defineProperty(input, 'files', { value: [new File([serializeConfig(file)], 'manet-config.json')], configurable: true });
+  Object.defineProperty(input, 'files', { value: [new File([serializeConfig(file)], 'minute-book-config.json')], configurable: true });
   input.dispatchEvent(new Event('change'));
   await wait(60);
   noSideScroll();
 }
 
-/** A file that isn't a Manet config: the error under the Import button. */
+/** A file that isn't a Minute Book config: the error under the Import button. */
 async function shareImportError(): Promise<void> {
   page(FILLED, 'prompt');
   const input = q<HTMLInputElement>('input[type="file"]');

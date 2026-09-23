@@ -127,7 +127,7 @@ describe('permission page: outcomes', () => {
     button('Continue')!.click();
     await until(() => state() === 'granted');
     expect(text(root.querySelector('h1'))).toBe('Your voice will be included');
-    expect(text(root)).toContain('Chrome now allows the microphone for Manet Meetings. You can close this tab.');
+    expect(text(root)).toContain('Chrome now allows the microphone for Minute Book. You can close this tab.');
     expect(root.querySelector('.perm-tile .glyph-done')).not.toBeNull();
     expect(announced()).toBe('Your voice will be included.');
     expect(document.activeElement).toBe(button('Close tab'));
@@ -144,7 +144,7 @@ describe('permission page: outcomes', () => {
     expect(root.querySelector('.perm-tile .glyph-caution')).not.toBeNull();
     const steps = [...root.querySelectorAll('ol > li')].map((li) => text(li));
     expect(steps).toEqual([
-      'Open site settings for Manet Meetings.',
+      'Open site settings for Minute Book.',
       'Set Microphone to Allow.',
       'Come back here and choose Try again.',
     ]);

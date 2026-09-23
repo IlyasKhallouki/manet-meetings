@@ -46,7 +46,7 @@ jobs:
       - name: Upload extension zip
         uses: actions/upload-artifact@v4
         with:
-          name: manet-meetings-chrome
+          name: minute-book-chrome
           path: .output/*-chrome.zip
           # .output starts with a dot, and the action skips hidden paths by default.
           include-hidden-files: true

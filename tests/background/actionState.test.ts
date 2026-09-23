@@ -156,19 +156,19 @@ describe('presentAction', () => {
     expect(presentAction({ kind: 'idle', needsYou: 0, shortcut: 'Alt+Shift+R' }, 'en-GB')).toEqual({
       icon: ICONS.idle,
       badge: { text: '', ...BADGE_COLORS },
-      title: 'Manet Meetings: record this call (Alt+Shift+R)',
+      title: 'Minute Book: record this call (Alt+Shift+R)',
     });
     expect(presentAction({ kind: 'idle', needsYou: 0, shortcut: null }, 'en-GB').title).toBe(
-      'Manet Meetings: record this call',
+      'Minute Book: record this call',
     );
   });
 
   it('counts the meetings that need you on an amber badge, and says so in the tooltip', () => {
     const one = presentAction({ kind: 'idle', needsYou: 1, shortcut: 'Alt+Shift+R' }, 'en-GB');
     expect(one.badge).toEqual({ text: '1', background: '#F9AB00', color: '#1F1F1F' });
-    expect(one.title).toBe('Manet Meetings: record this call (Alt+Shift+R) · 1 meeting needs you');
+    expect(one.title).toBe('Minute Book: record this call (Alt+Shift+R) · 1 meeting needs you');
     expect(presentAction({ kind: 'idle', needsYou: 3, shortcut: null }, 'en-GB').title).toBe(
-      'Manet Meetings: record this call · 3 meetings need you',
+      'Minute Book: record this call · 3 meetings need you',
     );
     expect(presentAction({ kind: 'idle', needsYou: 140, shortcut: null }, 'en-GB').badge.text).toBe('99+');
   });

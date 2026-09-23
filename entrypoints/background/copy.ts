@@ -208,7 +208,7 @@ const RETRY_SUFFIX = ' Retrying automatically at ';
 
 export const problems = {
   /** The Meet tab has no content script, so no captions arrive: stored as captionsError. */
-  captionsMissing: 'Manet Meetings can’t read this tab’s captions. Reload the Meet tab to capture who said what.',
+  captionsMissing: 'Minute Book can’t read this tab’s captions. Reload the Meet tab to capture who said what.',
 
   /**
    * Why the call audio stopped while the recording goes on with captions: the popup's

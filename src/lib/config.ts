@@ -8,6 +8,7 @@ import { MAX_VOCABULARY } from './transcribe/requests';
 import type { NoteSection, Profile, Settings } from './types';
 import { MAX_RETENTION_DAYS, parseLanguageCodes } from './ui/settingsForm';
 
+/** The file's format marker. It predates the rename to Minute Book and stays, so earlier files still import. */
 export const CONFIG_FORMAT = 'manet-config';
 export const CONFIG_VERSION = 1;
 export const MAX_CONFIG_BYTES = 1_000_000;
@@ -49,7 +50,7 @@ export function buildConfigFile(settings: Settings, opts: { name: string; includ
   const file: ConfigFile = {
     format: CONFIG_FORMAT,
     version: CONFIG_VERSION,
-    name: opts.name.trim() || 'Manet config',
+    name: opts.name.trim() || 'Minute Book config',
     exportedAt: new Date(opts.now ?? Date.now()).toISOString(),
     defaultProfileId: settings.defaultProfileId,
     // Copies, not live references: editing the file must never touch the source settings.
@@ -66,7 +67,7 @@ export function buildConfigFile(settings: Settings, opts: { name: string; includ
   return file;
 }
 
-/** "manet-config-acme-team.json": the name in lower case, runs of other characters as one dash. */
+/** "minute-book-config-acme-team.json": the name in lower case, runs of other characters as one dash. */
 export function configFileName(name: string): string {
   const slug = name
     .normalize('NFD')
@@ -74,7 +75,7 @@ export function configFileName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-  return slug ? `manet-config-${slug}.json` : 'manet-config.json';
+  return slug ? `minute-book-config-${slug}.json` : 'minute-book-config.json';
 }
 
 export function serializeConfig(file: ConfigFile): string {
@@ -86,7 +87,7 @@ export function serializeConfig(file: ConfigFile): string {
 
 export type ParseResult = { ok: true; file: ConfigFile } | { ok: false; error: string };
 
-const NOT_CONFIG = 'This file isn’t a Manet Meetings config. Choose a file exported from Settings › Share.';
+const NOT_CONFIG = 'This file isn’t a Minute Book config. Choose a file exported from Settings › Share.';
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -134,7 +135,7 @@ function settingsError(v: unknown): string | null {
 /** Reads a config file's text. Every rejection is one sentence saying what is wrong. */
 export function parseConfigFile(text: string): ParseResult {
   const byteLength = new TextEncoder().encode(text).byteLength;
-  if (byteLength > MAX_CONFIG_BYTES) return { ok: false, error: 'This file is too large to be a Manet Meetings config.' };
+  if (byteLength > MAX_CONFIG_BYTES) return { ok: false, error: 'This file is too large to be a Minute Book config.' };
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -143,7 +144,7 @@ export function parseConfigFile(text: string): ParseResult {
   }
   if (!isObject(json) || json.format !== CONFIG_FORMAT) return { ok: false, error: NOT_CONFIG };
   if (typeof json.version === 'number' && json.version > CONFIG_VERSION) {
-    return { ok: false, error: 'This file needs a newer version of Manet Meetings.' };
+    return { ok: false, error: 'This file needs a newer version of Minute Book.' };
   }
   if (json.version !== CONFIG_VERSION) return { ok: false, error: NOT_CONFIG };
   if (!Array.isArray(json.profiles) || json.profiles.length === 0) return { ok: false, error: 'The file has no profiles.' };
@@ -179,7 +180,7 @@ export function parseConfigFile(text: string): ParseResult {
   const file: ConfigFile = {
     format: CONFIG_FORMAT,
     version: CONFIG_VERSION,
-    name: isString(json.name) && json.name.trim() ? json.name.trim() : 'Manet config',
+    name: isString(json.name) && json.name.trim() ? json.name.trim() : 'Minute Book config',
     exportedAt: isString(json.exportedAt) ? json.exportedAt : '',
     defaultProfileId: json.defaultProfileId,
     profiles,

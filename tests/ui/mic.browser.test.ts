@@ -53,7 +53,7 @@ describe('microphone permission in real Chrome', () => {
   it('explains a blocked microphone', async () => {
     await setMic('denied');
     const result = await requestMicAccess();
-    expect(result).toEqual({ ok: false, reason: 'denied', message: 'Chrome blocked the microphone for Manet Meetings.' });
+    expect(result).toEqual({ ok: false, reason: 'denied', message: 'Chrome blocked the microphone for Minute Book.' });
   });
 
   it.skipIf(!hasAudioInput)('opens a granted mic and releases it at once', async () => {
@@ -111,7 +111,7 @@ describe('micFailure', () => {
   it('says what went wrong in a sentence the page can follow with its own next step', () => {
     // permissionView adds “Choose Continue to try again.”: these end without a next step of their own.
     expect(micFailure(new DOMException('Permission denied', 'NotAllowedError')).message).toBe(
-      'Chrome blocked the microphone for Manet Meetings.',
+      'Chrome blocked the microphone for Minute Book.',
     );
     expect(micFailure(new DOMException('Could not start audio source', 'NotReadableError')).message).toBe(
       'Chrome couldn’t open the microphone. Another app may be using it.',

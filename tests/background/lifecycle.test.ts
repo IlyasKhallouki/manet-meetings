@@ -785,7 +785,7 @@ describe('what a page hears when a request can’t be carried out', () => {
     h.executeScript.mockRejectedValueOnce(new Error('Cannot access contents of the page'));
     await m.start(tabId);
     expect((await getSession(ID))?.captionsError).toBe(
-      'Manet Meetings can’t read this tab’s captions. Reload the Meet tab to capture who said what.',
+      'Minute Book can’t read this tab’s captions. Reload the Meet tab to capture who said what.',
     );
   });
 });

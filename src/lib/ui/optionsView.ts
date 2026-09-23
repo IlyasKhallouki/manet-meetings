@@ -419,7 +419,7 @@ export function createOptionsView(
       button(label, { kind: 'link', onClick: () => handlers.openPermissionPage() });
     if (permission === 'granted') renderMessage(micLine, 'Chrome allows the microphone.', 'done');
     else if (permission === 'denied') {
-      renderMessage(micLine, ['Chrome blocks the microphone for Manet Meetings. ', open('Fix in Chrome…')]);
+      renderMessage(micLine, ['Chrome blocks the microphone for Minute Book. ', open('Fix in Chrome…')]);
     } else renderMessage(micLine, ['Chrome hasn’t allowed the microphone yet. ', open('Allow microphone…')]);
   }
 
@@ -708,7 +708,7 @@ export function createOptionsView(
       'div',
       { class: 'settings-action-text' },
       h('p', { class: 'field-label' }, 'Check databases'),
-      h('p', { class: 'hint', id: 'check-notion-hint' }, 'Checks access and the columns Manet Meetings writes.'),
+      h('p', { class: 'hint', id: 'check-notion-hint' }, 'Checks access and the columns Minute Book writes.'),
     ),
     checkNotionButton,
   );
@@ -832,7 +832,7 @@ export function createOptionsView(
     'p',
     { class: 'settings-privacy', 'data-role': 'privacy' },
     'Recordings and keys stay in this browser. Audio and transcripts go to Gemini to be transcribed and summarized, ' +
-      'and each meeting is saved as a page in the Notion database you choose. There is no Manet Meetings server.',
+      'and each meeting is saved as a page in the Notion database you choose. There is no Minute Book server.',
   );
 
   root.replaceChildren(lede, ...groups, privacy);

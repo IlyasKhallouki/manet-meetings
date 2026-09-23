@@ -893,7 +893,7 @@ describe('Meetings: page', () => {
     const empty = root.querySelector('[data-role="empty"]')!;
     expect(shown(empty)).toBe(true);
     expect(text(empty)).toContain('No meetings yet');
-    expect(text(empty)).toContain('Join a Google Meet call, click Manet Meetings in the toolbar and choose Record this call.');
+    expect(text(empty)).toContain('Join a Google Meet call, click Minute Book in the toolbar and choose Record this call.');
     const pin = empty.querySelector('.meetings-empty-pin');
     expect(shown(pin)).toBe(false);
     expect(shown(root.querySelector('[data-role="storage"]'))).toBe(false);

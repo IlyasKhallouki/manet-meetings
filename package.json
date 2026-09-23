@@ -1,5 +1,5 @@
 {
-  "name": "manet-meetings",
+  "name": "minute-book",
   "description": "Records Google Meet calls, transcribes them with Gemini and files them into Notion.",
   "private": true,
   "version": "0.2.0",

@@ -7,7 +7,7 @@ export default defineConfig({
     '@lib': resolve(import.meta.dirname, 'src/lib'),
   },
   manifest: {
-    name: 'Manet Meetings',
+    name: 'Minute Book',
     description:
       'Records Google Meet calls, transcribes them with Gemini and files them into Notion.',
     minimum_chrome_version: '116',
@@ -28,7 +28,7 @@ export default defineConfig({
       'https://api.notion.com/*',
     ],
     action: {
-      default_title: 'Manet Meetings',
+      default_title: 'Minute Book',
     },
     commands: {
       'toggle-recording': {

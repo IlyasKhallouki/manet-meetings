@@ -61,7 +61,7 @@ export function micFailure(err: unknown): Extract<MicRequestResult, { ok: false 
   switch (name) {
     case 'NotAllowedError':
     case 'SecurityError':
-      return { ok: false, reason: 'denied', message: 'Chrome blocked the microphone for Manet Meetings.' };
+      return { ok: false, reason: 'denied', message: 'Chrome blocked the microphone for Minute Book.' };
     case 'NotFoundError':
     case 'OverconstrainedError':
       return { ok: false, reason: 'no-device', message: 'No microphone was found. Plug one in, then choose Continue.' };
