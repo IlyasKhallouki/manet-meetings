@@ -91,6 +91,28 @@ export async function startRecording(tabId: number, profileId?: string): Promise
   return result.sessionId;
 }
 
+/** chrome.storage.session: the profile last picked in the popup, kept for the browser session. */
+export const POPUP_PROFILE_KEY = 'popupProfile';
+
+/**
+ * The profile last picked in the popup this browser session, if any. The popup is a new
+ * page every time it opens, so its own sessionStorage can't keep it. It may name a
+ * profile deleted since.
+ */
+export async function rememberedPopupProfile(): Promise<string | undefined> {
+  try {
+    const id = (await browser.storage.session.get(POPUP_PROFILE_KEY))[POPUP_PROFILE_KEY];
+    return typeof id === 'string' && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keeps the popup's pick for the next time it opens, until the browser quits. */
+export async function rememberPopupProfile(profileId: string): Promise<void> {
+  await browser.storage.session.set({ [POPUP_PROFILE_KEY]: profileId });
+}
+
 async function activeTab(): Promise<PopupInput['tab']> {
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });

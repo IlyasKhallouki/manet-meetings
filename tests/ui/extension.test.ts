@@ -10,6 +10,9 @@ import {
   loadPopupInput,
   openExtensionPage,
   openSettings,
+  POPUP_PROFILE_KEY,
+  rememberedPopupProfile,
+  rememberPopupProfile,
   siteSettingsUrl,
   startRecording,
   watchResultIds,
@@ -152,6 +155,25 @@ describe('startRecording', () => {
     });
     await expect(startRecording(7)).rejects.toThrow('Another tab is already recording.');
     stop();
+  });
+});
+
+describe('the popup’s profile pick', () => {
+  it('is kept in session storage, so the popup opened again finds it', async () => {
+    expect(POPUP_PROFILE_KEY).toBe('popupProfile');
+    expect(await rememberedPopupProfile()).toBeUndefined();
+    await rememberPopupProfile('client');
+    expect(await browser.storage.session.get(POPUP_PROFILE_KEY)).toEqual({ popupProfile: 'client' });
+    expect(await rememberedPopupProfile()).toBe('client');
+    await rememberPopupProfile('team');
+    expect(await rememberedPopupProfile()).toBe('team');
+  });
+
+  it('ignores anything that is not a profile id', async () => {
+    await browser.storage.session.set({ [POPUP_PROFILE_KEY]: 42 });
+    expect(await rememberedPopupProfile()).toBeUndefined();
+    await browser.storage.session.set({ [POPUP_PROFILE_KEY]: '' });
+    expect(await rememberedPopupProfile()).toBeUndefined();
   });
 });
 

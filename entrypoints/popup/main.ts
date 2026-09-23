@@ -4,7 +4,14 @@ import { errorMessage, sendToBackground } from '@lib/messages';
 import { getSettings } from '@lib/settings';
 import { getActiveRecording, getSession, listSessions, needsYou, sessionKey } from '@lib/storage/sessionStore';
 import type { SessionMeta } from '@lib/types';
-import { openExtensionPage, openSettings, startRecording } from '@lib/ui/extension';
+import {
+  openExtensionPage,
+  openSettings,
+  POPUP_PROFILE_KEY,
+  rememberedPopupProfile,
+  rememberPopupProfile,
+  startRecording,
+} from '@lib/ui/extension';
 import { queryMicPermission, watchMicPermission } from '@lib/ui/mic';
 import { createPopupView, popupState, setupGaps, type PopupInput, type PopupModel } from '@lib/ui/popupView';
 
@@ -50,6 +57,7 @@ const view = createPopupView(root, {
     // The row shows the new profile as the request settles, not a tick later.
     await refresh();
   },
+  rememberProfile: (profileId) => void rememberPopupProfile(profileId).catch(report),
   goToCall: (tabId) => leaveTo(focusTab(tabId)),
   grantMic: () => leaveTo(openExtensionPage('/permission.html')),
   openSettings: (field) => leaveTo(openSettings(field)),
@@ -83,12 +91,13 @@ async function recordShortcut(): Promise<string | null> {
 
 async function refresh(): Promise<void> {
   shortcut ??= recordShortcut();
-  const [tab, active, settings, mic, keys] = await Promise.all([
+  const [tab, active, settings, mic, keys, picked] = await Promise.all([
     activeTab(),
     getActiveRecording(),
     getSettings(),
     queryMicPermission(),
     shortcut,
+    rememberedPopupProfile(),
   ]);
   const session = active ? await getSession(active.sessionId) : null;
   const state = popupState({ tab, active, session });
@@ -107,6 +116,7 @@ async function refresh(): Promise<void> {
     // The Profile row's choices, and the names Recent gives each meeting's profile.
     profiles: settings.profiles.map(({ id, name }) => ({ id, name })),
     defaultProfileId: settings.defaultProfileId,
+    pickedProfileId: picked,
     geminiKeyMissing: !settings.geminiApiKey,
     recent: sessions,
     needsYou: sessions.filter(needsYou).length,
@@ -133,6 +143,8 @@ function refreshSoon(): void {
 
 browser.storage.onChanged.addListener((changes, area) => {
   const keys = Object.keys(changes);
+  // The view already shows its own pick; storing it changes nothing else.
+  if (area === 'session' && keys.every((k) => k === POPUP_PROFILE_KEY)) return;
   // Caption text and stored transcripts aren't shown here; the roll comes from the meta.
   if (area === 'local' && keys.every((k) => k.startsWith('captions:') || k.startsWith('result:'))) return;
   if (area !== 'local' || keys.some((k) => k.startsWith('session:') && k !== activeSessionKey)) sessionsStale = true;

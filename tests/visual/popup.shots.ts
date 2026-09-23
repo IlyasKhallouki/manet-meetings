@@ -108,6 +108,7 @@ function handlers(patch: Partial<PopupHandlers> = {}): PopupHandlers {
     record: ok,
     stop: ok,
     setProfile: ok,
+    rememberProfile: () => {},
     goToCall: () => {},
     grantMic: () => {},
     openSettings: () => {},

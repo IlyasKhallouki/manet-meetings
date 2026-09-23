@@ -13,8 +13,6 @@ import {
 const T0 = Date.UTC(2026, 8, 19, 8, 0, 0);
 const TAB_ID = 7;
 const SESSION_ID = 's1';
-/** Where the popup keeps its pick for the browser session. */
-const PROFILE_KEY = 'manet:popup-profile';
 const FMT = { locale: 'en-GB', timeZone: 'UTC' };
 
 function handlers() {
@@ -29,6 +27,7 @@ function handlers() {
     record: (tabId, profileId) => deferred(`record:${tabId}:${profileId}`),
     stop: (id) => deferred(`stop:${id}`),
     setProfile: (id, profileId) => deferred(`setProfile:${id}:${profileId}`),
+    rememberProfile: (profileId) => void calls.push(`remember:${profileId}`),
     goToCall: (tabId) => void calls.push(`goToCall:${tabId}`),
     grantMic: () => void calls.push('grantMic'),
     openSettings: () => void calls.push('openSettings'),
@@ -114,7 +113,6 @@ beforeEach(() => {
 afterEach(() => {
   root.remove();
   document.body.className = '';
-  sessionStorage.removeItem(PROFILE_KEY);
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -320,10 +318,13 @@ describe('popup: the Profile row', () => {
     row.click();
     expect(checked()).toEqual(['Team']);
     choose('client');
-    v.update(model({ state: onCall, profiles, defaultProfileId: 'team' }), T0 + 1000);
+    // Shown at once, before the storage round trip brings the pick back in the model.
+    expect(profile()!.textContent).toBe('Client meeting');
+    expect(h.calls).toEqual(['remember:client']);
+    v.update(model({ state: onCall, profiles, defaultProfileId: 'team', pickedProfileId: 'client' }), T0 + 1000);
     expect(profile()!.textContent).toBe('Client meeting');
     root.querySelector<HTMLButtonElement>('[data-key="record"]')!.click();
-    expect(h.calls).toEqual([`record:${TAB_ID}:client`]);
+    expect(h.calls).toEqual(['remember:client', `record:${TAB_ID}:client`]);
   });
 
   it('changes the profile of the recording', () => {
@@ -429,23 +430,35 @@ describe('popup: the Profile row', () => {
     expect(document.activeElement).toBe(button);
   });
 
-  it('keeps the pick for the next popup, and forgets a profile deleted since', () => {
-    view().update(model({ state: onCall, profiles }), T0);
+  it('starts from the pick the model remembers, and forgets a profile deleted since', () => {
+    // The popup opens again, with the pick it remembered last time.
+    const h = handlers();
+    const v = view(h.handlers);
+    v.update(model({ state: onCall, profiles, pickedProfileId: 'client' }), T0);
+    expect(profile()!.textContent).toBe('Client meeting');
     profile()!.click();
-    choose('client');
-    expect(sessionStorage.getItem(PROFILE_KEY)).toBe('client');
+    expect(checked()).toEqual(['Client meeting']);
+    menu().querySelector<HTMLElement>('[data-key="profile-client"]')!.click();
 
-    // The popup opens again.
+    // Client meeting was deleted in Settings: back to the default.
+    const others = [profiles[0]!, { id: 'personal', name: 'Personal' }];
+    v.update(model({ state: onCall, profiles: others, pickedProfileId: 'client' }), T0);
+    expect(profile()!.textContent).toBe('Team');
+    hero().click();
+    expect(h.calls).toEqual(['remember:client', `record:${TAB_ID}:team`]);
+  });
+
+  it('keeps the pick through a recording: the next call starts from it', () => {
     const h = handlers();
     const v = view(h.handlers);
     v.update(model({ state: onCall, profiles }), T0);
+    profile()!.click();
+    choose('client');
+    v.update(model({ state: recording({ profileId: 'client' }), profiles, pickedProfileId: 'client' }), T0 + 60_000);
+    v.update(model({ state: onCall, profiles, pickedProfileId: 'client' }), T0 + 120_000);
     expect(profile()!.textContent).toBe('Client meeting');
-
-    // Client meeting was deleted in Settings: back to the default.
-    v.update(model({ state: onCall, profiles: [profiles[0]!, { id: 'personal', name: 'Personal' }] }), T0);
-    expect(profile()!.textContent).toBe('Team');
-    hero().click();
-    expect(h.calls).toEqual([`record:${TAB_ID}:team`]);
+    // Only the pick itself is remembered; nothing else touches it.
+    expect(h.calls).toEqual(['remember:client']);
   });
 });
 

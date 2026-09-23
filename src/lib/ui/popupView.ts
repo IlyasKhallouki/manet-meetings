@@ -22,8 +22,9 @@
  * keeps focus and anchors the profile menu), the roll (only new names fade in) and the clock.
  *
  * The Profile row (with more than one profile): before recording, the popup's own pick,
- * which Record passes on (the default profile until one is picked, remembered for the
- * browser session); while recording, the recording's profile, changed in the background.
+ * which Record passes on (the default profile until one is picked; the page remembers it
+ * for the browser session and hands it back in the model); while recording, the
+ * recording's profile, changed in the background.
  */
 import { meetCodeFromUrl } from '../meet/meetCode';
 import { defaultProfile } from '../profiles';
@@ -438,6 +439,11 @@ export interface PopupModel {
   /** Every profile, in Settings order: the Profile row's choices. */
   profiles: readonly Pick<Profile, 'id' | 'name'>[];
   defaultProfileId: string;
+  /**
+   * The profile last picked in the popup this browser session (rememberProfile); it may
+   * name a profile deleted since, and then the default applies.
+   */
+  pickedProfileId?: string;
   /** No Gemini key: meetings are still saved, with a captions-only transcript. */
   geminiKeyMissing: boolean;
   /** Latest meetings, newest first; the popup shows 3 when not on a call. */
@@ -454,6 +460,8 @@ export interface PopupHandlers {
   stop(sessionId: string): Promise<void>;
   /** Changes the recording's profile; rejects with a user-facing reason. */
   setProfile(sessionId: string, profileId: string): Promise<void>;
+  /** Keeps the profile picked before recording for the next time the popup opens. */
+  rememberProfile(profileId: string): void;
   /** Focuses the tab being recorded. */
   goToCall(tabId: number): void;
   grantMic(): void;
@@ -478,8 +486,6 @@ export const HERO_GUARD_MS = 800;
 /** "Checking this tab…" only appears if the first state takes longer than this. */
 export const LOADING_DELAY_MS = 300;
 export const RECENT_COUNT = 3;
-/** sessionStorage: the profile picked here, so the popup opened again in this browser session keeps it. */
-const PICKED_PROFILE_KEY = 'manet:popup-profile';
 
 type HeroAction = 'record' | 'stop';
 /** A request the popup sends: the hero's, or a change of the recording's profile. */
@@ -490,22 +496,6 @@ const FAILED: Record<Request, string> = {
   stop: 'Couldn’t stop recording',
   profile: 'Couldn’t change the profile',
 };
-
-function loadPickedProfile(): string | null {
-  try {
-    return sessionStorage.getItem(PICKED_PROFILE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function savePickedProfile(id: string): void {
-  try {
-    sessionStorage.setItem(PICKED_PROFILE_KEY, id);
-  } catch {
-    // Storage blocked: the pick lasts as long as this popup.
-  }
-}
 
 interface RollItem {
   el: HTMLSpanElement;
@@ -523,8 +513,8 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   let busy: HeroAction | null = null;
   /** A change of the recording's profile is on its way. */
   let profileBusy = false;
-  /** The profile picked here for the next recording (the default until then). */
-  let pickedProfileId = loadPickedProfile();
+  /** Picked in this popup; until then the model's remembered pick (else the default) applies. */
+  let pickedProfileId: string | null = null;
   let error: string | undefined;
   /** This popup stopped the recording: say where the choice happens next. */
   let stopped = false;
@@ -831,7 +821,8 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
 
   /** What Record passes on: the popup's pick, or the default when none (or it was deleted since). */
   function pickedProfile(m: PopupModel): string {
-    return knownProfile(m, pickedProfileId) ? pickedProfileId : defaultProfileId(m);
+    const id = pickedProfileId ?? m.pickedProfileId;
+    return knownProfile(m, id) ? id : defaultProfileId(m);
   }
 
   /** The profile the row shows: the recording's own while recording (null: deleted since), else the pick. */
@@ -875,9 +866,10 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       const sessionId = s.sessionId;
       run('profile', () => handlers.setProfile(sessionId, id));
     } else if (s?.kind === 'idle') {
+      // Shown now; the model brings the remembered pick back once it is stored.
       pickedProfileId = id;
-      savePickedProfile(id);
       render();
+      handlers.rememberProfile(id);
     }
   }
 
