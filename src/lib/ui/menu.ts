@@ -44,8 +44,12 @@ export interface OpenOptions {
   signature?: string;
   /** Accessible name; defaults to the button's. */
   label?: string;
-  /** Runs once the menu has closed, with why. */
-  onClose?: (reason: MenuCloseReason) => void;
+  /**
+   * Runs once the menu has closed, with why and, for 'outside', the pointerdown's target
+   * (so a caller can tell whether it landed on something of its own the dismissal shouldn't
+   * also act on).
+   */
+  onClose?: (reason: MenuCloseReason, target?: EventTarget | null) => void;
 }
 
 export interface Menu {
@@ -187,7 +191,7 @@ export function createMenu(host: HTMLElement): Menu {
     const target = event.target as Node | null;
     if (!anchor || !target) return;
     if (element.contains(target) || anchor.contains(target)) return;
-    close({ reason: 'outside' });
+    close({ reason: 'outside', target });
   };
   // The page scrolled or resized; the menu's own scrolling moves nothing.
   const onViewport = (event: Event) => {
@@ -218,7 +222,7 @@ export function createMenu(host: HTMLElement): Menu {
     else element.focus({ preventScroll: true });
   }
 
-  function close(options: { restoreFocus?: boolean; reason?: MenuCloseReason } = {}): void {
+  function close(options: { restoreFocus?: boolean; reason?: MenuCloseReason; target?: EventTarget | null } = {}): void {
     const was = anchor;
     if (!was) return;
     const cb = onCloseCb;
@@ -234,7 +238,7 @@ export function createMenu(host: HTMLElement): Menu {
     element.replaceChildren();
     entries = [];
     if ((options.restoreFocus || hadFocus) && was.isConnected) was.focus({ preventScroll: true });
-    cb?.(options.reason ?? 'other');
+    cb?.(options.reason ?? 'other', options.target);
   }
 
   element.addEventListener('keydown', (event) => {

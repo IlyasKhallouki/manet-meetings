@@ -518,6 +518,12 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   let error: string | undefined;
   let heroAction: HeroAction | null = null;
   let heroArmedAt = Number.NEGATIVE_INFINITY;
+  /**
+   * One-shot: set when the profile menu's dismissing outside pointerdown landed on the hero
+   * button, so the click half of that same interaction doesn't also act on it. Cleared by
+   * the next click on the hero, whether or not it fires the request.
+   */
+  let heroSwallowClick = false;
   let shownKind: PopupState['kind'] | null = null;
   const sigs = new Map<string, string>();
 
@@ -606,6 +612,10 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   }
 
   function onHero(): void {
+    if (heroSwallowClick) {
+      heroSwallowClick = false;
+      return;
+    }
     const m = model;
     const s = m?.state;
     if (!m || !s || busy || clock() < heroArmedAt) return;
@@ -848,9 +858,10 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       signature: profileSignature(m, s),
       label: 'Profile',
       // The outside pointerdown that closes the menu is often the pointerdown half of a click
-      // meant only to dismiss it; don't let the click half act on the hero underneath.
-      onClose: (reason) => {
-        if (reason === 'outside') heroArmedAt = clock() + HERO_GUARD_MS;
+      // meant only to dismiss it; when it landed on the hero, don't let the click half act on
+      // it. A pointerdown on empty space is a separate click and must not block the hero.
+      onClose: (reason, target) => {
+        if (reason === 'outside' && target instanceof Node && heroButton.contains(target)) heroSwallowClick = true;
       },
     });
   }

@@ -416,6 +416,21 @@ describe('popup: the Profile row', () => {
     expect(h.calls).toEqual([`stop:${SESSION_ID}`]);
   });
 
+  it('dismissing the menu by clicking empty space does not block a click on Stop', () => {
+    const h = handlers();
+    view(h.handlers).update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
+    const button = profile()!;
+    const stop = hero();
+    button.click();
+    expect(menu().matches(':popover-open')).toBe(true);
+    // The pointerdown lands on empty space, not the hero: an outside dismissal that owes
+    // Stop nothing.
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    expect(menu().matches(':popover-open')).toBe(false);
+    stop.click();
+    expect(h.calls).toEqual([`stop:${SESSION_ID}`]);
+  });
+
   it('shows a failed change in the hero’s error line, and leaves Stop alone meanwhile', async () => {
     const h = handlers();
     view(h.handlers).update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
