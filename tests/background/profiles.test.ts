@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { problems } from '@/entrypoints/background/copy';
 import { starterProfiles } from '@lib/profiles';
+import { getSettings } from '@lib/settings';
 import { getResult, putResult } from '@lib/storage/resultStore';
 import { getSession, putSession } from '@lib/storage/sessionStore';
 import type { SaveOutcome, SessionMeta, SessionResult, Settings } from '@lib/types';
@@ -42,6 +43,31 @@ const LEGACY: SessionResult = {
 
 let h: Harness;
 let m: SessionManager;
+
+/**
+ * A new worker whose settings reads can be interrupted: after arm(n, between), the nth read
+ * first runs `between`, i.e. something the person does while a request is halfway through.
+ */
+async function interruptibleManager() {
+  let pending: { n: number; between: () => Promise<unknown> } | null = null;
+  const manager = h.createManager({
+    getSettings: async () => {
+      if (pending && --pending.n === 0) {
+        const { between } = pending;
+        pending = null;
+        await between();
+      }
+      return getSettings();
+    },
+  });
+  await manager.boot();
+  return {
+    manager,
+    arm(n: number, between: () => Promise<unknown>) {
+      pending = { n, between };
+    },
+  };
+}
 
 beforeEach(async () => {
   h = setupHarness();
@@ -183,6 +209,43 @@ describe('profiles', () => {
     expect(processes).toHaveLength(1);
     expect(processes[0]?.reuse?.profile?.id).toBe('team');
     expect(processes[0]?.profile.id).toBe('personal');
+  });
+
+  it('does not save for a profile that changed while the save was starting', async () => {
+    h.offscreen.save = () => ({ status: 'error', error: 'Notion is busy right now. Try again in a minute.' });
+    const tabId = await h.openMeetTab();
+    await m.start(tabId, 'team');
+    await m.stop(ID);
+    await m.route(ID, 'team');
+    await m.transcribe(ID);
+    await m.idle(); // processed with Team, save failed
+    h.offscreen.save = () => CREATED;
+
+    const { manager, arm } = await interruptibleManager();
+    // Save reads the meeting (Team), then the settings: the profile changes in between.
+    arm(1, () => manager.setProfile(ID, 'client'));
+    await manager.save(ID);
+    await manager.idle();
+    expect(h.offscreen.callsOf('offscreen/save')).toHaveLength(1);
+    expect(await getSession(ID)).toMatchObject({ status: 'failed', profileId: 'client' });
+
+    // The next Save writes the notes for Client, then files them there.
+    await manager.save(ID);
+    await manager.idle();
+    expect(h.offscreen.callsOf('offscreen/process').at(-1)?.profile.id).toBe('client');
+    expect(h.offscreen.callsOf('offscreen/save').at(-1)?.profile.databaseId).toBe('client-db');
+    expect((await getSession(ID))?.status).toBe('saved');
+  });
+
+  it('does not bring back the transcript of a meeting deleted while its profile changed', async () => {
+    await putSession(stored({ route: 'team' }));
+    await putResult(ID, LEGACY);
+    const { manager, arm } = await interruptibleManager();
+    // The change checks the profile, reads the old result, then looks up its name: the delete lands there.
+    arm(2, () => manager.remove(ID));
+    await expect(manager.setProfile(ID, 'personal')).rejects.toThrow('This meeting was deleted.');
+    expect(await getSession(ID)).toBeNull();
+    expect(await getResult(ID)).toBeNull();
   });
 
   it('saves a result from before profiles as it is when the profile stays', async () => {

@@ -877,6 +877,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const result = await getResult(meta.id);
     if (!result || result.profile) return;
     const name = profileById(await deps.getSettings(), writtenFor)?.name ?? writtenFor;
+    // Deleted meanwhile: writing the result would bring it back.
+    if (deleting.has(meta.id) || !(await getSession(meta.id))) return;
     await putResult(meta.id, { ...result, profile: { id: writtenFor, name } });
   }
 
@@ -1007,7 +1009,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const job = newJob('save');
     let claimed = false;
     const saving = await updateSession(id, (m) => {
-      if (!SAVABLE.has(m.status)) return m;
+      // The profile changed since it was read: the next Save files it for the new one.
+      if (!SAVABLE.has(m.status) || m.profileId !== meta.profileId) return m;
       claimed = true;
       const next: SessionMeta = {
         ...m,
