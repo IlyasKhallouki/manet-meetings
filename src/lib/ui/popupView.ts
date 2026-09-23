@@ -843,7 +843,16 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       attrs: { 'data-key': `profile-${p.id}` },
       onSelect: () => pickProfile(p.id),
     }));
-    menu.open(profileButton, items, { focus, signature: profileSignature(m, s), label: 'Profile' });
+    menu.open(profileButton, items, {
+      focus,
+      signature: profileSignature(m, s),
+      label: 'Profile',
+      // The outside pointerdown that closes the menu is often the pointerdown half of a click
+      // meant only to dismiss it; don't let the click half act on the hero underneath.
+      onClose: (reason) => {
+        if (reason === 'outside') heroArmedAt = clock() + HERO_GUARD_MS;
+      },
+    });
   }
 
   /** Before recording, the pick is the popup's own; while recording, the recording's profile changes. */

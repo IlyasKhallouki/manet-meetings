@@ -34,6 +34,9 @@ export interface MenuItem {
   attrs?: Attrs;
 }
 
+/** Why the menu closed: an outside pointerdown, Esc, an item was chosen, or anything else. */
+export type MenuCloseReason = 'outside' | 'escape' | 'choice' | 'other';
+
 export interface OpenOptions {
   /** first/last item (keyboard), or the menu itself (pointer). Default: menu. */
   focus?: 'first' | 'last' | 'menu';
@@ -41,6 +44,8 @@ export interface OpenOptions {
   signature?: string;
   /** Accessible name; defaults to the button's. */
   label?: string;
+  /** Runs once the menu has closed, with why. */
+  onClose?: (reason: MenuCloseReason) => void;
 }
 
 export interface Menu {
@@ -83,6 +88,7 @@ export function createMenu(host: HTMLElement): Menu {
   let anchor: HTMLElement | null = null;
   let signature: string | undefined;
   let entries: { el: HTMLButtonElement; item: MenuItem }[] = [];
+  let onCloseCb: OpenOptions['onClose'];
 
   const items = () => entries.map((e) => e.el);
 
@@ -111,7 +117,7 @@ export function createMenu(host: HTMLElement): Menu {
 
   function choose(entry: { el: HTMLButtonElement; item: MenuItem }): void {
     if (entry.item.disabled) return;
-    close({ restoreFocus: true });
+    close({ restoreFocus: true, reason: 'choice' });
     entry.item.onSelect();
   }
 
@@ -156,17 +162,21 @@ export function createMenu(host: HTMLElement): Menu {
     const full = Math.max(m.height, element.scrollHeight);
     const vw = document.documentElement.clientWidth;
     const vh = window.innerHeight;
-    let left = a.right - m.width;
-    left = Math.min(left, vw - EDGE - m.width);
-    left = Math.max(EDGE, left);
     const below = vh - EDGE - (a.bottom + GAP);
     const above = a.top - GAP - EDGE;
     const placement = full <= below || (full > above && below >= above) ? 'below' : 'above';
-    const room = Math.floor(Math.max(0, placement === 'below' ? below : above));
-    const capped = full > room;
+    const limit = placement === 'below' ? below : above;
+    const capped = full > limit;
+    const room = Math.floor(Math.max(0, limit));
     const height = capped ? room : full;
     element.style.maxBlockSize = capped ? `${room}px` : '';
     element.style.overflowY = capped ? 'auto' : '';
+    // A capped menu may have gained an always-visible scrollbar, widening it; re-read the
+    // width now that the cap styles are applied, before computing where its left edge lands.
+    const width = capped ? element.getBoundingClientRect().width : m.width;
+    let left = a.right - width;
+    left = Math.min(left, vw - EDGE - width);
+    left = Math.max(EDGE, left);
     const top = placement === 'below' ? a.bottom + GAP : a.top - GAP - height;
     element.style.left = `${Math.round(left)}px`;
     element.style.top = `${Math.round(Math.max(EDGE, top))}px`;
@@ -177,7 +187,7 @@ export function createMenu(host: HTMLElement): Menu {
     const target = event.target as Node | null;
     if (!anchor || !target) return;
     if (element.contains(target) || anchor.contains(target)) return;
-    close();
+    close({ reason: 'outside' });
   };
   // The page scrolled or resized; the menu's own scrolling moves nothing.
   const onViewport = (event: Event) => {
@@ -188,6 +198,7 @@ export function createMenu(host: HTMLElement): Menu {
     if (anchor && anchor !== target) close();
     anchor = target;
     signature = options.signature;
+    onCloseCb = options.onClose;
     build(list);
     const label = options.label ?? target.getAttribute('aria-label') ?? undefined;
     if (label) element.setAttribute('aria-label', label);
@@ -207,11 +218,13 @@ export function createMenu(host: HTMLElement): Menu {
     else element.focus({ preventScroll: true });
   }
 
-  function close(options: { restoreFocus?: boolean } = {}): void {
+  function close(options: { restoreFocus?: boolean; reason?: MenuCloseReason } = {}): void {
     const was = anchor;
     if (!was) return;
+    const cb = onCloseCb;
     anchor = null;
     signature = undefined;
+    onCloseCb = undefined;
     document.removeEventListener('pointerdown', onOutside, true);
     window.removeEventListener('resize', onViewport);
     window.removeEventListener('scroll', onViewport, true);
@@ -221,6 +234,7 @@ export function createMenu(host: HTMLElement): Menu {
     element.replaceChildren();
     entries = [];
     if ((options.restoreFocus || hadFocus) && was.isConnected) was.focus({ preventScroll: true });
+    cb?.(options.reason ?? 'other');
   }
 
   element.addEventListener('keydown', (event) => {
@@ -245,7 +259,7 @@ export function createMenu(host: HTMLElement): Menu {
       case 'Escape':
         event.preventDefault();
         event.stopPropagation();
-        close({ restoreFocus: true });
+        close({ restoreFocus: true, reason: 'escape' });
         return;
       case 'Tab':
         // Back to the button; the Tab itself then moves on from there.

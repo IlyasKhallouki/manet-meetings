@@ -398,6 +398,25 @@ describe('popup: the Profile row', () => {
     expect(button.getAttribute('aria-label')).toBe('Profile: Client meeting');
   });
 
+  it('a click that closes the menu on Stop does not stop the recording', () => {
+    const h = handlers();
+    view(h.handlers).update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
+    const button = profile()!;
+    const stop = hero();
+    button.click();
+    expect(menu().matches(':popover-open')).toBe(true);
+    // The menu opened above the row and covers Stop; a pointerdown there closes the menu
+    // (outside dismissal) and the click that follows lands on Stop.
+    stop.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    expect(menu().matches(':popover-open')).toBe(false);
+    stop.click();
+    expect(h.calls).toEqual([]);
+    // A later click, once the hero guard has passed, still works.
+    time += HERO_GUARD_MS;
+    stop.click();
+    expect(h.calls).toEqual([`stop:${SESSION_ID}`]);
+  });
+
   it('shows a failed change in the hero’s error line, and leaves Stop alone meanwhile', async () => {
     const h = handlers();
     view(h.handlers).update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
