@@ -37,8 +37,11 @@ interface LegacySettings {
 export function normalizeSettings(stored: (Partial<Settings> & LegacySettings) | null | undefined): Settings {
   const s = stored ?? {};
   const merged: Settings = { ...DEFAULT_SETTINGS, ...s };
+  // @wxt-dev/storage returns its fallback (DEFAULT_SETTINGS) by reference, so a fresh
+  // install's stored profiles can literally be DEFAULT_SETTINGS.profiles; hand out a
+  // fresh copy instead, or an in-place edit later would corrupt the shared defaults.
   const profiles =
-    Array.isArray(s.profiles) && s.profiles.length > 0
+    Array.isArray(s.profiles) && s.profiles.length > 0 && s.profiles !== DEFAULT_SETTINGS.profiles
       ? s.profiles
       : starterProfiles(s.notionTeamDbId ?? '', s.notionPersonalDbId ?? '');
   const ids = new Set(profiles.map((p) => p.id));

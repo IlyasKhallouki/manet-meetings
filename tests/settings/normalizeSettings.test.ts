@@ -37,4 +37,18 @@ describe('normalizeSettings', () => {
     const { includeMic: _mic, ...older } = DEFAULT_SETTINGS;
     expect(normalizeSettings(older).includeMic).toBe(true);
   });
+
+  it('never hands out DEFAULT_SETTINGS.profiles itself, even when storage returns it by reference', () => {
+    const result = normalizeSettings(DEFAULT_SETTINGS);
+    expect(result.profiles).not.toBe(DEFAULT_SETTINGS.profiles);
+    result.profiles[0]!.sections[0]!.title = 'Changed';
+    expect(DEFAULT_SETTINGS.profiles[0]!.sections[0]!.title).toBe('Summary');
+  });
+
+  it('gives Team and Personal when stored profiles is empty', () => {
+    expect(normalizeSettings({ profiles: [] }).profiles.map((p) => [p.id, p.name])).toEqual([
+      ['team', 'Team'],
+      ['personal', 'Personal'],
+    ]);
+  });
 });
