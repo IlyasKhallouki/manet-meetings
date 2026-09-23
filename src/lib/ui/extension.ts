@@ -81,11 +81,12 @@ export function watchResultIds(onChange: (sessionId: string, present: boolean) =
 }
 
 /**
- * Starts recording `tabId`. Must be called from the popup's click: tabCapture only works
- * after the user invoked the extension on that tab. Throws the background's reason.
+ * Starts recording `tabId` for `profileId` (the default profile when absent). Must be called
+ * from the popup's click: tabCapture only works after the user invoked the extension on
+ * that tab. Throws the background's reason.
  */
-export async function startRecording(tabId: number): Promise<string> {
-  const result = await sendToBackground('session/start', { tabId });
+export async function startRecording(tabId: number, profileId?: string): Promise<string> {
+  const result = await sendToBackground('session/start', profileId ? { tabId, profileId } : { tabId });
   if (!result.ok) throw new Error(result.error);
   return result.sessionId;
 }

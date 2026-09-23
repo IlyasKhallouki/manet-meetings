@@ -12,6 +12,7 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { handleMessages, sendToOffscreen, type BackgroundProtocol, type JobDone } from '@lib/messages';
 import { DEFAULT_SETTINGS } from '@lib/settings';
 import type { CaptionSegment, JobStage, SessionMeta, Settings } from '@lib/types';
+import { testProfile } from '../helpers/meeting';
 
 type Background = { [K in keyof BackgroundProtocol]: BackgroundProtocol[K] };
 
@@ -25,6 +26,8 @@ const settings: Settings = {
   displayName: 'Ilyas',
 };
 
+const profile = testProfile({ databaseId: settings.notionTeamDbId });
+
 const meta: SessionMeta = {
   id: SESSION,
   meetCode: 'abc-defg-hij',
@@ -32,6 +35,7 @@ const meta: SessionMeta = {
   durationMs: 60_000,
   status: 'processing',
   route: 'team',
+  profileId: 'team',
   idempotencyKey: 'abc-defg-hij-2026-09-19',
   audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 0, bytes: 0, micIncluded: false },
   captionCount: 1,
@@ -79,7 +83,7 @@ async function outcomeOf(jobId: string): Promise<JobDone> {
 }
 
 async function processed(jobId: string) {
-  expect(await sendToOffscreen('offscreen/process', { jobId, meta, captions, settings, route: 'team' })).toEqual({
+  expect(await sendToOffscreen('offscreen/process', { jobId, meta, captions, settings, profile })).toEqual({
     accepted: true,
   });
   const d = await outcomeOf(jobId);
@@ -125,7 +129,7 @@ describe('offscreen document messaging', () => {
 
 describe('offscreen jobs', () => {
   it('accepts a process job at once and sends its outcome as offscreen/job-done', async () => {
-    const reply = await sendToOffscreen('offscreen/process', { jobId: 'p-1', meta, captions, settings, route: 'team' });
+    const reply = await sendToOffscreen('offscreen/process', { jobId: 'p-1', meta, captions, settings, profile });
     expect(reply).toEqual({ accepted: true });
     // The reply does not wait for the job: Notion has not even answered yet.
     expect(done).toEqual([]);
@@ -150,7 +154,7 @@ describe('offscreen jobs', () => {
     const result = await processed('p-2');
     progress.length = 0;
 
-    const reply = await sendToOffscreen('offscreen/save', { jobId: 's-2', meta, result, settings, route: 'team' });
+    const reply = await sendToOffscreen('offscreen/save', { jobId: 's-2', meta, result, settings, profile });
     expect(reply).toEqual({ accepted: true });
     // The token is invalid, so Notion refuses it; that still comes back as an outcome.
     expect(await outcomeOf('s-2')).toEqual({
@@ -164,7 +168,7 @@ describe('offscreen jobs', () => {
 
   it('delivers the outcome to whichever worker is alive when the job ends', async () => {
     // The worker that sent the job is stopped right after (Chrome's 5-minute cap, an update, a crash).
-    const reply = sendToOffscreen('offscreen/process', { jobId: 'p-3', meta, captions, settings, route: 'team' });
+    const reply = sendToOffscreen('offscreen/process', { jobId: 'p-3', meta, captions, settings, profile });
     stopWorker?.();
     stopWorker = null;
     expect(await reply).toEqual({ accepted: true });
@@ -177,12 +181,12 @@ describe('offscreen jobs', () => {
   });
 
   it('refuses a second job for a session whose job is still running', async () => {
-    await sendToOffscreen('offscreen/process', { jobId: 'p-4', meta, captions, settings, route: 'team' });
+    await sendToOffscreen('offscreen/process', { jobId: 'p-4', meta, captions, settings, profile });
     await expect(
-      sendToOffscreen('offscreen/process', { jobId: 'p-5', meta, captions, settings, route: 'team' }),
+      sendToOffscreen('offscreen/process', { jobId: 'p-5', meta, captions, settings, profile }),
     ).rejects.toThrow(`Session ${SESSION} already has a process job running (p-4)`);
     // The same job sent again (its reply was lost) is not run twice.
-    const resent = await sendToOffscreen('offscreen/process', { jobId: 'p-4', meta, captions, settings, route: 'team' });
+    const resent = await sendToOffscreen('offscreen/process', { jobId: 'p-4', meta, captions, settings, profile });
     expect(resent).toEqual({ accepted: true });
     await outcomeOf('p-4');
     await vi.waitFor(async () => expect((await sendToOffscreen('offscreen/job-status', {})).jobs).toEqual([]));
@@ -191,18 +195,21 @@ describe('offscreen jobs', () => {
 
   it('rejects a malformed job instead of accepting it', async () => {
     const bad = [
-      { meta, captions, settings, route: 'team' },
-      { jobId: '', meta, captions, settings, route: 'team' },
-      { jobId: 'x', meta: { ...meta, id: undefined }, captions, settings, route: 'team' },
-      { jobId: 'x', meta, captions: undefined, settings, route: 'team' },
-      { jobId: 'x', meta, captions, settings: undefined, route: 'team' },
-      { jobId: 'x', meta, captions, settings, route: 'everyone' },
+      { meta, captions, settings, profile },
+      { jobId: '', meta, captions, settings, profile },
+      { jobId: 'x', meta: { ...meta, id: undefined }, captions, settings, profile },
+      { jobId: 'x', meta, captions: undefined, settings, profile },
+      { jobId: 'x', meta, captions, settings: undefined, profile },
+      { jobId: 'x', meta, captions, settings, profile: { id: 'team' } },
     ];
     for (const job of bad) {
       await expect(sendToOffscreen('offscreen/process', job as never)).rejects.toThrow(/^Invalid process job: /);
     }
+    await expect(sendToOffscreen('offscreen/process', { jobId: 'x', meta, captions, settings } as never)).rejects.toThrow(
+      'Invalid process job: profile is missing',
+    );
     await expect(
-      sendToOffscreen('offscreen/save', { jobId: 'x', meta, settings, route: 'team' } as never),
+      sendToOffscreen('offscreen/save', { jobId: 'x', meta, settings, profile } as never),
     ).rejects.toThrow(/^Invalid save job: result/);
     expect(await sendToOffscreen('offscreen/job-status', {})).toEqual({ jobs: [] });
   });

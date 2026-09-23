@@ -121,8 +121,8 @@ describe('recording lifecycle', () => {
 
     expect(await fakeBrowser.alarms.get(`route:${ID}`)).toBeUndefined();
     const [job] = h.offscreen.callsOf('offscreen/process');
-    expect(job?.route).toBe('personal');
-    expect(job?.meta).toMatchObject({ id: ID, status: 'processing', route: 'personal' });
+    expect(job?.profile).toMatchObject({ id: 'personal', databaseId: 'personal-db' });
+    expect(job?.meta).toMatchObject({ id: ID, status: 'processing', route: 'personal', profileId: 'personal' });
     expect(job?.captions).toEqual(await loadCaptions(ID));
     expect(job?.captions.map((c) => c.text)).toEqual(['Bonjour à tous', 'Hi all']);
     expect(job?.settings.notionPersonalDbId).toBe('personal-db');
@@ -130,7 +130,7 @@ describe('recording lifecycle', () => {
     const result = await getResult(ID);
     expect(result?.title).toBe('Weekly sync');
     const [saveJob] = h.offscreen.callsOf('offscreen/save');
-    expect(saveJob).toMatchObject({ route: 'personal', result, meta: { id: ID, status: 'saving' } });
+    expect(saveJob).toMatchObject({ profile: { id: 'personal', databaseId: 'personal-db' }, result, meta: { id: ID, status: 'saving' } });
 
     const saved = await getSession(ID);
     const savedAt = h.clock.now();
@@ -172,7 +172,7 @@ describe('recording lifecycle', () => {
 
     await m.transcribe(ID);
     await m.idle();
-    expect(h.offscreen.callsOf('offscreen/process')[0]?.route).toBe('personal');
+    expect(h.offscreen.callsOf('offscreen/process')[0]?.profile.id).toBe('personal');
     expect((await getSession(ID))?.status).toBe('saved');
   });
 

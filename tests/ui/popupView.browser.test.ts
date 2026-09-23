@@ -66,6 +66,11 @@ function model(patch: Partial<PopupModel> = {}): PopupModel {
     mic: 'granted',
     includeMic: true,
     setup: [],
+    profiles: [
+      { id: 'team', name: 'Team' },
+      { id: 'personal', name: 'Personal' },
+    ],
+    defaultProfileId: 'team',
     geminiKeyMissing: false,
     recent: [],
     needsYou: 0,
@@ -422,10 +427,10 @@ describe('popup: facts, setup and links', () => {
   it('collapses setup into one block: the ▲ callout when saving is blocked, else the Gemini note', () => {
     const h = handlers();
     const v = view(h.handlers);
-    v.update(model({ setup: ['name', 'token', 'team-database'], geminiKeyMissing: true }), T0);
+    v.update(model({ setup: ['name', 'token', 'database'], geminiKeyMissing: true }), T0);
     const missing = root.querySelector('[data-role="missing"]')!;
     expect(text(missing)).toBe(
-      'Meetings can’t be saved to Notion yet Add your name, a Notion token and the Team database. Open settings',
+      'Meetings can’t be saved to Notion yet Add your name, a Notion token and the Team profile’s database. Open settings',
     );
     expect(missing.querySelector('svg.glyph-caution')).not.toBeNull();
     expect(root.querySelector('[data-role="no-gemini"]')).toBeNull();
@@ -535,7 +540,7 @@ describe('popup: facts, setup and links', () => {
         model({
           state: { ...onCall, title: 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review' },
           mic: 'denied',
-          setup: ['name', 'token', 'team-database'],
+          setup: ['name', 'token', 'database'],
         }),
         T0,
       );
@@ -568,7 +573,7 @@ describe('popup: facts, setup and links', () => {
         model({
           state: { ...onCall, title: 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review' },
           mic: 'denied',
-          setup: ['name', 'token', 'team-database'],
+          setup: ['name', 'token', 'database'],
           needsYou: 3, // the label wraps at 150%, so the bar is taller than --bar-h
         }),
         T0,

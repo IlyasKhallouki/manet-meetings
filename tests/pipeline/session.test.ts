@@ -9,7 +9,7 @@ import {
   transcribeDurationMs,
 } from '@lib/pipeline/session';
 import type { MeetingSummary, MeetingTranscript, SessionResult } from '@lib/types';
-import { MEET_CODE, mixedSpeechCaptions, revisions, sessionMeta, testSettings } from '../helpers/meeting';
+import { MEET_CODE, mixedSpeechCaptions, revisions, sessionMeta, testProfile, testSettings } from '../helpers/meeting';
 
 const summary: MeetingSummary = {
   title: 'Budget review',
@@ -101,7 +101,7 @@ describe('buildMeetingPageInput', () => {
       meta,
       result,
       settings: testSettings({ displayName: ' Ilyas ' }),
-      route: 'team',
+      profile: testProfile(),
     });
     expect(input).toEqual({
       key: meta.idempotencyKey,
@@ -111,6 +111,7 @@ describe('buildMeetingPageInput', () => {
       attendees: ['Camille Martin', 'Ilyas'],
       meetCode: MEET_CODE,
       recordedBy: 'Ilyas',
+      profileName: 'Team',
       source: 'audio+captions',
       summary,
       transcript: {
@@ -127,7 +128,7 @@ describe('buildMeetingPageInput', () => {
       meta: sessionMeta({ meetingTitle: undefined }),
       result: { ...result, title: ' ' },
       settings: testSettings(),
-      route: 'personal',
+      profile: testProfile({ id: 'personal', name: 'Personal' }),
     });
     expect(input.title).toBe(`Meeting ${MEET_CODE}`);
   });

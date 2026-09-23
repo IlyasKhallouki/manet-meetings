@@ -19,6 +19,7 @@ import {
   type StartResult,
 } from '@lib/messages';
 import { meetCodeFromUrl } from '@lib/meet/meetCode';
+import { defaultProfile, profileById, profileForSession } from '@lib/profiles';
 import { AUDIO_CHUNK_MS, recordingHealth } from '@lib/recordingHealth';
 import { missingForSave } from '@lib/settingsSchema';
 import { deleteCaptions, loadCaptions, mergeCaptions } from '@lib/storage/captionStore';
@@ -100,6 +101,8 @@ const SAVABLE = new Set<SessionStatus>(['processed', 'failed', 'duplicate']);
 const REROUTABLE = new Set<SessionStatus>(['ready', 'failed', 'processed', 'empty', 'duplicate']);
 /** The session's job is in the offscreen document. */
 const RUNNING = new Set<SessionStatus>(['processing', 'saving']);
+/** A meeting's profile can change until it is in Notion or on its way there. */
+const PROFILE_CHANGEABLE = new Set<SessionStatus>(['recording', 'awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
 
 export type SendToOffscreen = <K extends keyof OffscreenProtocol & string>(
   type: K,
@@ -158,7 +161,8 @@ export interface SessionManager {
    * Methods that change sessions wait for the latest boot to finish.
    */
   boot(opts?: { full?: boolean }): Promise<void>;
-  start(tabId: number): Promise<StartResult>;
+  /** Starts recording `tabId` for `profileId` (the default profile when absent or unknown). */
+  start(tabId: number, profileId?: string): Promise<StartResult>;
   stop(sessionId: string): Promise<void>;
   /** Keyboard command: stops the current recording, or starts one on `tabId` / the active tab. */
   toggle(tabId?: number): Promise<void>;
@@ -169,6 +173,8 @@ export interface SessionManager {
    * 2-minute default. `windowId` is the prompt's window, when the message came from one.
    */
   routeHold(sessionId: string, hold: boolean, windowId?: number): Promise<void>;
+  /** Sets the meeting's profile. The next transcription or save uses it. */
+  setProfile(sessionId: string, profileId: string): Promise<void>;
   /**
    * Hands the process job (then the save) to the offscreen document and resolves once it
    * is accepted, or the session failed. `force` skips the Notion duplicate check.
@@ -434,13 +440,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   // Recording
   // -------------------------------------------------------------------------
 
-  function start(tabId: number): Promise<StartResult> {
+  function start(tabId: number, profileId?: string): Promise<StartResult> {
     // A second click sees the first recording and answers from it; a stop waits for the
     // start in flight, so it stops the recorder that started.
-    return serial(() => startRecording(tabId));
+    return serial(() => startRecording(tabId, profileId));
   }
 
-  async function startRecording(tabId: number): Promise<StartResult> {
+  async function startRecording(tabId: number, profileId?: string): Promise<StartResult> {
     await ready();
     const active = await getActiveRecording();
     if (active) {
@@ -458,6 +464,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!meetCode) return { ok: false, error: 'This tab isn’t a Google Meet call.' };
 
     const settings = await deps.getSettings();
+    const profile = profileById(settings, profileId) ?? defaultProfile(settings);
     const requestedAt = deps.now();
     // Ids have one-second resolution and name the OPFS directory: never reuse one.
     let idTime = requestedAt;
@@ -485,6 +492,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         ...(title ? { meetingTitle: title } : {}),
         startedAt: requestedAt,
         status: 'recording',
+        profileId: profile.id,
         idempotencyKey: idempotencyKey(meetCode, requestedAt),
         audio: { mimeType: '', chunkCount: 0, bytes: 0, micIncluded: false },
         captionCount: 0,
@@ -772,10 +780,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const meta = await updateSession(id, (m) => {
       if (m.status === 'awaiting-route') {
         routed = true;
-        return withRouteDeadline({ ...m, route, status: 'ready' }, undefined);
+        return withRouteDeadline({ ...m, route, profileId: route, status: 'ready' }, undefined);
       }
       if (!explicit) return m;
-      if (REROUTABLE.has(m.status)) return { ...m, route };
+      if (REROUTABLE.has(m.status)) return { ...m, route, profileId: route };
       throw new MeetingProblem(problems.cannotRoute(m.status));
     });
     if (!meta) {
@@ -839,6 +847,26 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (meta && changed) await notify(id, failureNote(meta, kind, problems.missingSettings(missing)));
   }
 
+  /** The meeting's profile was deleted: it waits for another (Meetings offers them). */
+  async function markProfileMissing(id: string, kind: Job['kind']): Promise<void> {
+    let changed = false;
+    const meta = await updateSession(id, (m) => {
+      if (RUNNING.has(m.status)) return m;
+      changed = true;
+      return { ...m, status: 'failed', stage: undefined, job: undefined, error: problems.profileDeleted };
+    });
+    if (meta && changed) await notify(id, failureNote(meta, kind, problems.profileDeleted));
+  }
+
+  async function changeProfile(id: string, profileId: string): Promise<void> {
+    if (!profileById(await deps.getSettings(), profileId)) throw new MeetingProblem(problems.unknownProfile);
+    const meta = await updateSession(id, (m) => {
+      if (!PROFILE_CHANGEABLE.has(m.status)) throw new MeetingProblem(problems.cannotChangeProfile(m.status));
+      return m.profileId === profileId ? m : { ...m, profileId };
+    });
+    if (!meta) throw new MeetingProblem(problems.deleted);
+  }
+
   /**
    * Hands a job to the offscreen document. Its outcome arrives as 'offscreen/job-done';
    * if the document never accepted it, the session fails with the reason.
@@ -864,7 +892,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * Starts processing (then saving) unless the session's job is already running. `attempt`
    * counts automatic retries after Gemini was unreachable; a user's Transcribe is attempt 1.
    */
-  async function transcribeNow(id: string, opts: { force?: boolean; attempt?: number } = {}): Promise<void> {
+  async function transcribeNow(
+    id: string,
+    opts: { force?: boolean; attempt?: number; summaryOnly?: boolean } = {},
+  ): Promise<void> {
     const meta = await getSession(id);
     if (!meta) throw new MeetingProblem(problems.deleted);
     if (RUNNING.has(meta.status)) return;
@@ -872,8 +903,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     await clearRouteAlarm(id);
     await deps.alarms.clear(retryAlarm(id));
     const settings = await deps.getSettings();
+    const profile = profileForSession(settings, meta.profileId);
+    if (!profile) {
+      await markProfileMissing(id, 'process');
+      return;
+    }
     const route = meta.route ?? settings.defaultRoute;
-    const missing = missingForSave(settings, route);
+    const missing = missingForSave(settings, profile);
     if (missing.length > 0) {
       await markMissingSettings(id, missing, 'process');
       return;
@@ -889,6 +925,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         ...m,
         status: 'processing',
         route,
+        profileId: profile.id,
         stage: undefined,
         error: undefined,
         job,
@@ -903,6 +940,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!claimed || !processing) return;
 
     const force = isForced(processing);
+    const reuse = opts.summaryOnly ? await getResult(id) : null;
     await launch(id, job.id, 'process', async () => {
       const captions = await loadCaptions(id);
       await deps.offscreen.send('offscreen/process', {
@@ -910,8 +948,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         meta: processing,
         captions,
         settings,
-        route,
+        profile,
         attempt,
+        ...(reuse ? { reuse } : {}),
         ...(force ? { force } : {}),
       });
     });
@@ -922,10 +961,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const [meta, result] = await Promise.all([getSession(id), getResult(id)]);
     if (!meta || !result || RUNNING.has(meta.status)) return;
     const settings = await deps.getSettings();
+    const profile = profileForSession(settings, meta.profileId);
+    if (!profile) {
+      await markProfileMissing(id, 'save');
+      return;
+    }
     const route = meta.route ?? settings.defaultRoute;
-    const missing = missingForSave(settings, route);
+    const missing = missingForSave(settings, profile);
     if (missing.length > 0) {
       await markMissingSettings(id, missing, 'save');
+      return;
+    }
+    // The notes were written for another profile: write them again for this one; the save follows.
+    const writtenFor = result.profile?.id ?? meta.route;
+    if (SAVABLE.has(meta.status) && writtenFor !== undefined && writtenFor !== profile.id) {
+      await transcribeNow(id, { summaryOnly: true, ...(opts.force ? { force: true } : {}) });
       return;
     }
 
@@ -950,7 +1000,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const force = isForced(saving);
     await launch(id, job.id, 'save', () =>
-      deps.offscreen.send('offscreen/save', { jobId: job.id, meta: saving, result, settings, route, ...(force ? { force } : {}) }),
+      deps.offscreen.send('offscreen/save', { jobId: job.id, meta: saving, result, settings, profile, ...(force ? { force } : {}) }),
     );
   }
 
@@ -1081,7 +1131,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           savedAt,
           purgeAudioAt: savedAt + settings.retentionDays * DAY_MS,
         }));
-        if (saved) await notify(id, notes.saved(saved, savedAt));
+        const where = profileForSession(settings, saved?.profileId)?.name ?? 'Notion';
+        if (saved) await notify(id, notes.saved(saved, where, savedAt));
         return;
       }
       case 'duplicate':
@@ -1385,7 +1436,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       return booting;
     },
 
-    start,
+    start: (tabId, profileId) => start(tabId, profileId),
 
     stop(sessionId) {
       return request('stop the recording', async () => {
@@ -1417,6 +1468,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     async routeHold(sessionId, hold, windowId) {
       await ready();
       await routingOp(sessionId, () => (hold ? holdRoute(sessionId, windowId) : resumeRoute(sessionId, true)));
+    },
+
+    setProfile(sessionId, profileId) {
+      return request('change the profile', async () => {
+        await ready();
+        await changeProfile(sessionId, profileId);
+      });
     },
 
     transcribe(sessionId, opts = {}) {
@@ -1620,10 +1678,11 @@ export function backgroundHandlers(manager: SessionManager): Handlers<Background
     'meet/joined': (req, sender) => manager.onMeetJoined(sender.tab?.id, req),
     'meet/left': (req, sender) => manager.onMeetLeft(sender.tab?.id, req),
     'captions/batch': (req) => manager.onCaptions(req),
-    'session/start': (req) => manager.start(req.tabId),
+    'session/start': (req) => manager.start(req.tabId, req.profileId),
     'session/stop': (req) => manager.stop(req.sessionId),
     'session/route': (req) => manager.route(req.sessionId, req.route),
     'session/route-hold': (req, sender) => manager.routeHold(req.sessionId, req.hold, sender.tab?.windowId),
+    'session/set-profile': (req) => manager.setProfile(req.sessionId, req.profileId),
     'session/transcribe': (req) => manager.transcribe(req.sessionId, { force: req.force === true }),
     'session/save': (req) => manager.save(req.sessionId, { force: req.force === true }),
     'session/delete': (req) => manager.remove(req.sessionId),

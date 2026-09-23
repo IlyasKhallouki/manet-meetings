@@ -8,7 +8,7 @@ import type { VerifyResult } from '../notion/verify';
 import { parseNotionId } from '../notion/ids';
 import { missingForSave } from '../settingsSchema';
 import { MAX_VOCABULARY } from '../transcribe/requests';
-import type { Route, Settings } from '../types';
+import type { Profile, Route, Settings } from '../types';
 
 export const MAX_RETENTION_DAYS = 365;
 
@@ -70,11 +70,11 @@ const LANGUAGE_ALIASES: Record<string, string[]> = { zh: ['cmn', 'yue'], no: ['n
  * What the pages warn about. Only `blocking` stops a save (as in the background); without
  * a Gemini key meetings are still filed, with a transcript built from captions.
  */
-export function setupProblems(settings: Settings, route: Route): { blocking: string[]; geminiKeyMissing: boolean } {
-  return {
-    blocking: missingForSave(settings, route),
-    geminiKeyMissing: !settings.geminiApiKey,
-  };
+export function setupProblems(
+  settings: Settings,
+  profile: Pick<Profile, 'name' | 'databaseId'>,
+): { blocking: string[]; geminiKeyMissing: boolean } {
+  return { blocking: missingForSave(settings, profile), geminiKeyMissing: !settings.geminiApiKey };
 }
 
 export function settingsToForm(s: Settings): SettingsFormValues {
@@ -299,8 +299,9 @@ export function setupComplete(items: SetupItem[]): boolean {
 /** missingForSave's (and missingSettings') items → the field, in the order Settings shows them. */
 const MISSING_FIELDS: [RegExp, SetupItem['key']][] = [
   [/^your name$/i, 'displayName'],
-  // missingForSave's phrases ('a Notion token', 'the Team database') and older records' names.
+  // missingForSave's phrases ('a Notion token', 'the Team profile’s database') and older records' names.
   [/notion (integration )?token/i, 'notionToken'],
+  [/profile’s database/i, 'notionTeamDbId'],
   [/team database/i, 'notionTeamDbId'],
   [/personal database/i, 'notionPersonalDbId'],
   [/gemini api key/i, 'geminiApiKey'],

@@ -36,10 +36,17 @@ function serialized<T>(id: string, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** A meta as any version stored it: a meeting from before profiles takes its Team | Personal destination as its profile. */
+export function normalizeMeta(meta: SessionMeta): SessionMeta {
+  if (meta.profileId !== undefined || meta.route === undefined) return meta;
+  return { ...meta, profileId: meta.route };
+}
+
 async function read(id: string): Promise<SessionMeta | null> {
   const key = sessionKey(id);
   const got = await browser.storage.local.get(key);
-  return (got[key] as SessionMeta | undefined) ?? null;
+  const stored = got[key] as SessionMeta | undefined;
+  return stored ? normalizeMeta(stored) : null;
 }
 
 async function storedKeys(): Promise<string[]> {
@@ -62,9 +69,11 @@ export async function listSessions(): Promise<SessionMeta[]> {
   const keys = (await storedKeys()).filter((k) => k.startsWith(PREFIX));
   if (keys.length === 0) return [];
   const got = await browser.storage.local.get(keys);
-  return Object.values(got as Record<string, SessionMeta>).sort(
-    (a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
-  );
+  return Object.values(got as Record<string, SessionMeta>)
+    .map(normalizeMeta)
+    .sort(
+      (a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+    );
 }
 
 export function putSession(meta: SessionMeta): Promise<void> {
@@ -119,11 +128,9 @@ export function watchSessions(
     if (area !== 'local') return;
     for (const [key, change] of Object.entries(changes)) {
       if (!key.startsWith(PREFIX)) continue;
-      onChange(
-        key.slice(PREFIX.length),
-        (change.newValue as SessionMeta | undefined) ?? null,
-        (change.oldValue as SessionMeta | undefined) ?? null,
-      );
+      const next = change.newValue as SessionMeta | undefined;
+      const previous = change.oldValue as SessionMeta | undefined;
+      onChange(key.slice(PREFIX.length), next ? normalizeMeta(next) : null, previous ? normalizeMeta(previous) : null);
     }
   };
   browser.storage.onChanged.addListener(listener);

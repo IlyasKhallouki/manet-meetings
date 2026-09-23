@@ -14,7 +14,7 @@
  * "Write clear error messages… be clear about what someone can do to fix it"). Raw
  * reasons from Chrome or Gemini stay in the console; a status code is the one detail kept.
  */
-import type { Route, SessionMeta, SessionStatus } from '@lib/types';
+import type { SessionMeta, SessionStatus } from '@lib/types';
 
 const MINUTE_MS = 60_000;
 
@@ -63,10 +63,6 @@ function meetingName(startedAt: number, now: number, locale?: string): string {
   return `${name} on ${day}`;
 }
 
-function routeName(route: Route | undefined): string {
-  return route === 'personal' ? 'Personal' : 'Team';
-}
-
 /** Raw reasons (Gemini, Notion, Chrome) become one sentence: capitalised, with an end. */
 function sentence(reason: string, fallback: string): string {
   const text = reason.trim() || fallback;
@@ -77,11 +73,12 @@ function sentence(reason: string, fallback: string): string {
 type Meeting = Pick<SessionMeta, 'startedAt' | 'durationMs' | 'route'>;
 
 export const notes = {
-  saved(meta: Meeting, now: number, locale?: string): Note {
+  /** `where`: the profile the meeting was saved for ("Team"), or "Notion" when it is gone. */
+  saved(meta: Meeting, where: string, now: number, locale?: string): Note {
     const length = meta.durationMs ? ` (${meetingLength(meta.durationMs)})` : '';
     return {
       title: 'Saved to Notion',
-      message: `Your ${meetingName(meta.startedAt, now, locale)}${length} is in ${routeName(meta.route)}.`,
+      message: `Your ${meetingName(meta.startedAt, now, locale)}${length} is in ${where}.`,
     };
   },
 
@@ -160,24 +157,26 @@ function statusSuffix(raw: string): string {
 }
 
 /**
- * The settings missingSettings names ("your name", "a Notion token", …), in the order
- * Settings asks for them. The names older records stored ("Notion integration token",
- * "Notion team database id", "Gemini API key") map to the same words.
+ * The settings missingSettings names ("your name", "a Notion token", "the Team profile’s
+ * database", "a Gemini key"), in the order Settings asks for them. Older records' names
+ * ("Notion integration token", "Notion team database id", "Gemini API key") map to words too.
+ * A profile's database is matched first, so a profile called "Token" still reads right.
  */
-const SETTING_WORDS: [RegExp, string][] = [
-  [/name/i, 'your name'],
-  [/token/i, 'a Notion token'],
-  [/team/i, 'the Team database'],
-  [/personal/i, 'the Personal database'],
-  [/gemini/i, 'a Gemini key'],
+const SETTING_WORDS: [RegExp, (item: string) => string, number][] = [
+  [/profile’s database$/i, (item) => item, 2],
+  [/name/i, () => 'your name', 0],
+  [/token/i, () => 'a Notion token', 1],
+  [/team/i, () => 'the Team database', 2],
+  [/personal/i, () => 'the Personal database', 2],
+  [/gemini/i, () => 'a Gemini key', 3],
 ];
 
-/** "your name, a Notion token and the Team database". */
+/** "your name, a Notion token and the Team profile’s database". */
 export function settingsPhrase(missing: readonly string[]): string {
   const words = missing
     .map((item) => {
-      const i = SETTING_WORDS.findIndex(([pattern]) => pattern.test(item));
-      return i < 0 ? { order: SETTING_WORDS.length, text: item } : { order: i, text: SETTING_WORDS[i]![1] };
+      const match = SETTING_WORDS.find(([pattern]) => pattern.test(item));
+      return match ? { order: match[2], text: match[1](item) } : { order: SETTING_WORDS.length, text: item };
     })
     .sort((a, b) => a.order - b.order)
     .map((w) => w.text);
@@ -252,6 +251,16 @@ export const problems = {
 
   /** A request named a meeting that is gone. */
   deleted: 'This meeting was deleted.',
+
+  /** The meeting's profile no longer exists; Meetings offers the others. */
+  profileDeleted: 'This meeting’s profile was deleted. Choose another profile.',
+
+  /** A page asked for a profile that is gone (deleted in another tab). */
+  unknownProfile: 'That profile no longer exists. Reload the page and choose another.',
+
+  cannotChangeProfile(status: SessionStatus): string {
+    return occupied(status, 'change its profile') ?? 'The profile can’t be changed now. Reload Meetings.';
+  },
 
   cannotRoute(status: SessionStatus): string {
     return occupied(status, 'choose Team or Personal') ?? 'Team or Personal can’t be changed now. Reload Meetings.';

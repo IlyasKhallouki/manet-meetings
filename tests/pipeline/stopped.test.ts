@@ -7,7 +7,7 @@ import { NotionError } from '@lib/notion/client';
 import { processSession, saveSession, type PipelineDeps } from '@lib/pipeline';
 import { STOPPED } from '@lib/pipeline/notes';
 import type { SessionResult } from '@lib/types';
-import { sessionMeta, testSettings } from '../helpers/meeting';
+import { sessionMeta, testProfile, testSettings } from '../helpers/meeting';
 
 let warn: MockInstance<typeof console.warn>;
 beforeEach(() => {
@@ -47,7 +47,7 @@ describe('STOPPED', () => {
 describe('processSession', () => {
   it('ends with “Transcribing stopped…” when something unexpected breaks, and logs the cause', async () => {
     const settings = { ...testSettings(), displayName: undefined as unknown as string };
-    const outcome = await processSession({ meta: sessionMeta(), captions: [], settings, route: 'team' }, deps());
+    const outcome = await processSession({ meta: sessionMeta(), captions: [], settings, profile: testProfile() }, deps());
     expect(outcome).toEqual({ status: 'error', error: STOPPED.process });
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/Transcribing stopped/), expect.any(TypeError));
   });
@@ -55,7 +55,7 @@ describe('processSession', () => {
 
 describe('saveSession', () => {
   it('ends with “Saving to Notion stopped…” when something unexpected breaks, and logs the cause', async () => {
-    const job = { meta: sessionMeta(), result: undefined as unknown as SessionResult, settings: testSettings(), route: 'team' as const };
+    const job = { meta: sessionMeta(), result: undefined as unknown as SessionResult, settings: testSettings(), profile: testProfile() };
     const outcome = await saveSession(job, deps());
     expect(outcome).toEqual({ status: 'error', error: STOPPED.save });
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/Saving to Notion stopped/), expect.any(TypeError));
@@ -64,7 +64,7 @@ describe('saveSession', () => {
   it('explains what Notion said in people’s words', async () => {
     const rejected = new NotionError(401, 'unauthorized', 'API token is invalid.');
     const outcome = await saveSession(
-      { meta: sessionMeta(), result: RESULT, settings: testSettings(), route: 'team' },
+      { meta: sessionMeta(), result: RESULT, settings: testSettings(), profile: testProfile() },
       deps({ findByKey: () => Promise.reject(rejected) }),
     );
     expect(outcome).toEqual({ status: 'error', error: 'Notion rejected the token. Copy it again in Settings.' });

@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { clockTime, meetingLength, notes, problems, settingsPhrase } from '@/entrypoints/background/copy';
 import { DEFAULT_SETTINGS, missingForSave, missingSettings } from '@lib/settingsSchema';
-import type { SessionMeta, SessionStatus } from '@lib/types';
+import type { Profile, SessionMeta, SessionStatus } from '@lib/types';
 import { errorText } from '@lib/ui/sessionView';
 
 const at = (day: number, hh: number, mm: number) => new Date(2026, 8, day, hh, mm).getTime();
 const START = at(19, 14, 2);
 const NOW = at(19, 14, 40);
 const MINUTE = 60_000;
+/** DEFAULT_SETTINGS' profiles: Team and Personal, without databases. */
+const [TEAM, PERSONAL] = DEFAULT_SETTINGS.profiles as [Profile, Profile];
 
 function meta(patch: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -48,7 +50,7 @@ describe('notifications', () => {
   it('say what happened with the time and length, never the meeting title or the app name', () => {
     const m = meta();
     const all = [
-      notes.saved(m, NOW, 'en-GB'),
+      notes.saved(m, 'Team', NOW, 'en-GB'),
       notes.alreadyInNotion(m, 'Marie', NOW, 'en-GB'),
       notes.alreadySavedByYou(m, NOW, 'en-GB'),
       notes.nothingToSave(m, NOW, 'en-GB'),
@@ -68,11 +70,11 @@ describe('notifications', () => {
 
   it("use the direction's strings", () => {
     const m = meta();
-    expect(notes.saved(m, NOW, 'en-GB')).toEqual({
+    expect(notes.saved(m, 'Team', NOW, 'en-GB')).toEqual({
       title: 'Saved to Notion',
       message: 'Your 14:02 meeting (32 min) is in Team.',
     });
-    expect(notes.saved(meta({ route: 'personal' }), NOW, 'en-GB').message).toBe('Your 14:02 meeting (32 min) is in Personal.');
+    expect(notes.saved(m, 'Client meeting', NOW, 'en-GB').message).toBe('Your 14:02 meeting (32 min) is in Client meeting.');
     expect(notes.alreadyInNotion(m, 'Marie', NOW, 'en-GB')).toEqual({
       title: 'Already in Notion',
       message: "Marie saved the 14:02 meeting, so yours wasn’t added.",
@@ -117,13 +119,13 @@ describe('notifications', () => {
   });
 
   it('leave the length out when it is unknown', () => {
-    expect(notes.saved(meta({ durationMs: undefined }), NOW, 'en-GB').message).toBe('Your 14:02 meeting is in Team.');
-    expect(notes.saved(meta({ durationMs: 0 }), NOW, 'en-GB').message).toBe('Your 14:02 meeting is in Team.');
+    expect(notes.saved(meta({ durationMs: undefined }), 'Team', NOW, 'en-GB').message).toBe('Your 14:02 meeting is in Team.');
+    expect(notes.saved(meta({ durationMs: 0 }), 'Team', NOW, 'en-GB').message).toBe('Your 14:02 meeting is in Team.');
   });
 
   it('add the day when the meeting was not today', () => {
     const yesterday = meta({ startedAt: at(18, 9, 15) });
-    expect(notes.saved(yesterday, NOW, 'en-GB').message).toBe('Your 09:15 meeting yesterday (32 min) is in Team.');
+    expect(notes.saved(yesterday, 'Team', NOW, 'en-GB').message).toBe('Your 09:15 meeting yesterday (32 min) is in Team.');
     const older = meta({ startedAt: at(12, 9, 15) });
     expect(titles([notes.couldNotTranscribe(older, 'x', NOW, 'en-GB')])).toEqual([
       "Couldn’t transcribe the 09:15 meeting on 12 September",
@@ -162,12 +164,19 @@ describe('problems', () => {
       problems.earlierTranscriptKept,
       problems.transcribingStopped,
       problems.missingSettings(['Notion integration token', 'Notion team database id', 'Your name']),
-      problems.missingSettings(missingForSave(DEFAULT_SETTINGS, 'personal')),
-      problems.missingSettings(missingSettings(DEFAULT_SETTINGS, 'team')),
+      problems.missingSettings(missingForSave(DEFAULT_SETTINGS, PERSONAL)),
+      problems.missingSettings(missingSettings(DEFAULT_SETTINGS, TEAM)),
       problems.deleted,
+      problems.profileDeleted,
+      problems.unknownProfile,
       problems.couldNotStop,
       problems.noResponse,
-      ...STATUSES.flatMap((s) => [problems.cannotRoute(s), problems.cannotTranscribe(s), problems.cannotSave(s)]),
+      ...STATUSES.flatMap((s) => [
+        problems.cannotRoute(s),
+        problems.cannotTranscribe(s),
+        problems.cannotSave(s),
+        problems.cannotChangeProfile(s),
+      ]),
     ];
   }
 
@@ -216,18 +225,24 @@ describe('problems', () => {
   });
 
   it('name missing settings in words, in the order Settings asks for them', () => {
-    expect(missingForSave(DEFAULT_SETTINGS, 'team')).toEqual(['your name', 'a Notion token', 'the Team database']);
-    expect(problems.missingSettings(missingForSave(DEFAULT_SETTINGS, 'team'))).toBe(
-      'Add your name, a Notion token and the Team database in Settings, then try again.',
+    expect(missingForSave(DEFAULT_SETTINGS, TEAM)).toEqual(['your name', 'a Notion token', 'the Team profile’s database']);
+    expect(problems.missingSettings(missingForSave(DEFAULT_SETTINGS, TEAM))).toBe(
+      'Add your name, a Notion token and the Team profile’s database in Settings, then try again.',
     );
-    const named = { ...DEFAULT_SETTINGS, displayName: 'Ilya', notionTeamDbId: 'db' };
-    expect(problems.missingSettings(missingForSave(named, 'personal'))).toBe(
-      'Add a Notion token and the Personal database in Settings, then try again.',
+    const named = { ...DEFAULT_SETTINGS, displayName: 'Ilya' };
+    expect(problems.missingSettings(missingForSave(named, PERSONAL))).toBe(
+      'Add a Notion token and the Personal profile’s database in Settings, then try again.',
     );
-    expect(problems.missingSettings(missingSettings({ ...named, notionToken: 't' }, 'team'))).toBe(
+    expect(problems.missingSettings(missingSettings({ ...named, notionToken: 't' }, { name: 'Team', databaseId: 'db' }))).toBe(
       'Add a Gemini key in Settings, then try again.',
     );
+    expect(missingForSave(named, { name: ' Client meeting ', databaseId: '' })).toEqual([
+      'a Notion token',
+      'the Client meeting profile’s database',
+    ]);
     expect(settingsPhrase(['a Notion token', 'your name'])).toBe('your name and a Notion token');
+    // A profile's database reads as itself, whatever the profile is called.
+    expect(settingsPhrase(['the Token profile’s database', 'your name'])).toBe('your name and the Token profile’s database');
   });
 
   it('still read the names older records stored', () => {
@@ -240,9 +255,13 @@ describe('problems', () => {
   });
 
   it('treat blank settings as missing, as the popup and Settings do', () => {
-    const blank = { ...DEFAULT_SETTINGS, displayName: '  ', notionToken: ' ', notionTeamDbId: '\t' };
-    expect(missingForSave(blank, 'team')).toEqual(['your name', 'a Notion token', 'the Team database']);
-    expect(missingForSave({ ...DEFAULT_SETTINGS, displayName: 'Ilya', notionToken: 't', notionTeamDbId: 'd' }, 'team')).toEqual(
+    const blank = { ...DEFAULT_SETTINGS, displayName: '  ', notionToken: ' ' };
+    expect(missingForSave(blank, { name: 'Team', databaseId: '\t' })).toEqual([
+      'your name',
+      'a Notion token',
+      'the Team profile’s database',
+    ]);
+    expect(missingForSave({ ...DEFAULT_SETTINGS, displayName: 'Ilya', notionToken: 't' }, { name: 'Team', databaseId: 'd' })).toEqual(
       [],
     );
   });

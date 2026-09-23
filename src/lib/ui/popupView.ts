@@ -22,10 +22,10 @@
  * in) and the clock.
  */
 import { meetCodeFromUrl } from '../meet/meetCode';
+import { defaultProfile } from '../profiles';
 import { minutesText, recordingHealth, silenceText, type RecordingHealth } from '../recordingHealth';
-import { databaseIdFor } from '../settingsSchema';
 import type { ActiveRecording } from '../storage/sessionStore';
-import type { SessionMeta, Settings, SpeakerInfo } from '../types';
+import type { Profile, SessionMeta, Settings, SpeakerInfo } from '../types';
 import { button, callout, factList, kbd, note, toneGlyph, visuallyHidden, type Fact, type Tone } from './controls';
 import { h, keepFocus, mount, type Child } from './dom';
 import { svg } from './icons';
@@ -290,40 +290,32 @@ export const IDLE_SPEAKERS: FactView = {
 // Setup
 
 /** What blocks saving to Notion, in the order the setup sentence names them. */
-export type SetupGap = 'name' | 'token' | 'team-database' | 'personal-database';
+export type SetupGap = 'name' | 'token' | 'database';
 
 /** The Settings field that fixes each gap ("Open settings" lands on the first one). */
-const GAP_FIELD: Record<SetupGap, FieldName> = {
-  name: 'displayName',
-  token: 'notionToken',
-  'team-database': 'notionTeamDbId',
-  'personal-database': 'notionPersonalDbId',
-};
+const GAP_FIELD: Record<SetupGap, FieldName> = { name: 'displayName', token: 'notionToken', database: 'notionTeamDbId' };
 
-/** Mirrors missingForSave(settings, defaultRoute), as items the popup can name in a sentence. */
+/** Mirrors missingForSave(settings, the default profile), as items the popup can name in a sentence. */
 export function setupGaps(settings: Settings): SetupGap[] {
   const gaps: SetupGap[] = [];
   if (!settings.displayName.trim()) gaps.push('name');
   if (!settings.notionToken.trim()) gaps.push('token');
-  if (!databaseIdFor(settings, settings.defaultRoute).trim()) {
-    gaps.push(settings.defaultRoute === 'team' ? 'team-database' : 'personal-database');
-  }
+  if (!defaultProfile(settings).databaseId.trim()) gaps.push('database');
   return gaps;
 }
 
-const GAP_WORDS: Record<SetupGap, string> = {
-  name: 'your name',
-  token: 'a Notion token',
-  'team-database': 'the Team database',
-  'personal-database': 'the Personal database',
-};
+const GAP_WORDS: Record<Exclude<SetupGap, 'database'>, string> = { name: 'your name', token: 'a Notion token' };
 
-/** "Add your name, a Notion token and the Team database." */
-export function setupSentence(gaps: readonly SetupGap[]): string {
-  const words = gaps.map((g) => GAP_WORDS[g]);
+/** "Add your name, a Notion token and the Team profile’s database." */
+export function setupSentence(gaps: readonly SetupGap[], profileName: string): string {
+  const words = gaps.map((g) => (g === 'database' ? `the ${profileName} profile’s database` : GAP_WORDS[g]));
   if (words.length === 0) return '';
   const list = words.length === 1 ? words[0]! : `${words.slice(0, -1).join(', ')} and ${words.at(-1)!}`;
   return `Add ${list}.`;
+}
+
+function profileName(m: Pick<PopupModel, 'profiles'>, id: string | undefined): string {
+  return m.profiles.find((p) => p.id === id)?.name ?? m.profiles[0]?.name ?? '';
 }
 
 // ---------------------------------------------------------------------------------------
@@ -415,6 +407,9 @@ export interface PopupModel {
   includeMic: boolean;
   /** What blocks saving to Notion (empty: nothing). */
   setup: readonly SetupGap[];
+  /** Every profile, in Settings order: the Profile row's choices. */
+  profiles: readonly Pick<Profile, 'id' | 'name'>[];
+  defaultProfileId: string;
   /** No Gemini key: meetings are still saved, with a captions-only transcript. */
   geminiKeyMissing: boolean;
   /** Latest meetings, newest first; the popup shows 3 when not on a call. */
@@ -767,11 +762,12 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
 
   function renderSetup(m: PopupModel, s: PopupState): void {
     const show = s.kind === 'recording' ? 'none' : m.setup.length ? 'missing' : m.geminiKeyMissing ? 'no-gemini' : 'none';
-    patch('setup', setupSlot, JSON.stringify([show, m.setup]), () => {
+    const name = profileName(m, m.defaultProfileId);
+    patch('setup', setupSlot, JSON.stringify([show, m.setup, name]), () => {
       if (show === 'missing') {
         return callout({
           title: 'Meetings can’t be saved to Notion yet',
-          body: setupSentence(m.setup),
+          body: setupSentence(m.setup, name),
           actions: button('Open settings', {
             attrs: { 'data-key': 'missing-settings' },
             onClick: () => handlers.openSettings(m.setup[0] && GAP_FIELD[m.setup[0]]),

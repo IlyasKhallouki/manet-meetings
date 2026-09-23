@@ -79,6 +79,11 @@ function model(state: PopupState, patch: Partial<PopupModel> = {}): PopupModel {
     mic: 'granted',
     includeMic: true,
     setup: [],
+    profiles: [
+      { id: 'team', name: 'Team' },
+      { id: 'personal', name: 'Personal' },
+    ],
+    defaultProfileId: 'team',
     geminiKeyMissing: false,
     recent: [],
     needsYou: 0,
@@ -172,7 +177,7 @@ const recentFor = (...ids: string[]): SessionMeta[] => ids.map((id) => RECENT.fi
 /** Every block the on-a-call popup can show at once. */
 const TALLEST = model(
   { kind: 'idle', tabId: 1, meetCode: 'abc-defg-hij', title: LONG_TITLE },
-  { mic: 'denied', setup: ['name', 'token', 'team-database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 3 },
+  { mic: 'denied', setup: ['name', 'token', 'database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 3 },
 );
 
 /* Playwright has no prefers-reduced-transparency knob, so that fallback is shown by
@@ -258,7 +263,7 @@ gallery('popup', [
     'on-call-long-title-setup',
     model(
       { kind: 'idle', tabId: 1, meetCode: 'abc-defg-hij', title: LONG_TITLE },
-      { mic: 'granted', includeMic: false, setup: ['token', 'team-database'] },
+      { mic: 'granted', includeMic: false, setup: ['token', 'database'] },
     ),
   ),
   // Starting…, then the start failed.
@@ -287,7 +292,7 @@ gallery('popup', [
   // D · Not on a call, setup missing, Recent.
   popup(
     'not-meet-setup-recent',
-    model({ kind: 'not-meet', onMeet: false }, { setup: ['name', 'token', 'team-database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 1 }),
+    model({ kind: 'not-meet', onMeet: false }, { setup: ['name', 'token', 'database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 1 }),
   ),
   popup(
     'on-meet-no-gemini-recent',
@@ -334,7 +339,7 @@ gallery('popup', [
   }),
   capped(
     'cap-large-text-not-meet-setup-recent',
-    model({ kind: 'not-meet', onMeet: false }, { setup: ['name', 'token', 'team-database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 1 }),
+    model({ kind: 'not-meet', onMeet: false }, { setup: ['name', 'token', 'database'], recent: recentFor('route', 'proc', 'saved'), needsYou: 1 }),
     { largeText: true },
   ),
   // Keyboard focus on the toolbar's own link while the bar is material: the ring has to

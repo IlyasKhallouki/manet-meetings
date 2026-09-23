@@ -6,6 +6,7 @@ import {
   NO_CAPTIONS_AFTER_MS,
   recordingHealth,
 } from '@lib/recordingHealth';
+import { starterProfiles } from '@lib/profiles';
 import { DEFAULT_SETTINGS } from '@lib/settingsSchema';
 import type { SessionMeta, SpeakerInfo } from '@lib/types';
 import * as popupView from '@lib/ui/popupView';
@@ -334,16 +335,20 @@ describe('recordingHealth: the one set of rules', () => {
 
 describe('setup', () => {
   it('names what blocks saving, in plain words', () => {
-    expect(setupGaps(DEFAULT_SETTINGS)).toEqual(['name', 'token', 'team-database']);
-    expect(setupSentence(setupGaps(DEFAULT_SETTINGS))).toBe('Add your name, a Notion token and the Team database.');
-    expect(setupSentence(['token', 'personal-database'])).toBe('Add a Notion token and the Personal database.');
-    expect(setupSentence(['name'])).toBe('Add your name.');
+    expect(setupGaps(DEFAULT_SETTINGS)).toEqual(['name', 'token', 'database']);
+    expect(setupSentence(setupGaps(DEFAULT_SETTINGS), 'Team')).toBe(
+      'Add your name, a Notion token and the Team profile’s database.',
+    );
+    expect(setupSentence(['token', 'database'], 'Client meeting')).toBe(
+      'Add a Notion token and the Client meeting profile’s database.',
+    );
+    expect(setupSentence(['name'], 'Team')).toBe('Add your name.');
   });
 
-  it('checks the database of the default destination', () => {
-    const settings = { ...DEFAULT_SETTINGS, displayName: 'Ilya', notionToken: 'ntn_x', notionTeamDbId: 'db' };
+  it('checks the database of the default profile', () => {
+    const settings = { ...DEFAULT_SETTINGS, displayName: 'Ilya', notionToken: 'ntn_x', profiles: starterProfiles('db') };
     expect(setupGaps(settings)).toEqual([]);
-    expect(setupGaps({ ...settings, defaultRoute: 'personal' })).toEqual(['personal-database']);
+    expect(setupGaps({ ...settings, defaultProfileId: 'personal' })).toEqual(['database']);
   });
 });
 

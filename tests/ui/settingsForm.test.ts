@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { starterProfiles } from '@lib/profiles';
+import { defaultProfile, starterProfiles } from '@lib/profiles';
 import { DEFAULT_SETTINGS } from '@lib/settings';
 import type { Settings } from '@lib/types';
 import {
@@ -279,10 +279,13 @@ describe('languageCodeWarning', () => {
 
 describe('setupProblems', () => {
   it('blocks saving only on Notion and the name; a missing Gemini key means captions only', () => {
-    expect(setupProblems(FILLED, 'team')).toEqual({ blocking: [], geminiKeyMissing: false });
-    expect(setupProblems({ ...FILLED, geminiApiKey: '' }, 'team')).toEqual({ blocking: [], geminiKeyMissing: true });
-    expect(setupProblems(DEFAULT_SETTINGS, 'personal')).toEqual({
-      blocking: ['your name', 'a Notion token', 'the Personal database'],
+    expect(setupProblems(FILLED, defaultProfile(FILLED))).toEqual({ blocking: [], geminiKeyMissing: false });
+    expect(setupProblems({ ...FILLED, geminiApiKey: '' }, defaultProfile(FILLED))).toEqual({
+      blocking: [],
+      geminiKeyMissing: true,
+    });
+    expect(setupProblems(DEFAULT_SETTINGS, DEFAULT_SETTINGS.profiles[1]!)).toEqual({
+      blocking: ['your name', 'a Notion token', 'the Personal profile’s database'],
       geminiKeyMissing: true,
     });
   });
@@ -367,6 +370,8 @@ describe('firstMissingField', () => {
     expect(firstMissingField(['Notion personal database id'])).toBe('notionPersonalDbId');
     expect(firstMissingField(['Notion team database id'])).toBe('notionTeamDbId');
     expect(firstMissingField(['Gemini API key'])).toBe('geminiApiKey');
+    expect(firstMissingField(['a Notion token', 'the Client profile’s database'])).toBe('notionToken');
+    expect(firstMissingField(['the Client profile’s database'])).toBe('notionTeamDbId');
     expect(firstMissingField([])).toBeUndefined();
     expect(firstMissingField(['Something new'])).toBeUndefined();
   });

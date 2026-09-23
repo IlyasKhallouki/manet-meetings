@@ -1,6 +1,7 @@
 import '@lib/ui/styles.css';
 import { browser } from 'wxt/browser';
 import { errorMessage, sendToBackground } from '@lib/messages';
+import { defaultProfile } from '@lib/profiles';
 import { getSettings, settingsItem, updateSettings } from '@lib/settings';
 import { getResult } from '@lib/storage/resultStore';
 import { listSessions, watchSessions } from '@lib/storage/sessionStore';
@@ -107,7 +108,7 @@ function refreshDiskSoon(): void {
 
 async function refreshSettings(): Promise<void> {
   const settings = await getSettings();
-  const problems = setupProblems(settings, settings.defaultRoute);
+  const problems = setupProblems(settings, defaultProfile(settings));
   missing = problems.blocking;
   geminiKeyMissing = problems.geminiKeyMissing;
   defaultRoute = settings.defaultRoute;

@@ -254,6 +254,11 @@ export interface SessionMeta {
   stage?: JobStage;
   route?: Route;
   /**
+   * The meeting's profile (a Settings.profiles id), chosen before recording. Meetings from
+   * before profiles read their Team | Personal route here (sessionStore normalizes them).
+   */
+  profileId?: string;
+  /**
    * When the default destination applies (the route alarm's time), epoch ms. Set only
    * while that alarm is armed: absent while the routing prompt is paused and once the
    * meeting has a destination.
@@ -310,6 +315,8 @@ export interface SessionResult {
   transcript: MeetingTranscript;
   summary: MeetingSummary | null;
   transcription: { timingPass: PassOutcome; textPass: PassOutcome } | null;
+  /** The profile the summary was written for. Absent on results from before profiles. */
+  profile?: { id: string; name: string };
   createdAt: number;
 }
 
@@ -394,7 +401,13 @@ export interface ProcessJob {
   meta: SessionMeta;
   captions: CaptionSegment[];
   settings: Settings;
-  route: Route;
+  /** The meeting's profile: its database, vocabulary, prompt and sections. */
+  profile: Profile;
+  /**
+   * Summarize this stored result again for `profile` instead of transcribing: the
+   * meeting's profile changed after it was transcribed.
+   */
+  reuse?: SessionResult;
   /** Skip the Notion duplicate check: the user chose "Transcribe anyway". */
   force?: boolean;
   /** 1 on the first run. Below MAX_TRANSCRIBE_ATTEMPTS a transient Gemini failure returns 'retry-later'. */
@@ -415,7 +428,8 @@ export interface SaveJob {
   meta: SessionMeta;
   result: SessionResult;
   settings: Settings;
-  route: Route;
+  /** The meeting's profile: its database, vocabulary, prompt and sections. */
+  profile: Profile;
   /** Create the page even if one with this key exists: the user chose "Save anyway". */
   force?: boolean;
 }

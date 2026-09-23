@@ -38,8 +38,8 @@ export interface BackgroundProtocol {
   /** Content script: deduped caption revisions since the last batch. */
   'captions/batch': { req: { sessionId: string; segments: CaptionSegment[] }; res: void };
 
-  /** Popup / keyboard command: start recording this tab (needs a user invocation). */
-  'session/start': { req: { tabId: number }; res: StartResult };
+  /** Popup / keyboard command: start recording this tab (needs a user invocation). No profile: the default. */
+  'session/start': { req: { tabId: number; profileId?: string }; res: StartResult };
   'session/stop': { req: { sessionId: string }; res: void };
   'session/route': { req: { sessionId: string; route: Route }; res: void };
   /**
@@ -47,6 +47,8 @@ export interface BackgroundProtocol {
    * more time); `hold: false` re-arms it, e.g. when the paused window is closed.
    */
   'session/route-hold': { req: { sessionId: string; hold: boolean }; res: void };
+  /** Popup / Meetings: the meeting's profile, before, during or after recording. */
+  'session/set-profile': { req: { sessionId: string; profileId: string }; res: void };
   /** `force` skips the Notion duplicate check ("Transcribe anyway"). */
   'session/transcribe': { req: { sessionId: string; force?: boolean }; res: void };
   /** `force` saves even if a page with the key exists ("Save anyway"). */

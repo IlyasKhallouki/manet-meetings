@@ -23,6 +23,7 @@ import {
   type RecorderStartResult,
   type RecordingState,
 } from '@lib/messages';
+import { starterProfiles } from '@lib/profiles';
 import { updateSettings } from '@lib/settings';
 import { createChromeDeps } from '@/entrypoints/background/chromeDeps';
 import {
@@ -70,6 +71,8 @@ export const FULL_SETTINGS: Partial<Settings> = {
   displayName: 'Ilyas',
   autoTranscribe: true,
   retentionDays: 7,
+  profiles: starterProfiles('team-db', 'personal-db'),
+  defaultProfileId: 'team',
 };
 
 export async function configure(patch: Partial<Settings> = {}): Promise<void> {
@@ -91,8 +94,13 @@ export function seg(id: string, speaker: string, tStart: number, text: string, r
   return { id, speaker, self: false, text, tStart, tEnd: tStart + 2000, rev };
 }
 
-/** A canned pipeline result: one turn per caption, or one audio turn when there are none. */
+/**
+ * A canned pipeline result for the job's profile: one turn per caption, or one audio turn
+ * when there are none. A job that reuses a stored result gets it back for its profile.
+ */
 export function resultFor(job: ProcessJob, createdAt: number): SessionResult {
+  const profile = { id: job.profile.id, name: job.profile.name };
+  if (job.reuse) return { ...job.reuse, profile };
   const turns = job.captions.map((c) => ({ speaker: c.speaker, start: c.tStart, end: c.tEnd, text: c.text }));
   return {
     title: 'Weekly sync',
@@ -104,6 +112,7 @@ export function resultFor(job: ProcessJob, createdAt: number): SessionResult {
     },
     summary: null,
     transcription: { timingPass: { ok: true }, textPass: { ok: true } },
+    profile,
     createdAt,
   };
 }

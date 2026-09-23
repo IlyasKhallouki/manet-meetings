@@ -4,7 +4,7 @@
  * local user labelled "You").
  */
 import { starterProfiles } from '@lib/profiles';
-import type { CaptionSegment, Settings, SessionMeta } from '@lib/types';
+import type { CaptionSegment, Profile, Settings, SessionMeta } from '@lib/types';
 import { SPEECH_MIXED_MS } from './fixtures';
 
 export const MEET_CODE = 'abc-defg-hij';
@@ -31,6 +31,11 @@ export function testSettings(overrides: Partial<Settings> = {}): Settings {
   };
 }
 
+/** The migrated Team profile with a database, as most pipeline tests want it. */
+export function testProfile(overrides: Partial<Profile> = {}): Profile {
+  return { ...starterProfiles('team-db')[0]!, ...overrides };
+}
+
 export function sessionMeta(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
     id: `${MEET_CODE}_20260919T081530Z`,
@@ -41,6 +46,7 @@ export function sessionMeta(overrides: Partial<SessionMeta> = {}): SessionMeta {
     durationMs: SPEECH_MIXED_MS,
     status: 'processing',
     route: 'team',
+    profileId: 'team',
     idempotencyKey: `${MEET_CODE}-2026-09-19`,
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 0, bytes: 0, micIncluded: true },
     captionCount: 0,

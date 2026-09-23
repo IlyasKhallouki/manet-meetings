@@ -3,7 +3,7 @@
  * (which only has chrome.runtime) can import them. settings.ts re-exports these.
  */
 import { starterProfiles } from './profiles';
-import type { Route, Settings } from './types';
+import type { Profile, Route, Settings } from './types';
 
 export const DEFAULT_SETTINGS: Settings = {
   geminiApiKey: '',
@@ -58,20 +58,20 @@ export function databaseIdFor(settings: Settings, route: Route): string {
  * Everything a full audio transcript needs, in the words of missingForSave, then
  * "a Gemini key" (Settings asks for it last).
  */
-export function missingSettings(settings: Settings, route: Route): string[] {
-  return [...missingForSave(settings, route), ...(settings.geminiApiKey.trim() ? [] : ['a Gemini key'])];
+export function missingSettings(settings: Settings, profile: Pick<Profile, 'name' | 'databaseId'>): string[] {
+  return [...missingForSave(settings, profile), ...(settings.geminiApiKey.trim() ? [] : ['a Gemini key'])];
 }
 
 /**
  * What blocks filing a meeting at all, as words that fit "Add … in Settings": "your
- * name", "a Notion token", "the Team database" (or "the Personal database"), in the
- * order Settings asks for them. A blank value counts as missing, as in the popup and
- * Settings. Without a Gemini key the pipeline still saves a transcript built from captions.
+ * name", "a Notion token", "the Client meeting profile’s database", in the order Settings
+ * asks for them. A blank value counts as missing, as in the popup and Settings. Without a
+ * Gemini key the pipeline still saves a transcript built from captions.
  */
-export function missingForSave(settings: Settings, route: Route): string[] {
+export function missingForSave(settings: Settings, profile: Pick<Profile, 'name' | 'databaseId'>): string[] {
   const missing: string[] = [];
   if (!settings.displayName.trim()) missing.push('your name');
   if (!settings.notionToken.trim()) missing.push('a Notion token');
-  if (!databaseIdFor(settings, route).trim()) missing.push(route === 'team' ? 'the Team database' : 'the Personal database');
+  if (!profile.databaseId.trim()) missing.push(`the ${profile.name.trim()} profile’s database`);
   return missing;
 }

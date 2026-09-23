@@ -108,6 +108,13 @@ export function passNotes(result: TranscriptionResult): string[] {
   return notes;
 }
 
+const SUMMARY_FAILED = 'The summary could not be generated';
+
 export function summaryFailedNote(err: unknown): string {
-  return `The summary could not be generated: ${shortError(err)}`;
+  return `${SUMMARY_FAILED}: ${shortError(err)}`;
+}
+
+/** A summary is being written again, so an earlier failure to write one no longer applies. */
+export function isSummaryFailedNote(note: string): boolean {
+  return note.startsWith(SUMMARY_FAILED);
 }

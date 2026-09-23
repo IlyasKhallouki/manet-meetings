@@ -8,6 +8,7 @@ import {
   listSessions,
   needsYou,
   putSession,
+  sessionKey,
   setActiveRecording,
   updateSession,
   watchActiveRecording,
@@ -138,6 +139,17 @@ describe('sessionStore', () => {
     expect(await upd).toBeNull();
     expect(await getSession('a')).toBeNull();
     expect(await fakeBrowser.storage.local.get(null)).toEqual({});
+  });
+
+  it('reads a meeting from before profiles with its destination as its profile', async () => {
+    const old = meta('old', 1000, { route: 'personal' });
+    const seen: (string | undefined)[] = [];
+    const stop = watchSessions((_id, m) => seen.push(m?.profileId));
+    await fakeBrowser.storage.local.set({ [sessionKey(old.id)]: old });
+    stop();
+    expect((await getSession(old.id))?.profileId).toBe('personal');
+    expect((await listSessions())[0]?.profileId).toBe('personal');
+    expect(seen).toEqual(['personal']);
   });
 
   it('notifies watchers of puts and deletes until unsubscribed', async () => {

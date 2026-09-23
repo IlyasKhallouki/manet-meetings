@@ -11,7 +11,7 @@ import {
   recordingHealth,
   silenceText,
 } from '@lib/recordingHealth';
-import type { SessionMeta, SessionStatus, SpeakerInfo } from '@lib/types';
+import type { Profile, SessionMeta, SessionStatus, SpeakerInfo } from '@lib/types';
 import { audioFact, popupState, speakersFact } from '@lib/ui/popupView';
 import {
   acceptsTranscribe,
@@ -45,6 +45,8 @@ import {
 const STARTED = Date.UTC(2026, 8, 19, 8, 15, 0);
 const FMT = { locale: 'en-GB', timeZone: 'UTC' } as const;
 const MB = 1024 * 1024;
+/** DEFAULT_SETTINGS' profiles: Team and Personal, without databases. */
+const [TEAM, PERSONAL] = DEFAULT_SETTINGS.profiles as [Profile, Profile];
 
 function meta(patch: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -329,9 +331,9 @@ describe('statusView', () => {
   it('reads the record the background stores from missingForSave', () => {
     // sessionManager markMissingSettings: `Missing settings: ${missing.join(', ')}. Add them in Settings, then try again.`
     const record = (missing: string[]) => `Missing settings: ${missing.join(', ')}. Add them in Settings, then try again.`;
-    const all = record(missingForSave(DEFAULT_SETTINGS, 'team'));
-    expect(errorText(all)).toBe('Add your name, a Notion token and the Team database in Settings, then try again.');
-    const name = record(missingForSave({ ...DEFAULT_SETTINGS, notionToken: 't', notionPersonalDbId: 'd' }, 'personal'));
+    const all = record(missingForSave(DEFAULT_SETTINGS, TEAM));
+    expect(errorText(all)).toBe('Add your name, a Notion token and the Team profile’s database in Settings, then try again.');
+    const name = record(missingForSave({ ...DEFAULT_SETTINGS, notionToken: 't' }, { name: 'Personal', databaseId: 'd' }));
     expect(errorText(name)).toBe('Add your name in Settings, then try again.');
     expect(statusView(meta({ status: 'failed', error: name })).label).toBe('Couldn’t save to Notion');
     // Stored as the sentence itself (copy.ts problems.missingSettings), it reads the same.
@@ -532,9 +534,12 @@ describe('sessionRow', () => {
 
 describe('settingsList', () => {
   it('names missing settings the way people know them, in setup order', () => {
-    expect(settingsList(missingForSave(DEFAULT_SETTINGS, 'team'))).toBe('your name, a Notion token and the Team database');
-    expect(settingsList(missingForSave({ ...DEFAULT_SETTINGS, displayName: 'Ilya' }, 'personal'))).toBe(
-      'a Notion token and the Personal database',
+    expect(settingsList(missingForSave(DEFAULT_SETTINGS, TEAM))).toBe('your name, a Notion token and the Team profile’s database');
+    expect(settingsList(missingForSave({ ...DEFAULT_SETTINGS, displayName: 'Ilya' }, PERSONAL))).toBe(
+      'a Notion token and the Personal profile’s database',
+    );
+    expect(settingsList(['the Client meeting profile’s database', 'your name'])).toBe(
+      'your name and the Client meeting profile’s database',
     );
     expect(settingsList(['a Gemini key', 'your name'])).toBe('your name and a Gemini key');
     expect(settingsList([])).toBe('');

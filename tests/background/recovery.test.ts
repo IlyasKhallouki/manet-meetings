@@ -342,7 +342,7 @@ describe('interrupted jobs and alarms', () => {
     const m = h.createManager();
     await m.boot();
     await m.idle();
-    expect(h.offscreen.callsOf('offscreen/process').map((j) => [j.meta.id, j.route, j.attempt])).toEqual([
+    expect(h.offscreen.callsOf('offscreen/process').map((j) => [j.meta.id, j.profile.id, j.attempt])).toEqual([
       [a, 'personal', 2],
     ]);
     expect(h.offscreen.callsOf('offscreen/save').map((j) => j.meta.id).sort()).toEqual([a, b].sort());
@@ -451,6 +451,8 @@ describe('orphaned audio', () => {
       durationMs: 120_000,
       status: 'ready',
       route: 'team',
+      // Stored with the default route only; read with it as its profile.
+      profileId: 'team',
       recovered: true,
       idempotencyKey: idempotencyKey('xyz-abcd-efg', startedAt),
       audio: { mimeType: 'audio/webm', chunkCount: 24, bytes: 96_000, micIncluded: false },

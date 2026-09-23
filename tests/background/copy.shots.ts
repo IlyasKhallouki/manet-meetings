@@ -21,7 +21,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const OVERLOADED = 'Gemini API error 503 UNAVAILABLE: The model is overloaded. Please try again later.';
 /** What sessionManager stores when the settings block saving (Meetings words it itself). */
-const MISSING = `Missing settings: ${missingForSave({ ...DEFAULT_SETTINGS, notionTeamDbId: 'db' }, 'team').join(', ')}. Add them in Settings, then try again.`;
+const MISSING = `Missing settings: ${missingForSave(DEFAULT_SETTINGS, { name: 'Team', databaseId: 'db' }).join(', ')}. Add them in Settings, then try again.`;
 /** What a save stores when Notion turns it down (pipeline/save.ts → notion/errors.ts). */
 const REJECTED = explainError(new NotionError(401, 'unauthorized', 'API token is invalid.'));
 
@@ -58,6 +58,11 @@ function popupModel(state: PopupState): PopupModel {
     mic: 'granted',
     includeMic: true,
     setup: [],
+    profiles: [
+      { id: 'team', name: 'Team' },
+      { id: 'personal', name: 'Personal' },
+    ],
+    defaultProfileId: 'team',
     geminiKeyMissing: false,
     recent: [],
     needsYou: 0,

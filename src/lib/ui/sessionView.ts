@@ -503,11 +503,12 @@ export function byline(meta: SessionMeta, opts: { audioBytes?: number; attendees
 const SETTING_NAMES: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^your name$/i, () => 'your name'],
   [/notion (integration )?token/i, () => 'a Notion token'],
+  [/profile’s database$/i, (m) => m.input ?? m[0]],
   [/(team|personal) database/i, (m) => `the ${routeLabel(m[1]!.toLowerCase() as Route)} database`],
   [/gemini/i, () => 'a Gemini key'],
 ];
 
-/** missingForSave's items as a phrase: "your name, a Notion token and the Team database". */
+/** missingForSave's items as a phrase: "your name, a Notion token and the Team profile’s database". */
 export function settingsList(missing: readonly string[]): string {
   const named = missing
     .map((item) => {

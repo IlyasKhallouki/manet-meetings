@@ -15,20 +15,23 @@ import { TranscriptionError } from '../transcribe/stitch';
 import {
   MAX_TRANSCRIBE_ATTEMPTS,
   type AudioStore,
+  type JobStage,
   type MeetingSummary,
+  type MeetingTranscript,
   type ProcessJob,
   type ProcessOutcome,
   type SessionMeta,
   type SessionResult,
   type TranscriptionResult,
 } from '../types';
-import { defaultProfile, profileById } from '../profiles';
 import { localDate } from '../util/ids';
 import { stageReporter, type PipelineDeps } from './deps';
 import {
   audioProblemNote,
   audioReadFailedNote,
   duplicateCheckNote,
+  isDuplicateCheckNote,
+  isSummaryFailedNote,
   NOTES,
   noAudioNote,
   passNotes,
@@ -38,7 +41,6 @@ import {
   transcriptionCause,
   transcriptionFailedNote,
 } from './notes';
-import { databaseIdFor } from '../settingsSchema';
 import { meetingTitle, sessionAttendees, transcribeDurationMs } from './session';
 
 /** Never throws. An unexpected error (a bug) ends as STOPPED.process, its words in the console. */
@@ -52,7 +54,7 @@ export async function processSession(job: ProcessJob, deps: PipelineDeps): Promi
 }
 
 async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<ProcessOutcome> {
-  const { meta, captions, settings, route } = job;
+  const { meta, captions, settings, profile } = job;
   const stage = stageReporter(deps.onStage);
   const notes: string[] = [];
 
@@ -61,12 +63,13 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
   if (!job.force) {
     stage('checking-duplicate');
     try {
-      const existing = await deps.store.findByKey(databaseIdFor(settings, route), meta.idempotencyKey);
+      const existing = await deps.store.findByKey(profile.databaseId, meta.idempotencyKey);
       if (existing) return { status: 'duplicate', existing };
     } catch (err) {
       notes.push(duplicateCheckNote(err));
     }
   }
+  if (job.reuse) return summarizeAgain(job, job.reuse, deps, notes, stage);
 
   const selfName = settings.displayName.trim();
   const attendees = sessionAttendees(captions, selfName);
@@ -86,7 +89,7 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
       const durationMs = audioEnd ?? transcribeDurationMs(meta);
       try {
         transcription = await deps.ai.transcribe(audio, {
-          customVocabulary: buildVocabulary(settings.customVocabulary, attendees),
+          customVocabulary: buildVocabulary([...settings.customVocabulary, ...profile.vocabulary], attendees),
           languageCodes: settings.languageCodes,
           ...(durationMs !== undefined ? { durationMs } : {}),
           onProgress: stage,
@@ -113,7 +116,7 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
       summary = await deps.ai.summarize(formatTranscript(merged), {
         attendees,
         meetingDate: localDate(meta.startedAt),
-        profile: profileById(settings, route) ?? defaultProfile(settings),
+        profile,
       });
     } catch (err) {
       summaryNotes.push(summaryFailedNote(err));
@@ -128,6 +131,48 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
       transcript: { ...merged, notes: [...merged.notes, ...summaryNotes] },
       summary,
       transcription: passes,
+      profile: { id: profile.id, name: profile.name },
+      createdAt: Date.now(),
+    },
+  };
+}
+
+/**
+ * The stored transcript summarized again for the meeting's new profile. No audio is read
+ * and nothing is transcribed; notes about an earlier summary or duplicate check are
+ * replaced by this run's.
+ */
+async function summarizeAgain(
+  job: ProcessJob,
+  reuse: SessionResult,
+  deps: PipelineDeps,
+  notes: string[],
+  stage: (s: JobStage) => void,
+): Promise<ProcessOutcome> {
+  const { meta, settings, profile } = job;
+  const kept = reuse.transcript.notes.filter((n) => !isSummaryFailedNote(n) && !isDuplicateCheckNote(n));
+  const transcript: MeetingTranscript = { ...reuse.transcript, notes: [...notes, ...kept] };
+  let summary: MeetingSummary | null = null;
+  if (settings.geminiApiKey.trim() !== '' && transcript.turns.length > 0) {
+    stage('summarizing');
+    try {
+      summary = await deps.ai.summarize(formatTranscript(transcript), {
+        attendees: reuse.attendees,
+        meetingDate: localDate(meta.startedAt),
+        profile,
+      });
+    } catch (err) {
+      transcript.notes.push(summaryFailedNote(err));
+    }
+  }
+  return {
+    status: 'processed',
+    result: {
+      ...reuse,
+      title: meetingTitle(summary, meta),
+      transcript,
+      summary,
+      profile: { id: profile.id, name: profile.name },
       createdAt: Date.now(),
     },
   };

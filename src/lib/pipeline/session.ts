@@ -45,7 +45,7 @@ export function meetingDurationMs(meta: Pick<SessionMeta, 'durationMs'>, transcr
   return Math.round(Math.max(0, meta.durationMs ?? 0, lastEnd));
 }
 
-export function buildMeetingPageInput({ meta, result, settings }: SaveJob): MeetingPageInput {
+export function buildMeetingPageInput({ meta, result, settings, profile }: SaveJob): MeetingPageInput {
   return {
     key: meta.idempotencyKey,
     title: result.title.trim() || meetingTitle(null, meta),
@@ -54,6 +54,7 @@ export function buildMeetingPageInput({ meta, result, settings }: SaveJob): Meet
     attendees: result.attendees,
     meetCode: meta.meetCode,
     recordedBy: settings.displayName.trim(),
+    profileName: profile.name,
     source: result.transcript.source,
     summary: result.summary,
     transcript: {

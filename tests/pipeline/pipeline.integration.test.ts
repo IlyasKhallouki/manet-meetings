@@ -15,13 +15,14 @@ import {
   type CaptionSegment,
   type JobStage,
   type ProcessJob,
+  type Profile,
   type SessionMeta,
   type SessionResult,
   type Settings,
 } from '@lib/types';
 import { createFileAudioStore } from '../helpers/fileAudioStore';
 import { seedAudio, SPEECH_EN, SPEECH_MIXED, SPEECH_MIXED_SWITCH_MS } from '../helpers/fixtures';
-import { MEET_CODE, mixedSpeechCaptions, revisions, SELF_NAME, sessionMeta, testSettings } from '../helpers/meeting';
+import { MEET_CODE, mixedSpeechCaptions, revisions, SELF_NAME, sessionMeta, testProfile, testSettings } from '../helpers/meeting';
 import { countingFetch, eventually, refusedBaseUrl } from '../helpers/network';
 
 const GEMINI_KEY = process.env.GOOGLE_API_KEY ?? '';
@@ -68,8 +69,13 @@ function invalidSettings(overrides: Partial<Settings> = {}): Settings {
   });
 }
 
+/** The Team profile, on the database these settings name for Team. */
+function teamProfile(settings: Settings): Profile {
+  return testProfile({ databaseId: settings.notionTeamDbId });
+}
+
 function job(meta: SessionMeta, captions: CaptionSegment[], settings: Settings): ProcessJob {
-  return { meta, captions, settings, route: 'team' };
+  return { meta, captions, settings, profile: teamProfile(settings) };
 }
 
 const tokensOf = (text: string) => splitWords(text).map(normalizeToken).filter(Boolean);
@@ -140,7 +146,12 @@ describe('pipeline against the real APIs with invalid credentials (network only)
       createdAt: Date.now(),
     };
     const outcome = await saveSession(
-      { meta, result, settings, route: 'personal' },
+      {
+        meta,
+        result,
+        settings,
+        profile: testProfile({ id: 'personal', name: 'Personal', databaseId: settings.notionPersonalDbId }),
+      },
       createPipelineDeps(settings, store, (s) => stages.push(s)),
     );
     expect(outcome).toEqual({ status: 'error', error: 'Notion rejected the token. Copy it again in Settings.' });
@@ -393,7 +404,7 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
     expect(result.transcript.source).toBe('captions-only');
     expect(result.transcript.notes.some((n) => n.startsWith('Notion was not checked'))).toBe(false);
 
-    const saved = await saveSession({ meta, result, settings, route: 'team' }, deps());
+    const saved = await saveSession({ meta, result, settings, profile: teamProfile(settings) }, deps());
     expect(saved.status).toBe('created');
     if (saved.status !== 'created') return;
 
@@ -420,7 +431,7 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
     expect(counting.counts.requests).toBe(0);
     expect(stages).toEqual(['checking-duplicate']);
 
-    const savedAgain = await saveSession({ meta, result, settings, route: 'team' }, deps());
+    const savedAgain = await saveSession({ meta, result, settings, profile: teamProfile(settings) }, deps());
     expect(savedAgain.status).toBe('duplicate');
 
     // "Transcribe anyway", then "Save anyway": the user saw that page and wants theirs filed too.
@@ -428,7 +439,7 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
     const forcedJob = { ...job(meta, mixedSpeechCaptions(), settings), force: true };
     const forced = processed(await processSession(forcedJob, deps(countingFetch(), forcedStages)));
     expect(forcedStages[0]).toBe('loading-audio');
-    const savedAnyway = await saveSession({ meta, result: forced, settings, route: 'team', force: true }, deps());
+    const savedAnyway = await saveSession({ meta, result: forced, settings, profile: teamProfile(settings), force: true }, deps());
     expect(savedAnyway.status).toBe('created');
     if (savedAnyway.status !== 'created') return;
     expect(sameNotionId(savedAnyway.pageId, saved.pageId)).toBe(false);
@@ -549,7 +560,7 @@ describe.skipIf(!GEMINI_KEY)(
 
     it.skipIf(!HAS_NOTION)('saves the transcribed meeting to Notion', async () => {
       expect(result, 'needs the transcription test to have run').toBeDefined();
-      const saved = await saveSession({ meta, result: result!, settings, route: 'team' }, deps);
+      const saved = await saveSession({ meta, result: result!, settings, profile: teamProfile(settings) }, deps);
       expect(saved.status).toBe('created');
       if (saved.status !== 'created') return;
       const page = await new NotionClient(NOTION_TOKEN).request<NotionPage>('GET', `/pages/${saved.pageId}`);

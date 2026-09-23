@@ -52,7 +52,9 @@ function checkJob(kind: JobKind, req: object, field: 'captions' | 'result'): voi
   const meta = job.meta as { id?: unknown } | undefined;
   if (typeof meta !== 'object' || meta === null || typeof meta.id !== 'string') throw problem('meta.id is missing');
   if (typeof job.settings !== 'object' || job.settings === null) throw problem('settings are missing');
-  if (job.route !== 'team' && job.route !== 'personal') throw problem(`unknown route ${JSON.stringify(job.route)}`);
+  const profile = job.profile as { id?: unknown; databaseId?: unknown; sections?: unknown } | undefined;
+  if (typeof profile !== 'object' || profile === null || typeof profile.id !== 'string') throw problem('profile is missing');
+  if (typeof profile.databaseId !== 'string' || !Array.isArray(profile.sections)) throw problem('profile is incomplete');
   const value = job[field];
   const ok = field === 'captions' ? Array.isArray(value) : typeof value === 'object' && value !== null;
   if (!ok) throw problem(`${field} ${field === 'captions' ? 'must be an array' : 'is missing'}`);

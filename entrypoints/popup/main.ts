@@ -99,6 +99,8 @@ async function refresh(): Promise<void> {
     mic,
     includeMic: settings.includeMic,
     setup: setupGaps(settings),
+    profiles: settings.profiles.map(({ id, name }) => ({ id, name })),
+    defaultProfileId: settings.defaultProfileId,
     geminiKeyMissing: !settings.geminiApiKey,
     recent: sessions,
     needsYou: sessions.filter(needsYou).length,
