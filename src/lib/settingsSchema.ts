@@ -13,7 +13,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoTranscribe: true,
   retentionDays: 7,
   displayName: '',
-  customVocabulary: ['Lumind', 'Manet'],
+  customVocabulary: [],
   languageCodes: [],
   includeMic: true,
 };

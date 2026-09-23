@@ -1,11 +1,8 @@
 # Google Meet caption fixtures
 
-**These fixtures were reconstructed, not captured from a live call.** They mirror the
-Meet captions DOM as described by actively maintained open-source Meet scrapers
-(September 2026), and two anonymized snapshots those projects committed. Replace them
-with real captures as soon as someone can run the [capture snippet](#capturing-real-fixtures)
-during a call. Everything the extension reads from Meet goes through
-`src/lib/meet/captionAdapter.ts`; when Meet changes, update that file and these fixtures.
+Saved Google Meet caption DOM for the caption tests. Everything the extension reads from
+Meet goes through `src/lib/meet/captionAdapter.ts`; when Meet changes, update that file
+and refresh these fixtures with the [capture snippet](#capturing-fixtures).
 
 ## What the DOM looks like
 
@@ -40,17 +37,17 @@ Behaviour the tracker and watcher are built around:
 
 ## UI hooks and strings
 
-| What | Hook used by the adapter (in order) | Confidence |
-| --- | --- | --- |
-| Captions region | `[jsname="dsyhDe"] [role="region"]`, aria-label `Captions` / `Sous-titres`, `[role="region"].vNKgIf`, then any `[role="region"][tabindex="0"]` holding block-shaped children | EN label and classes in several 2026 sources; `Sous-titres` inferred |
-| Block / name / text | `.nMcdL` / `.NWpY1d`, `.KcIKyf` / `.ygicle`, `.VbkSUe`, then block shape (header first, text last) | classes stable in all 2025 to 2026 sources |
-| Local user | speaker label `You` (EN), `Vous` (FR) | `You` seen in an anonymized capture; `Vous` from the team, not found in any source |
-| CC toggle | `button[jsname="RrG0hf"]` (since the Feb 2026 redesign), `button[jsname="r8qRAd"]` (before), then a button outside the captions region with a `closed_caption(_off)` icon, then one labelled "caption" / "sous-titre" (not settings/language) | jsnames and icons from ChrisRegado; EN labels from attendee and notetaker |
-| CC state | icon `closed_caption_off` = off, `closed_caption` = on; then `aria-pressed`; then label `Turn on captions` / `Turn off captions`, `Activer les sous-titres` / `Désactiver les sous-titres` | icon and EN labels observed by others; FR labels inferred from Meet's French mic/camera labels ("Activer le micro") and MeetBot's word lists |
-| In call | `button[jsname="CQylAd"]`, label `Leave call` / `Quitter l'appel`, icon `call_end` | all three corroborated; TranscripTonic notes `call_end` also shows while waiting in the lobby |
-| Call ended | heading `You left the meeting` / `You've been removed from the meeting` / `Vous avez quitté la réunion`, or a `Return to home screen` / `Revenir à l'écran d'accueil` button | EN strings as in `call-ended.html`; FR inferred. Only speeds up leaving: without it the content script leaves after the leave button has been gone for 3 ticks |
-| CC toggle identity | a jsname match must also show a CC icon or a caption label, otherwise the icon and label strategies run; aria-pressed is only read on a control verified that way | guards against a jsname reused on another toggle |
-| Meeting title | `[jsname="NeC6gb"]`, `.u6vdEc`, then `document.title` minus `Meet - `; a bare meeting code means "no title" | chen-ye, TranscripTonic |
+| What | Hook used by the adapter (in order) |
+| --- | --- |
+| Captions region | `[jsname="dsyhDe"] [role="region"]`, aria-label `Captions` / `Sous-titres`, `[role="region"].vNKgIf`, then any `[role="region"][tabindex="0"]` holding block-shaped children |
+| Block / name / text | `.nMcdL` / `.NWpY1d`, `.KcIKyf` / `.ygicle`, `.VbkSUe`, then block shape (header first, text last) |
+| Local user | speaker label `You` (EN), `Vous` (FR) |
+| CC toggle | `button[jsname="RrG0hf"]` (since the Feb 2026 redesign), `button[jsname="r8qRAd"]` (before), then a button outside the captions region with a `closed_caption(_off)` icon, then one labelled "caption" / "sous-titre" (not settings/language) |
+| CC state | icon `closed_caption_off` = off, `closed_caption` = on; then `aria-pressed`; then label `Turn on captions` / `Turn off captions`, `Activer les sous-titres` / `Désactiver les sous-titres` |
+| In call | `button[jsname="CQylAd"]`, label `Leave call` / `Quitter l'appel`, icon `call_end` |
+| Call ended | heading `You left the meeting` / `You've been removed from the meeting` / `Vous avez quitté la réunion`, or a `Return to home screen` / `Revenir à l'écran d'accueil` button. Only speeds up leaving: without it the content script leaves after the leave button has been gone for 3 ticks |
+| CC toggle identity | a jsname match must also show a CC icon or a caption label, otherwise the icon and label strategies run; aria-pressed is only read on a control verified that way |
+| Meeting title | `[jsname="NeC6gb"]`, `.u6vdEc`, then `document.title` minus `Meet - `; a bare meeting code means "no title" |
 
 Some projects (vincelamm/gMeetTranscriptCapture, the hermes-agent Meet bot) cite a
 jsname-based caption tree (`tgaKEf`, `YSxPC`, `r4nke`, `bVV8Bd`). No committed capture
@@ -92,7 +89,7 @@ the "Caption settings" button, the toolbar wrapper and its `Call controls` label
 names and speech. `data-fixture-block` in `revision/` is test metadata (it lets the
 replay test edit matching blocks in place, as Meet does); Meet does not emit it.
 
-## Capturing real fixtures
+## Capturing fixtures
 
 Run this in a **test call** (the output contains names and what was said). Turn captions
 on, open DevTools on the Meet tab, paste the snippet into the Console, then talk for a

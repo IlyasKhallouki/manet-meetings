@@ -60,7 +60,7 @@ describe('summaryRequest', () => {
     for (const name of ATTENDEES) expect(input).toContain(name);
     expect(input).toContain('Je m’occupe du déploiement');
     expect(req.system_instruction).toMatch(/dominant language/i);
-    expect(req.system_instruction).toMatch(/French/);
+    expect(req.system_instruction).toMatch(/mix languages/i);
     expect(req.system_instruction).toMatch(/invent/i);
   });
 

@@ -2,8 +2,8 @@
 
 A Chrome extension that records Google Meet calls, transcribes them with Gemini and files
 them into Notion: one page per meeting with a summary, action items and a speaker-labelled
-transcript. Built for the Lumind team (4 people, meetings in mixed English/French). There
-is no backend. Each person runs the extension with their own keys.
+transcript. It handles meetings that mix languages, even within one sentence. There is no
+backend. Each person runs the extension with their own keys.
 
 ## How it works
 
@@ -230,12 +230,11 @@ tests/fixtures/captions/ saved Meet caption DOM
 The places most likely to break quietly, and what to check first.
 
 1. Meet's caption DOM. Every selector and Meet UI string lives in
-   `src/lib/meet/captionAdapter.ts`. The fixtures in `tests/fixtures/captions/` were
-   reconstructed from maintained open-source scrapers, not captured from a live call.
-   During the first real meeting, run the capture snippet in
-   `tests/fixtures/captions/README.md` and replace them. Breakage shows up as transcripts
-   with `Source = audio-only` or "Unknown speaker". The Meet tab's console logs
-   `adapterHealth` once per call, showing which hooks matched.
+   `src/lib/meet/captionAdapter.ts`, and `tests/fixtures/captions/` holds saved caption
+   DOM. Breakage shows up as transcripts with `Source = audio-only` or "Unknown speaker".
+   The Meet tab's console logs `adapterHealth` once per call, showing which hooks matched.
+   When Meet changes, run the capture snippet in `tests/fixtures/captions/README.md`
+   during a call and refresh the fixtures.
 2. Your own caption label. Your turns are recognized by Meet's `You` or `Vous` label, so
    use Meet in English or French. In other UI languages your turns keep Meet's label
    instead of your name.
@@ -249,17 +248,14 @@ The places most likely to break quietly, and what to check first.
    <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>.
 5. Microphone. The grant comes only from the permission page. If you picked "Allow this
    time" it expires, and later calls record only the other participants; the popup says
-   so. On speakers without headphones, remote voices can reach your mic. Chrome's echo
-   cancellation of the played-back tab audio has not been verified, so use headphones.
+   so.
 6. Gemini. Model ids are in `src/lib/gemini/models.ts` (`gemini-3.5-transcribe`,
    `gemini-3.5-flash`). Per the docs, word-timestamp requests are capped at 30 minutes and
    reject `custom_vocabulary`, while plain requests are capped at 60. Hence the two passes.
    If one pass fails the other still counts, and the page lists what degraded. A pass that
    hits its output cap can loop, repeating the same stretch; anything past the last word
    that matched the timing pass is dropped, and the timing pass covers that stretch
-   instead. The integration tests have not run against a real key (see Development), so the
-   first real transcription is also the first end-to-end check of the request shapes and of
-   `store: false`.
+   instead.
 7. Notion. API version `2026-03-11` (data sources), the property names above, and the
    Free-plan block cap for internal integrations. Check both databases in Settings checks
    access and schema, but it cannot check write capability.

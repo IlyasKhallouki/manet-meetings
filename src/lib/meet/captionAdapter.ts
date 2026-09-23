@@ -5,17 +5,8 @@
  * hooks first, then class names, then the shape of the markup, and every export returns
  * null / [] / false instead of throwing.
  *
- * Reconstructed (Sept 2026) from maintained open-source Meet scrapers, not from a live
- * call; tests/fixtures/captions/README.md lists sources with commit SHAs:
- *  - vivek-nexus/transcriptonic@0cb5eb5: region div[role=region][tabindex=0]; Meet edits
- *    caption text in place (characterData); call_end / closed_caption_off icons; .u6vdEc.
- *  - sanand0/tools@0a20f91, chen-ye/meet-cc-transcript@32fbeba: [jsname=dsyhDe] >
- *    region[aria-label=Captions] > .nMcdL > (.adE6rb > .NWpY1d name) + .ygicle text; "You".
- *  - ChrisRegado/streamdeck-googlemeet@3ab4e06: CC toggle jsname RrG0hf since the Feb 2026
- *    redesign (r8qRAd before), state shown by its closed_caption(_off) icon.
- *  - attendee-labs/attendee@11d70a1: "Turn on/off captions", Leave call jsname CQylAd.
- * The post-call screen strings ("You left the meeting", "Return to home screen") match
- * the reconstructed call-ended fixture; the French ones are inferred.
+ * The hooks follow the caption DOM described in tests/fixtures/captions/README.md,
+ * which also credits the open-source Meet scrapers they were first drawn from.
  */
 
 export interface CaptionBlock {

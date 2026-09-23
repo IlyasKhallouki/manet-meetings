@@ -13,7 +13,7 @@ const SUMMARY_TIMEOUT_MS = 5 * 60_000;
 /** Schema property order; the model writes fields in this order, language first. */
 export const SUMMARY_SCHEMA_FIELDS = ['language', 'title', 'summary', 'keyPoints', 'decisions', 'actionItems'] as const;
 
-const SYSTEM_INSTRUCTION = `You write meeting notes for a small team whose meetings mix English and French, sometimes within one sentence.
+const SYSTEM_INSTRUCTION = `You write meeting notes. Meetings may mix languages, sometimes within one sentence.
 
 Rules:
 - Write every field in the dominant language of the meeting: the language most of the transcript is spoken in. Keep names, product names and technical terms as spoken.
