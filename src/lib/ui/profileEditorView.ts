@@ -4,8 +4,16 @@
  * a textarea) or is discarded on Esc; a successful save flashes "✓ Saved" beside the
  * label; an invalid value writes nothing and shows why under the field.
  *
- * Structural changes to the sections list (add, move, format, remove) save at once: they
- * can't make the profile invalid, so there is nothing to check first.
+ * Every write — a field, a structural section change, Use as default, Delete — goes
+ * through one queue (write()), one at a time. A field's candidate is built twice: once
+ * synchronously at commit time, only to show a validation error without waiting, and
+ * once for real inside the queued closure, from whatever `profile` the queue has already
+ * caught up to. That second build is what makes two quick commits (blur name, then blur
+ * databaseId before the first save resolves) land on top of each other instead of one
+ * overwriting the other with a stale snapshot.
+ *
+ * Structural changes to the sections list (add, move, format, remove) build the same way
+ * and can't make the profile invalid, so there is nothing to check first.
  *
  * Pure DOM: no chrome.* here. The owner supplies handlers and calls load() with the
  * settings whenever storage changes, so the module renders in any DOM (tested with jsdom
@@ -59,12 +67,17 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** A field wired to commit-on-blur/Enter, Esc-restore and re-sync from the profile. */
 interface EditableField {
   input: HTMLInputElement | HTMLTextAreaElement;
   shown: () => string;
   commit: () => Promise<void>;
-  restore: () => void;
+  /** Updates the input from `shown()`, unless it's focused or a write for it is pending. */
+  sync: () => void;
 }
+
+/** A profile candidate that passed profileProblems, or the problems that stopped it. */
+type SaveOutcome = { ok: true; profile: Profile } | { ok: false; problems: string[] };
 
 export function createProfileEditorView(
   profileId: string,
@@ -81,27 +94,33 @@ export function createProfileEditorView(
     return s.profiles.find((p) => p.id === profileId) ?? null;
   }
 
-  // ---- Writes: one at a time -------------------------------------------------------------
+  // ---- Writes: one at a time, each built from the latest resolved profile ----------------
   let queue: Promise<unknown> = Promise.resolve();
-  function write(candidate: Profile): Promise<Settings> {
+  /** Runs `fn` once every earlier write has settled, so nothing is ever lost to a race. */
+  function write<T>(fn: () => Promise<T>): Promise<T> {
     writing++;
-    const run = queue.then(() => handlers.save(candidate));
+    const run = queue.then(fn);
     queue = run.then(
       () => undefined,
       () => undefined,
     );
-    return run.then(
-      (next) => {
-        writing--;
-        settings = next;
-        profile = currentProfile(next);
-        return next;
-      },
-      (err: unknown) => {
-        writing--;
-        throw err;
-      },
-    );
+    return run.finally(() => {
+      writing--;
+    });
+  }
+
+  /** Builds a candidate from the profile the queue has caught up to, and saves it if valid. */
+  function writeProfile(build: (base: Profile) => Profile): Promise<SaveOutcome> {
+    return write(async (): Promise<SaveOutcome> => {
+      if (!profile) return { ok: false, problems: [] };
+      const candidate = build(profile);
+      const problems = profileProblems(candidate, settings!.profiles);
+      if (problems.length) return { ok: false, problems };
+      const next = await handlers.save(candidate);
+      settings = next;
+      profile = currentProfile(next);
+      return { ok: true, profile: profile! };
+    });
   }
 
   // ---- "✓ Saved" --------------------------------------------------------------------------
@@ -125,68 +144,98 @@ export function createProfileEditorView(
   }
 
   const focused = (el: Element) => document.activeElement === el;
-  function syncValue(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-    if (!focused(input)) input.value = value;
+
+  // ---- Fields: name, database, prompt, vocabulary, and each section's title/instruction --
+  const fields: EditableField[] = [];
+  function unregisterField(f: EditableField): void {
+    const i = fields.indexOf(f);
+    if (i >= 0) fields.splice(i, 1);
   }
 
-  // ---- Generic field commit (name, database, prompt, vocabulary, section title/instr) ----
-  function commitValue(o: {
+  function createField(o: {
     input: HTMLInputElement | HTMLTextAreaElement;
     fieldEl: HTMLElement;
     saved?: HTMLElement;
     label: string;
     shown: () => string;
-    toCandidate: (raw: string) => Profile;
+    /** Applies this field's edit to `base` (the profile the write queue has caught up to). */
+    change: (base: Profile, raw: string) => Profile;
     display: (p: Profile) => string;
-  }): Promise<void> {
-    if (!profile) return Promise.resolve();
-    const raw = o.input.value;
-    const shownValue = o.shown();
-    if (raw === shownValue) {
-      setFieldMessage(o.fieldEl, null);
-      return Promise.resolve();
-    }
-    const candidate = o.toCandidate(raw);
-    const candidateDisplay = o.display(candidate);
-    if (candidateDisplay === shownValue) {
-      // Only whitespace or order-preserving clean-up changed: show it, write nothing.
-      o.input.value = shownValue;
-      setFieldMessage(o.fieldEl, null);
-      return Promise.resolve();
-    }
-    const problems = profileProblems(candidate, settings!.profiles);
-    if (problems.length) {
-      setFieldMessage(o.fieldEl, problems[0]!, 'caution');
-      return Promise.resolve();
-    }
-    return write(candidate).then(
-      (next) => {
-        const updated = currentProfile(next);
-        if (updated && o.input.value === raw) o.input.value = o.display(updated);
+  }): EditableField {
+    /** The value a write is in flight for, so Esc and a reload don't show something stale. */
+    let pendingRaw: string | null = null;
+    /** The last value this field put in the input itself: null until the first sync. What
+     *  the input shows besides this is an uncommitted edit, focused or not (a blur that's
+     *  still validating, or — for a section row — one a structural save elsewhere raced
+     *  past without touching), so sync() must leave it alone. */
+    let lastSyncedValue: string | null = null;
+
+    function commit(): Promise<void> {
+      if (!profile) return Promise.resolve();
+      const raw = o.input.value;
+      const shownValue = o.shown();
+      if (raw === shownValue) {
         setFieldMessage(o.fieldEl, null);
-        if (o.saved) flashSaved(o.saved, o.label);
-        syncAll();
-      },
-      (err: unknown) => {
-        setFieldMessage(o.fieldEl, `Couldn’t save: ${errorText(err)}`, 'caution');
-      },
-    );
-  }
+        return Promise.resolve();
+      }
+      // A quick, synchronous check against what's known right now: it can show an error
+      // without waiting, but the queued write below re-checks against the real thing.
+      const guess = o.change(profile, raw);
+      const guessDisplay = o.display(guess);
+      if (guessDisplay === shownValue) {
+        // Only whitespace or order-preserving clean-up changed: show it, write nothing.
+        o.input.value = shownValue;
+        setFieldMessage(o.fieldEl, null);
+        return Promise.resolve();
+      }
+      const guessProblems = profileProblems(guess, settings!.profiles);
+      if (guessProblems.length) {
+        setFieldMessage(o.fieldEl, guessProblems[0]!, 'caution');
+        return Promise.resolve();
+      }
+      pendingRaw = raw;
+      return writeProfile((base) => o.change(base, raw)).then(
+        (result) => {
+          pendingRaw = null;
+          if (!result.ok) {
+            if (result.problems[0]) setFieldMessage(o.fieldEl, result.problems[0], 'caution');
+            return;
+          }
+          const value = o.display(result.profile);
+          if (o.input.value === raw) o.input.value = value;
+          lastSyncedValue = value;
+          setFieldMessage(o.fieldEl, null);
+          if (o.saved) flashSaved(o.saved, o.label);
+          syncAll();
+        },
+        (err: unknown) => {
+          pendingRaw = null;
+          setFieldMessage(o.fieldEl, `Couldn’t save: ${errorText(err)}`, 'caution');
+        },
+      );
+    }
 
-  const fields: EditableField[] = [];
+    function restore(): void {
+      // Mid-flight, Esc can't cancel the write already under way: show what it's writing,
+      // not the stale saved value, so the field still catches up once it resolves.
+      const value = pendingRaw ?? o.shown();
+      o.input.value = value;
+      if (pendingRaw === null) lastSyncedValue = value;
+      setFieldMessage(o.fieldEl, null);
+    }
 
-  function wireField(
-    input: HTMLInputElement | HTMLTextAreaElement,
-    commit: () => Promise<void>,
-    shown: () => string,
-  ): void {
-    const restore = () => {
-      input.value = shown();
-      const fieldEl = input.closest('.field');
-      if (fieldEl) setFieldMessage(fieldEl, null);
-    };
-    input.addEventListener('focusout', () => void commit());
-    input.addEventListener('keydown', (event) => {
+    function sync(): void {
+      if (focused(o.input) || pendingRaw !== null) return;
+      // An uncommitted edit (never blurred, so never even reached commit()) still shows
+      // in the input without matching what we last put there: leave it be.
+      if (lastSyncedValue !== null && o.input.value !== lastSyncedValue) return;
+      const value = o.shown();
+      o.input.value = value;
+      lastSyncedValue = value;
+    }
+
+    o.input.addEventListener('focusout', () => void commit());
+    o.input.addEventListener('keydown', (event) => {
       const e = event as KeyboardEvent;
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -194,11 +243,18 @@ export function createProfileEditorView(
         return;
       }
       if (e.key !== 'Enter' || e.isComposing) return;
-      if (input instanceof HTMLTextAreaElement && !(e.ctrlKey || e.metaKey)) return;
+      if (o.input instanceof HTMLTextAreaElement && !(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       void commit();
     });
-    fields.push({ input, shown, commit, restore });
+
+    return { input: o.input, shown: o.shown, commit, sync };
+  }
+
+  function registerField(o: Parameters<typeof createField>[0]): EditableField {
+    const f = createField(o);
+    fields.push(f);
+    return f;
   }
 
   // ---- Header: back, name -------------------------------------------------------------
@@ -214,18 +270,15 @@ export function createProfileEditorView(
   const nameSaved = savedSlot('name');
   const nameInput = textInput({ id: 'name', name: 'name', 'data-key': 'name' });
   const nameFieldEl = field({ id: 'name', label: 'Name', control: nameInput, status: nameSaved });
-  function commitName(): Promise<void> {
-    return commitValue({
-      input: nameInput,
-      fieldEl: nameFieldEl,
-      saved: nameSaved,
-      label: 'Name',
-      shown: () => profile!.name,
-      toCandidate: (raw) => ({ ...profile!, name: raw.trim() }),
-      display: (p) => p.name,
-    });
-  }
-  wireField(nameInput, commitName, () => profile!.name);
+  const nameField = registerField({
+    input: nameInput,
+    fieldEl: nameFieldEl,
+    saved: nameSaved,
+    label: 'Name',
+    shown: () => profile!.name,
+    change: (base, raw) => ({ ...base, name: raw.trim() }),
+    display: (p) => p.name,
+  });
 
   // ---- Notion database + Check ------------------------------------------------------------
   const dbSaved = savedSlot('databaseId');
@@ -241,18 +294,15 @@ export function createProfileEditorView(
     onClick: () => void checkDatabase(),
   });
   const dbFieldEl = field({ id: 'databaseId', label: 'Notion database', control: [dbInput, checkBtn], status: dbSaved });
-  function commitDatabaseId(): Promise<void> {
-    return commitValue({
-      input: dbInput,
-      fieldEl: dbFieldEl,
-      saved: dbSaved,
-      label: 'Notion database',
-      shown: () => profile!.databaseId,
-      toCandidate: (raw) => ({ ...profile!, databaseId: raw.trim() }),
-      display: (p) => p.databaseId,
-    });
-  }
-  wireField(dbInput, commitDatabaseId, () => profile!.databaseId);
+  const dbField = registerField({
+    input: dbInput,
+    fieldEl: dbFieldEl,
+    saved: dbSaved,
+    label: 'Notion database',
+    shown: () => profile!.databaseId,
+    change: (base, raw) => ({ ...base, databaseId: raw.trim() }),
+    display: (p) => p.databaseId,
+  });
 
   function busy(el: HTMLButtonElement, on: boolean): void {
     setDisabled(el, on);
@@ -299,19 +349,20 @@ export function createProfileEditorView(
     defaultInput,
   );
   async function commitDefault(checked: boolean): Promise<void> {
-    if (!checked || !profile || !settings || profile.id === settings.defaultProfileId) return;
+    if (!checked || !profile || profile.id === settings?.defaultProfileId) return;
+    const id = profile.id;
     setDisabled(defaultInput, true);
-    writing++;
     try {
-      const next = await handlers.makeDefault(profile.id);
-      writing--;
-      settings = next;
-      profile = currentProfile(next);
+      await write(async () => {
+        const next = await handlers.makeDefault(id);
+        settings = next;
+        profile = currentProfile(next);
+        return next;
+      });
       defaultMsg.textContent = '';
       flashSaved(defaultSaved, 'Use as default');
       syncAll();
     } catch (err) {
-      writing--;
       defaultInput.checked = false;
       defaultMsg.textContent = `Couldn’t save: ${errorText(err)}`;
       setDisabled(defaultInput, false);
@@ -335,78 +386,82 @@ export function createProfileEditorView(
     status: promptSaved,
     hint: 'What these meetings are, and how to write their notes.',
   });
-  function commitPrompt(): Promise<void> {
-    return commitValue({
-      input: promptInput,
-      fieldEl: promptFieldEl,
-      saved: promptSaved,
-      label: 'Prompt',
-      shown: () => profile!.prompt,
-      toCandidate: (raw) => ({ ...profile!, prompt: raw.trim() }),
-      display: (p) => p.prompt,
-    });
-  }
-  wireField(promptInput, commitPrompt, () => profile!.prompt);
+  const promptField = registerField({
+    input: promptInput,
+    fieldEl: promptFieldEl,
+    saved: promptSaved,
+    label: 'Prompt',
+    shown: () => profile!.prompt,
+    change: (base, raw) => ({ ...base, prompt: raw.trim() }),
+    display: (p) => p.prompt,
+  });
 
   // ---- Sections ------------------------------------------------------------------------------
   interface SectionRow {
     el: HTMLElement;
-    titleInput: HTMLInputElement;
-    titleFieldEl: HTMLElement;
-    instrInput: HTMLTextAreaElement;
-    instrFieldEl: HTMLElement;
+    titleField: EditableField;
+    instrField: EditableField;
     formatEl: HTMLElement;
     upBtn: HTMLButtonElement;
     downBtn: HTMLButtonElement;
   }
   const sectionRows = new Map<string, SectionRow>();
   const sectionsList = h('div', { class: 'profile-sections' });
-  let lastSectionsKey: string | null = null;
 
   function sectionOf(id: string): NoteSection | undefined {
     return profile?.sections.find((s) => s.id === id);
   }
 
-  function buildSection(id: string, patch: Partial<NoteSection>): Profile {
-    return { ...profile!, sections: profile!.sections.map((s) => (s.id === id ? { ...s, ...patch } : s)) };
+  function buildSection(base: Profile, id: string, patch: Partial<NoteSection>): Profile {
+    return { ...base, sections: base.sections.map((s) => (s.id === id ? { ...s, ...patch } : s)) };
   }
 
-  function saveStructural(candidate: Profile): Promise<void> {
-    return write(candidate).then(
+  /** Add, move, format and remove all build from the queue's latest profile, then re-render. */
+  function saveStructural(build: (base: Profile) => Profile): void {
+    void writeProfile(build).then(
       () => syncAll(),
       () => syncAll(),
     );
   }
 
   function moveSection(id: string, dir: -1 | 1): void {
-    if (!profile) return;
-    const idx = profile.sections.findIndex((s) => s.id === id);
-    const swapIdx = idx + dir;
-    if (idx < 0 || swapIdx < 0 || swapIdx >= profile.sections.length) return;
-    const sections = [...profile.sections];
-    const tmp = sections[idx]!;
-    sections[idx] = sections[swapIdx]!;
-    sections[swapIdx] = tmp;
-    void saveStructural({ ...profile, sections });
+    saveStructural((base) => {
+      const idx = base.sections.findIndex((s) => s.id === id);
+      const swapIdx = idx + dir;
+      if (idx < 0 || swapIdx < 0 || swapIdx >= base.sections.length) return base;
+      const sections = [...base.sections];
+      const tmp = sections[idx]!;
+      sections[idx] = sections[swapIdx]!;
+      sections[swapIdx] = tmp;
+      return { ...base, sections };
+    });
   }
 
   function removeSection(id: string): void {
-    if (!profile) return;
-    void saveStructural({ ...profile, sections: profile.sections.filter((s) => s.id !== id) });
+    saveStructural((base) => ({ ...base, sections: base.sections.filter((s) => s.id !== id) }));
   }
 
   function setSectionFormat(id: string, format: NoteSection['format']): void {
-    if (!profile) return;
-    void saveStructural(buildSection(id, { format }));
+    saveStructural((base) => buildSection(base, id, { format }));
+  }
+
+  function addSection(): void {
+    saveStructural((base) => ({ ...base, sections: [...base.sections, newSection(base.sections)] }));
+  }
+
+  function unregisterRow(row: SectionRow): void {
+    unregisterField(row.titleField);
+    unregisterField(row.instrField);
   }
 
   function buildSectionRow(s: NoteSection): SectionRow {
-    const titleKey = `section-${s.id}-title`;
-    const formatKey = `section-${s.id}-format`;
-    const instrKey = `section-${s.id}-instruction`;
-    const upKey = `section-${s.id}-up`;
-    const downKey = `section-${s.id}-down`;
-    const removeKey = `section-${s.id}-remove`;
+    const id = s.id;
+    const titleKey = `section-${id}-title`;
+    const formatKey = `section-${id}-format`;
+    const instrKey = `section-${id}-instruction`;
+    const upKey = `section-${id}-up`;
+    const downKey = `section-${id}-down`;
+    const removeKey = `section-${id}-remove`;
 
     const titleInput = textInput({ id: titleKey, 'data-key': titleKey });
     const formatEl = segmented<NoteSection['format']>({
@@ -416,7 +471,7 @@ export function createProfileEditorView(
         { value: 'bullets', label: 'Bullets' },
       ],
       value: s.format,
-      onSelect: (value) => setSectionFormat(s.id, value),
+      onSelect: (value) => setSectionFormat(id, value),
       attrs: { 'data-key': formatKey },
     });
     const titleFieldEl = field({ id: titleKey, label: 'Title', control: [titleInput, formatEl] });
@@ -430,90 +485,87 @@ export function createProfileEditorView(
     });
     const instrFieldEl = field({ id: instrKey, label: 'Instruction', control: instrInput });
 
-    const upBtn = button('Move up', { kind: 'plain', attrs: { 'data-key': upKey }, onClick: () => moveSection(s.id, -1) });
-    const downBtn = button('Move down', { kind: 'plain', attrs: { 'data-key': downKey }, onClick: () => moveSection(s.id, 1) });
+    const upBtn = button('Move up', { kind: 'plain', attrs: { 'data-key': upKey }, onClick: () => moveSection(id, -1) });
+    const downBtn = button('Move down', { kind: 'plain', attrs: { 'data-key': downKey }, onClick: () => moveSection(id, 1) });
     const removeBtn = button('Remove', {
       kind: 'plain',
       attrs: { 'data-key': removeKey },
-      onClick: () => removeSection(s.id),
+      onClick: () => removeSection(id),
     });
     const actions = h('div', { class: 'profile-section-actions' }, upBtn, downBtn, removeBtn);
 
     const el = h('div', { class: 'profile-section' }, titleFieldEl, instrFieldEl, actions);
 
-    function commitTitle(): Promise<void> {
-      return commitValue({
-        input: titleInput,
-        fieldEl: titleFieldEl,
-        label: 'Title',
-        shown: () => sectionOf(s.id)?.title ?? '',
-        toCandidate: (raw) => buildSection(s.id, { title: raw.trim() }),
-        display: (p) => p.sections.find((x) => x.id === s.id)?.title ?? '',
-      });
-    }
-    function commitInstruction(): Promise<void> {
-      return commitValue({
-        input: instrInput,
-        fieldEl: instrFieldEl,
-        label: 'Instruction',
-        shown: () => sectionOf(s.id)?.instruction ?? '',
-        toCandidate: (raw) => buildSection(s.id, { instruction: raw.trim() }),
-        display: (p) => p.sections.find((x) => x.id === s.id)?.instruction ?? '',
-      });
-    }
-    wireField(titleInput, commitTitle, () => sectionOf(s.id)?.title ?? '');
-    wireField(instrInput, commitInstruction, () => sectionOf(s.id)?.instruction ?? '');
+    const titleField = registerField({
+      input: titleInput,
+      fieldEl: titleFieldEl,
+      label: 'Title',
+      shown: () => sectionOf(id)?.title ?? '',
+      change: (base, raw) => buildSection(base, id, { title: raw.trim() }),
+      display: (p) => p.sections.find((x) => x.id === id)?.title ?? '',
+    });
+    const instrField = registerField({
+      input: instrInput,
+      fieldEl: instrFieldEl,
+      label: 'Instruction',
+      shown: () => sectionOf(id)?.instruction ?? '',
+      change: (base, raw) => buildSection(base, id, { instruction: raw.trim() }),
+      display: (p) => p.sections.find((x) => x.id === id)?.instruction ?? '',
+    });
 
-    return { el, titleInput, titleFieldEl, instrInput, instrFieldEl, formatEl, upBtn, downBtn };
+    return { el, titleField, instrField, formatEl, upBtn, downBtn };
   }
 
   const addSectionBtn = button('Add section', { attrs: { 'data-key': 'add-section' }, onClick: () => addSection() });
   const addSectionNote = h('p', { class: 'hint' }, `Up to ${PROFILE_LIMITS.sections} sections.`);
   const addSectionRow = h('div', { class: 'settings-action' }, addSectionBtn, addSectionNote);
-  const actionItemsHint = h(
-    'p',
-    { class: 'hint' },
-    `“${ACTION_ITEMS_TITLE}” is always added after the sections.`,
-  );
+  const actionItemsHint = h('p', { class: 'hint' }, `“${ACTION_ITEMS_TITLE}” is always added after the sections.`);
 
-  function addSection(): void {
-    if (!profile) return;
-    void saveStructural({ ...profile, sections: [...profile.sections, newSection(profile.sections)] });
-  }
-
-  function sectionsKey(sections: readonly NoteSection[]): string {
-    return sections.map((s) => `${s.id}:${s.format}`).join('|');
-  }
-
+  /**
+   * Reuses each row whose section id still exists (patching only what changed, and never
+   * touching a focused or mid-write field), creates rows for new ids, drops rows for gone
+   * ids, then reorders the surviving nodes with the fewest possible moves. A row that had
+   * focus keeps it even if reordering it briefly detaches it from the document.
+   */
   function renderSections(): void {
+    const activeBefore = document.activeElement;
     if (!profile) {
-      sectionsList.replaceChildren();
+      for (const row of sectionRows.values()) unregisterRow(row);
       sectionRows.clear();
-      lastSectionsKey = null;
+      sectionsList.replaceChildren();
+      setDisabled(addSectionBtn, false);
       return;
     }
-    const key = sectionsKey(profile.sections);
-    if (key !== lastSectionsKey) {
-      lastSectionsKey = key;
-      sectionRows.clear();
-      sectionsList.replaceChildren(
-        ...profile.sections.map((s) => {
-          const row = buildSectionRow(s);
-          sectionRows.set(s.id, row);
-          return row.el;
-        }),
-      );
+    const ids = new Set(profile.sections.map((s) => s.id));
+    for (const [id, row] of [...sectionRows]) {
+      if (ids.has(id)) continue;
+      unregisterRow(row);
+      row.el.remove();
+      sectionRows.delete(id);
     }
+    const total = profile.sections.length;
     profile.sections.forEach((s, i) => {
-      const row = sectionRows.get(s.id);
-      if (!row) return;
-      syncValue(row.titleInput, s.title);
+      let row = sectionRows.get(s.id);
+      if (!row) {
+        row = buildSectionRow(s);
+        sectionRows.set(s.id, row);
+      }
+      row.titleField.sync();
+      row.instrField.sync();
       setSegmented(row.formatEl, s.format);
-      syncValue(row.instrInput, s.instruction);
       setDisabled(row.upBtn, i === 0);
-      setDisabled(row.downBtn, i === profile!.sections.length - 1);
+      setDisabled(row.downBtn, i === total - 1);
     });
-    setDisabled(addSectionBtn, profile.sections.length >= PROFILE_LIMITS.sections);
+    let node = sectionsList.firstChild;
+    for (const s of profile.sections) {
+      const row = sectionRows.get(s.id)!;
+      if (node !== row.el) sectionsList.insertBefore(row.el, node);
+      node = row.el.nextSibling;
+    }
+    if (activeBefore instanceof HTMLElement && activeBefore.isConnected && document.activeElement !== activeBefore) {
+      activeBefore.focus({ preventScroll: true });
+    }
+    setDisabled(addSectionBtn, total >= PROFILE_LIMITS.sections);
   }
 
   // ---- Vocabulary ----------------------------------------------------------------------------
@@ -533,18 +585,15 @@ export function createProfileEditorView(
     status: vocabSaved,
     hint: 'Added to the vocabulary in Settings for these meetings only.',
   });
-  function commitVocabulary(): Promise<void> {
-    return commitValue({
-      input: vocabInput,
-      fieldEl: vocabFieldEl,
-      saved: vocabSaved,
-      label: 'Vocabulary',
-      shown: () => profile!.vocabulary.join('\n'),
-      toCandidate: (raw) => ({ ...profile!, vocabulary: parseVocabulary(raw) }),
-      display: (p) => p.vocabulary.join('\n'),
-    });
-  }
-  wireField(vocabInput, commitVocabulary, () => profile!.vocabulary.join('\n'));
+  const vocabField = registerField({
+    input: vocabInput,
+    fieldEl: vocabFieldEl,
+    saved: vocabSaved,
+    label: 'Vocabulary',
+    shown: () => profile!.vocabulary.join('\n'),
+    change: (base, raw) => ({ ...base, vocabulary: parseVocabulary(raw) }),
+    display: (p) => p.vocabulary.join('\n'),
+  });
 
   // ---- Delete ------------------------------------------------------------------------------
   const deleteMsg = h('p', { class: 'field-msg', role: 'status' });
@@ -571,11 +620,7 @@ export function createProfileEditorView(
         onClick: () => void confirmDelete(),
       });
       deleteArea.replaceChildren(
-        h(
-          'p',
-          null,
-          `Delete ${quoted(profile.name)}? Meetings recorded with it will ask for another profile.`,
-        ),
+        h('p', null, `Delete ${quoted(profile.name)}? Meetings recorded with it will ask for another profile.`),
         h('div', { class: 'profile-delete-actions' }, cancel, confirm),
         deleteMsg,
       );
@@ -602,14 +647,11 @@ export function createProfileEditorView(
   async function confirmDelete(): Promise<void> {
     if (!profile) return;
     const id = profile.id;
-    writing++;
     try {
-      await handlers.remove(id);
-      writing--;
+      await write(() => handlers.remove(id));
       confirmingDelete = false;
       handlers.back();
     } catch (err) {
-      writing--;
       deleteMsg.textContent = `Couldn’t delete: ${errorText(err)}`;
     }
   }
@@ -642,10 +684,10 @@ export function createProfileEditorView(
       return;
     }
     heading.textContent = profile.name;
-    syncValue(nameInput, profile.name);
-    syncValue(dbInput, profile.databaseId);
-    syncValue(promptInput, profile.prompt);
-    syncValue(vocabInput, profile.vocabulary.join('\n'));
+    nameField.sync();
+    dbField.sync();
+    promptField.sync();
+    vocabField.sync();
     const isDefault = profile.id === settings.defaultProfileId;
     if (document.activeElement !== defaultInput) {
       defaultInput.checked = isDefault;
@@ -670,6 +712,7 @@ export function createProfileEditorView(
     },
     flush() {
       let unsaved = writing > 0;
+      if (!profile) return unsaved;
       for (const f of fields) {
         if (f.input.value === f.shown()) continue;
         unsaved = true;

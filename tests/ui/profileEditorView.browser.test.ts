@@ -34,6 +34,33 @@ function setup(profiles: Profile[] = starterProfiles(DB, ''), id = 'personal') {
   return { view, handlers, el, type, settle, get: () => settings };
 }
 
+/** Like setup(), but save() resolves after `delayMs` so races and in-flight writes can be tested. */
+function setupDelayed(delayMs: number, profiles: Profile[] = starterProfiles(DB, ''), id = 'personal') {
+  let settings: Settings = normalizeSettings({ profiles, defaultProfileId: 'team', notionToken: 'ntn_x' });
+  const replace = (next: Settings) => {
+    settings = next;
+    return next;
+  };
+  const handlers: ProfileEditorHandlers = {
+    save: vi.fn(
+      (p: Profile) =>
+        new Promise<Settings>((resolve) => {
+          setTimeout(() => resolve(replace({ ...settings, profiles: settings.profiles.map((q) => (q.id === p.id ? p : q)) })), delayMs);
+        }),
+    ),
+    remove: vi.fn((pid: string) => Promise.resolve(replace({ ...settings, profiles: settings.profiles.filter((q) => q.id !== pid) }))),
+    makeDefault: vi.fn((pid: string) => Promise.resolve(replace({ ...settings, defaultProfileId: pid }))),
+    verifyDatabase: vi.fn(async () => ({ ok: true as const, title: 'Personal meetings' })),
+    back: vi.fn(),
+  };
+  const view = createProfileEditorView(id, handlers, { savedMs: 10, fadeMs: 1 });
+  document.body.append(view.element);
+  view.load(settings);
+  const el = <T extends HTMLElement>(key: string) => view.element.querySelector<T>(`[data-key="${key}"]`)!;
+  const settle = (ms = delayMs * 4 + 100) => new Promise((r) => setTimeout(r, ms));
+  return { view, handlers, el, settle, get: () => settings };
+}
+
 afterEach(() => document.body.replaceChildren());
 
 describe('profile editor', () => {
@@ -107,5 +134,45 @@ describe('profile editor', () => {
     await settle();
     expect(handlers.remove).toHaveBeenCalledWith('personal');
     expect(handlers.back).toHaveBeenCalled();
+  });
+
+  it('keeps both edits when a second field commits before the first save resolves', async () => {
+    const { el, settle, get } = setupDelayed(10);
+    const nameInput = el<HTMLInputElement>('name');
+    nameInput.focus();
+    nameInput.value = 'Weekly meeting';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    nameInput.blur();
+    const dbInput = el<HTMLInputElement>('databaseId');
+    dbInput.focus();
+    dbInput.value = DB;
+    dbInput.dispatchEvent(new Event('input', { bubbles: true }));
+    dbInput.blur();
+    await settle();
+    expect(get().profiles[1]).toMatchObject({ id: 'personal', name: 'Weekly meeting', databaseId: DB });
+  });
+
+  it('keeps an uncommitted edit and its element when a structural section change saves', async () => {
+    const { el, settle, get } = setup();
+    const first = get().profiles[1]!.sections[0]!;
+    const titleInput = el<HTMLInputElement>(`section-${first.id}-title`);
+    titleInput.value = 'Overview';
+    titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+    el('add-section').click();
+    await settle();
+    expect(el<HTMLInputElement>(`section-${first.id}-title`)).toBe(titleInput);
+    expect(titleInput.value).toBe('Overview');
+  });
+
+  it('shows the committed value once a delayed save resolves, even if Esc fired first', async () => {
+    const { el, settle } = setupDelayed(10);
+    const nameInput = el<HTMLInputElement>('name');
+    nameInput.focus();
+    nameInput.value = 'Weekly meeting';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    nameInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    nameInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await settle();
+    expect(nameInput.value).toBe('Weekly meeting');
   });
 });
