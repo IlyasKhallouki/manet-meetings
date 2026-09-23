@@ -248,3 +248,47 @@ body.page-settings .profile-delete-actions {
   gap: var(--s4);
   margin-block-start: var(--s2);
 }
+
+/* ---- Share: export/import config -------------------------------------------------------- */
+/* Each row's action bar, inline form and confirmation share one spot: only one of the
+ * three is visible at a time (the others carry `hidden`). */
+body.page-settings .share-row {
+  display: grid;
+  gap: var(--s3);
+}
+
+body.page-settings .share-form {
+  display: grid;
+  gap: var(--s4);
+}
+
+body.page-settings .share-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
+body.page-settings .share-preview-title {
+  font: var(--t-headline);
+  letter-spacing: var(--ls-headline);
+}
+
+body.page-settings .share-preview-list {
+  display: grid;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+  color: var(--label);
+}
+
+body.page-settings .share-keys {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font: var(--t-callout);
+  letter-spacing: var(--ls-callout);
+}
