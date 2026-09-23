@@ -2,6 +2,7 @@
  * Settings defaults and pure helpers, free of chrome.storage so the offscreen document
  * (which only has chrome.runtime) can import them. settings.ts re-exports these.
  */
+import { starterProfiles } from './profiles';
 import type { Route, Settings } from './types';
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -16,7 +17,35 @@ export const DEFAULT_SETTINGS: Settings = {
   customVocabulary: [],
   languageCodes: [],
   includeMic: true,
+  profiles: starterProfiles(),
+  defaultProfileId: 'team',
 };
+
+/** Fields settings stored before profiles may carry. */
+interface LegacySettings {
+  notionTeamDbId?: string;
+  notionPersonalDbId?: string;
+  defaultRoute?: string;
+}
+
+/**
+ * Stored settings made current. Missing fields take their defaults. Settings from before
+ * profiles get Team and Personal built from their two databases, with the ids 'team' and
+ * 'personal', so a meeting's old destination names its profile; the old default route
+ * becomes the default profile. A default id that names no profile falls back to the first.
+ */
+export function normalizeSettings(stored: (Partial<Settings> & LegacySettings) | null | undefined): Settings {
+  const s = stored ?? {};
+  const merged: Settings = { ...DEFAULT_SETTINGS, ...s };
+  const profiles =
+    Array.isArray(s.profiles) && s.profiles.length > 0
+      ? s.profiles
+      : starterProfiles(s.notionTeamDbId ?? '', s.notionPersonalDbId ?? '');
+  const ids = new Set(profiles.map((p) => p.id));
+  const defaultProfileId =
+    [s.defaultProfileId, s.defaultRoute].find((id): id is string => id !== undefined && ids.has(id)) ?? profiles[0]!.id;
+  return { ...merged, profiles, defaultProfileId };
+}
 
 export function databaseIdFor(settings: Settings, route: Route): string {
   return route === 'team' ? settings.notionTeamDbId : settings.notionPersonalDbId;

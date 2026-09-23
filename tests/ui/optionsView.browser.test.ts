@@ -3,6 +3,7 @@ import '@lib/ui/styles.css';
 import { verifyApiKey } from '@lib/gemini/rest';
 import type { VerifyResult } from '@lib/notion/verify';
 import { verifyDatabase } from '@lib/notion/verify';
+import { starterProfiles } from '@lib/profiles';
 import type { Settings } from '@lib/types';
 import { createOptionsView, type OptionsHandlers } from '@lib/ui/optionsView';
 
@@ -18,6 +19,8 @@ const SETTINGS: Settings = {
   customVocabulary: ['Lumind', 'Manet'],
   languageCodes: ['en-US', 'fr-FR'],
   includeMic: true,
+  profiles: starterProfiles('1a2b3c4d5e6f40718293a4b5c6d7e8f9', ''),
+  defaultProfileId: 'team',
 };
 
 /** Everything needed to save meetings (Team is the default and has a database). */

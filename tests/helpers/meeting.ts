@@ -3,6 +3,7 @@
  * blocks the way the content script records them (several revisions per block, the
  * local user labelled "You").
  */
+import { starterProfiles } from '@lib/profiles';
 import type { CaptionSegment, Settings, SessionMeta } from '@lib/types';
 import { SPEECH_MIXED_MS } from './fixtures';
 
@@ -24,6 +25,8 @@ export function testSettings(overrides: Partial<Settings> = {}): Settings {
     customVocabulary: ['Lumind', 'Manet'],
     languageCodes: [],
     includeMic: true,
+    profiles: starterProfiles(),
+    defaultProfileId: 'team',
     ...overrides,
   };
 }

@@ -3,18 +3,18 @@
  * in requests to Gemini and Notion.
  */
 import { storage } from 'wxt/utils/storage';
-import { DEFAULT_SETTINGS } from './settingsSchema';
+import { DEFAULT_SETTINGS, normalizeSettings } from './settingsSchema';
 import type { Settings } from './types';
 
-export { DEFAULT_SETTINGS, databaseIdFor, missingForSave, missingSettings } from './settingsSchema';
+export { DEFAULT_SETTINGS, databaseIdFor, missingForSave, missingSettings, normalizeSettings } from './settingsSchema';
 
 export const settingsItem = storage.defineItem<Settings>('local:settings', {
   fallback: DEFAULT_SETTINGS,
 });
 
 export async function getSettings(): Promise<Settings> {
-  // Merge so settings saved by an older version pick up new fields.
-  return { ...DEFAULT_SETTINGS, ...(await settingsItem.getValue()) };
+  // Settings saved by an older version pick up new fields, and profiles.
+  return normalizeSettings(await settingsItem.getValue());
 }
 
 export async function updateSettings(patch: Partial<Settings>): Promise<Settings> {

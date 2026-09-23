@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { starterProfiles } from '@lib/profiles';
 import { DEFAULT_SETTINGS } from '@lib/settings';
 import type { Settings } from '@lib/types';
 import {
@@ -30,6 +31,11 @@ const FILLED: Settings = {
   customVocabulary: ['Lumind', 'Manet', 'OPFS'],
   languageCodes: ['en-US', 'fr-FR'],
   includeMic: false,
+  profiles: starterProfiles(
+    'https://www.notion.so/lumind/Team-meetings-1a2b3c4d5e6f40718293a4b5c6d7e8f9?v=0123456789abcdef0123456789abcdef',
+    '0f1e2d3c4b5a69788796a5b4c3d2e1f0',
+  ),
+  defaultProfileId: 'team',
 };
 
 function form(patch: Partial<SettingsFormValues> = {}): SettingsFormValues {
@@ -38,8 +44,10 @@ function form(patch: Partial<SettingsFormValues> = {}): SettingsFormValues {
 
 describe('settingsToForm / parseSettingsForm', () => {
   it('round-trips every field', () => {
+    // profiles and defaultProfileId aren't form fields yet, so they don't round-trip here.
     for (const s of [DEFAULT_SETTINGS, FILLED]) {
-      expect(parseSettingsForm(settingsToForm(s))).toEqual({ ok: true, settings: s });
+      const { profiles: _profiles, defaultProfileId: _defaultProfileId, ...expected } = s;
+      expect(parseSettingsForm(settingsToForm(s))).toEqual({ ok: true, settings: expected });
     }
   });
 

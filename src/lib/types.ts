@@ -321,6 +321,36 @@ export interface AudioStore {
 }
 
 // ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+export type SectionFormat = 'paragraph' | 'bullets';
+
+/** One heading of a profile's notes, which the summary model fills. */
+export interface NoteSection {
+  /** Stable within its profile (editor rows, import previews). */
+  id: string;
+  title: string;
+  /** What the model writes under the heading. */
+  instruction: string;
+  format: SectionFormat;
+}
+
+/** A kind of meeting: how its notes are written and which Notion database it goes to. */
+export interface Profile {
+  /** 'team' and 'personal' for the profiles migrated from Team | Personal, else a UUID. */
+  id: string;
+  name: string;
+  /** Notion database link or id, as pasted. */
+  databaseId: string;
+  /** Context for every summary of this profile ("Sales call with a prospect"). May be empty. */
+  prompt: string;
+  sections: NoteSection[];
+  /** Added to Settings.customVocabulary for this profile's meetings. */
+  vocabulary: string[];
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
@@ -338,6 +368,10 @@ export interface Settings {
   customVocabulary: string[];
   languageCodes: string[];
   includeMic: boolean;
+  /** Kinds of meeting; always at least one. */
+  profiles: Profile[];
+  /** Preselected in the popup and used by the keyboard shortcut. */
+  defaultProfileId: string;
 }
 
 // ---------------------------------------------------------------------------
