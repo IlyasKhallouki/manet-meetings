@@ -440,9 +440,9 @@ describe('interrupted jobs and alarms', () => {
     expect((await fakeBrowser.alarms.get(`retry:${ID}`))?.scheduledTime).toBe(T0 + HOUR);
   });
 
-  it('transcribes a meeting that ended ready but never got auto-transcribed, when auto-transcribe is on', async () => {
+  it('retries a meeting that ended with auto-transcribe on whose job never started', async () => {
     h.clock.set(T0 + HOUR);
-    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000 }));
+    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000, autoPending: true }));
 
     const m = h.createManager();
     await m.boot();
@@ -454,7 +454,7 @@ describe('interrupted jobs and alarms', () => {
   it('leaves a meeting that ended ready alone when auto-transcribe is off', async () => {
     await configure({ autoTranscribe: false });
     h.clock.set(T0 + HOUR);
-    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000 }));
+    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000, autoPending: true }));
 
     const m = h.createManager();
     await m.boot();
@@ -463,9 +463,11 @@ describe('interrupted jobs and alarms', () => {
     expect((await getSession(ID))?.status).toBe('ready');
   });
 
-  it('leaves a meeting that ended ready more than 24h ago alone', async () => {
-    h.clock.set(T0 + 2 * DAY);
-    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 }));
+  it('leaves alone a meeting that ended with auto-transcribe off, even once it is turned back on', async () => {
+    h.clock.set(T0 + HOUR);
+    // Ended while auto-transcribe was off: no `autoPending`, so turning it on later and
+    // rebooting must not transcribe a meeting the user held back on purpose.
+    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000 }));
 
     const m = h.createManager();
     await m.boot();

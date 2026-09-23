@@ -29,7 +29,6 @@ import {
   deleteSession,
   getActiveRecording,
   getSession,
-  legacyRoute,
   listSessions,
   needsYou,
   putSession,
@@ -563,6 +562,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (active && isActive) await releaseActive(active);
 
     const recorderError = cause.kind === 'recorder-stopped' ? cause.error : undefined;
+    const autoPending = (await deps.getSettings()).autoTranscribe || undefined;
     let ended = false;
     await updateSession(id, (m) => {
       if (m.status !== 'recording') return m;
@@ -574,6 +574,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         endedAt,
         durationMs: Math.max(0, endedAt - m.startedAt),
         audio: recorderError && !audio.error ? { ...audio, error: recorderError } : audio,
+        autoPending,
       };
     });
     // Outside the lifecycle chain: the next recording can start while this one transcribes.
@@ -816,6 +817,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         // Audio a duplicate or empty session was due to lose is needed again.
         purgeAudioAt: undefined,
         forced: opts.force || isForced(m) || undefined,
+        autoPending: undefined,
       };
       return next;
     });
@@ -1105,7 +1107,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * Ends recordings that died with the worker or the browser: each is ready to transcribe,
    * as if its call had ended. Returns the ids it ended.
    */
-  async function recoverRecordings(docOpen: boolean): Promise<string[]> {
+  async function recoverRecordings(docOpen: boolean, settings: Settings): Promise<string[]> {
     // Sessions being started or finalized by this worker are not orphans.
     const busy = (id: string) => startingIds.has(id) || finalizing.has(id);
     const recording = (await listSessions()).filter((s) => s.status === 'recording' && !busy(s.id));
@@ -1127,7 +1129,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await updateSession(s.id, (m) => {
         if (m.status !== 'recording') return m;
         changed = true;
-        return { ...m, status: 'ready', recovered: true, endedAt, durationMs: Math.max(0, endedAt - m.startedAt) };
+        return {
+          ...m,
+          status: 'ready',
+          recovered: true,
+          endedAt,
+          durationMs: Math.max(0, endedAt - m.startedAt),
+          autoPending: settings.autoTranscribe || undefined,
+        };
       });
       if (changed) recovered.push(s.id);
     }
@@ -1256,7 +1265,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const settings = await deps.getSettings();
     const docOpen = await deps.offscreen.exists().catch(() => false);
 
-    const recovered = await recoverRecordings(docOpen);
+    const recovered = await recoverRecordings(docOpen, settings);
     const interrupted = await resetInterruptedJobs(docOpen);
     await restoreAlarms();
     await ensureRetentionAlarm();
@@ -1272,26 +1281,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       for (const job of interrupted) {
         track(job.kind === 'process' ? transcribeNow(job.id, { attempt: job.attempt }) : saveNow(job.id));
       }
-      // A meeting can end (status written 'ready') and then lose the worker before
-      // endRecording's track(autoTranscribe(id)) gets to run, missing auto-transcribe for
-      // good. Catch those: never attempted, no job running, ended recently enough that it is
-      // still worth doing automatically. Excludes: `recovered` sessions, already tracked
-      // above, so a session is never started twice in one boot; any other session ever
-      // marked `recovered` (e.g. adopted orphan audio), which waits for an explicit
-      // Transcribe by design; and a meeting an older version left mid Team/Personal choice,
-      // which only reads as 'ready' through normalizeMeta's `route` fallback and should
-      // likewise wait to be asked.
-      const missed = (await listSessions()).filter(
-        (s) =>
-          s.status === 'ready' &&
-          s.attempt === undefined &&
-          !s.job &&
-          !s.recovered &&
-          legacyRoute(s) === undefined &&
-          s.endedAt !== undefined &&
-          deps.now() - s.endedAt < DAY_MS &&
-          !recovered.includes(s.id),
-      );
+      // A meeting can end (status written 'ready', `autoPending` set) and then lose the
+      // worker before endRecording's track(autoTranscribe(id)) gets to run, or before that
+      // job claims the session, missing auto-transcribe for good. Catch those by the marker
+      // instead of guessing from age or attempt count: it is set only when the meeting ended
+      // with auto-transcribe on, and cleared as soon as a job claims the session. Excludes
+      // `recovered` sessions, already tracked above, so a session is never started twice in
+      // one boot.
+      const missed = (await listSessions()).filter((s) => s.status === 'ready' && s.autoPending === true && !recovered.includes(s.id));
       for (const s of missed) track(transcribeNow(s.id));
     }
     // The button's state lives in the browser, not the worker: after a browser restart it

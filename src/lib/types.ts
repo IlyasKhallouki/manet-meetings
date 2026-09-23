@@ -178,7 +178,7 @@ export interface MeetingPageInput {
 
 /**
  * Notion, behind an interface so a backend can replace it later.
- * `databaseId` is the id the user pasted into settings for the chosen route.
+ * `databaseId` is the id the user pasted into the meeting's profile.
  */
 export interface MeetingStore {
   /** Only complete pages carry the Key (it is written last), so partial saves never match. */
@@ -301,6 +301,8 @@ export interface SessionMeta {
    * after processing, automatic retries, re-runs after a restart) skip the duplicate check.
    */
   forced?: boolean;
+  /** Auto-transcribe was on when the recording ended and its job hasn't started yet. */
+  autoPending?: boolean;
 }
 
 /** What the pipeline produced for a session; stored locally until saved. */
