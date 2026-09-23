@@ -49,10 +49,11 @@ export function buildConfigFile(settings: Settings, opts: { name: string; includ
     name: opts.name.trim() || 'Manet config',
     exportedAt: new Date(opts.now ?? Date.now()).toISOString(),
     defaultProfileId: settings.defaultProfileId,
-    profiles: settings.profiles,
+    // Copies, not live references: editing the file must never touch the source settings.
+    profiles: structuredClone(settings.profiles),
     settings: {
-      customVocabulary: settings.customVocabulary,
-      languageCodes: settings.languageCodes,
+      customVocabulary: [...settings.customVocabulary],
+      languageCodes: [...settings.languageCodes],
       autoTranscribe: settings.autoTranscribe,
       retentionDays: settings.retentionDays,
       includeMic: settings.includeMic,
@@ -127,7 +128,8 @@ function settingsError(v: unknown): string | null {
 
 /** Reads a config file's text. Every rejection is one sentence saying what is wrong. */
 export function parseConfigFile(text: string): ParseResult {
-  if (text.length > MAX_CONFIG_BYTES) return { ok: false, error: 'This file is too large to be a Manet Meetings config.' };
+  const byteLength = new TextEncoder().encode(text).byteLength;
+  if (byteLength > MAX_CONFIG_BYTES) return { ok: false, error: 'This file is too large to be a Manet Meetings config.' };
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -221,6 +223,8 @@ function settingText(key: (typeof SHARED_SETTINGS)[number], value: SharedSetting
       return `${days} day${days === 1 ? '' : 's'}`;
     }
   }
+  const unreachable: never = key;
+  return String(unreachable);
 }
 
 export type ProfileChange = 'added' | 'changed' | 'unchanged' | 'kept';
@@ -270,7 +274,24 @@ export function previewConfig(current: Settings, file: ConfigFile): ConfigPrevie
 export function mergeConfig(current: Settings, file: ConfigFile): Settings {
   const inFile = new Map(file.profiles.map((p) => [p.id, p]));
   const fileNames = new Set(file.profiles.map((p) => fold(p.name)));
-  const taken = new Set([...fileNames]);
+  const localOnly = current.profiles.filter((p) => !inFile.has(p.id));
+
+  // Names already spoken for: every file name, plus local-only names that don't clash
+  // with one. A clashing local-only profile's own name must not block its own rename.
+  const taken = new Set(fileNames);
+  for (const p of localOnly) if (!fileNames.has(fold(p.name))) taken.add(fold(p.name));
+
+  // Rename only the local-only profiles whose name a file profile takes, each against the
+  // names already settled (file names, kept local names and renames chosen so far).
+  const renamed = new Map<string, string>();
+  for (const p of localOnly) {
+    if (!fileNames.has(fold(p.name))) continue;
+    let name = `${p.name} (local)`;
+    for (let n = 2; taken.has(fold(name)); n++) name = `${p.name} (local ${n})`;
+    taken.add(fold(name));
+    renamed.set(p.id, name);
+  }
+
   const profiles: Profile[] = [];
   for (const p of current.profiles) {
     const replacement = inFile.get(p.id);
@@ -279,13 +300,8 @@ export function mergeConfig(current: Settings, file: ConfigFile): Settings {
       inFile.delete(p.id);
       continue;
     }
-    let name = p.name;
-    if (fileNames.has(fold(name))) {
-      name = `${p.name} (local)`;
-      for (let n = 2; taken.has(fold(name)); n++) name = `${p.name} (local ${n})`;
-    }
-    taken.add(fold(name));
-    profiles.push(name === p.name ? p : { ...p, name });
+    const name = renamed.get(p.id);
+    profiles.push(name ? { ...p, name } : p);
   }
   profiles.push(...inFile.values());
   return {

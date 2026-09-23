@@ -59,6 +59,15 @@ describe('buildConfigFile', () => {
     expect(configFileName('Acme team / EMEA')).toBe('manet-config-acme-team-emea.json');
     expect(configFileName('  ')).toBe('manet-config.json');
   });
+
+  it('returns copies, not live references into the source settings', () => {
+    const s = settings();
+    const file = buildConfigFile(s, { name: 'x', includeKeys: false, now: NOW });
+    file.profiles[0]!.sections[0]!.title = 'Changed';
+    file.settings.customVocabulary.push('New term');
+    expect(s.profiles[0]!.sections[0]!.title).not.toBe('Changed');
+    expect(s.customVocabulary).not.toContain('New term');
+  });
 });
 
 describe('parseConfigFile', () => {
@@ -84,6 +93,13 @@ describe('parseConfigFile', () => {
     expect(error({ ...good, format: 'other' })).toBe(notConfig);
     expect(error([])).toBe(notConfig);
     expect(error('x'.repeat(1_000_001))).toBe('This file is too large to be a Manet Meetings config.');
+  });
+
+  it('measures size in UTF-8 bytes, not UTF-16 units', () => {
+    const notTooLarge = 'é'.repeat(400_000); // 800,000 bytes, 400,000 UTF-16 units
+    expect(error(notTooLarge)).toBe('This file isn’t a Manet Meetings config. Choose a file exported from Settings › Share.');
+    const tooLarge = 'é'.repeat(500_001); // 1,000,002 bytes
+    expect(error(tooLarge)).toBe('This file is too large to be a Manet Meetings config.');
   });
 
   it('asks for a newer version for a newer file', () => {
@@ -144,6 +160,27 @@ describe('mergeConfig', () => {
     const local = settings({ profiles: [...starterProfiles(DB, ''), { ...client, id: 'mine', name: 'client meeting' }] });
     const merged = mergeConfig(local, file);
     expect(merged.profiles.map((p) => p.name)).toEqual(['Team', 'Personal', 'client meeting (local)', 'Client meeting']);
+  });
+
+  it('never produces two profiles with the same name', () => {
+    const a: Profile = { id: 'a', name: 'Sales', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const b: Profile = { id: 'b', name: 'Sales (local)', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const local = settings({ profiles: [a, b] });
+    const x: Profile = { id: 'x', name: 'Sales', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const salesFile = buildConfigFile(settings({ profiles: [x] }), { name: 'Acme', includeKeys: false, now: NOW });
+    const merged = mergeConfig(local, salesFile);
+    expect(merged.profiles.map((p) => p.name)).toEqual(['Sales (local 2)', 'Sales (local)', 'Sales']);
+  });
+
+  it('gives distinct renames to two local-only profiles that each clash with a different file profile', () => {
+    const a: Profile = { id: 'a', name: 'Alpha', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const b: Profile = { id: 'b', name: 'Beta', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const local = settings({ profiles: [a, b] });
+    const x: Profile = { id: 'x', name: 'Alpha', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const y: Profile = { id: 'y', name: 'Beta', databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const twoClash = buildConfigFile(settings({ profiles: [x, y] }), { name: 'Acme', includeKeys: false, now: NOW });
+    const merged = mergeConfig(local, twoClash);
+    expect(merged.profiles.map((p) => p.name)).toEqual(['Alpha (local)', 'Beta (local)', 'Alpha', 'Beta']);
   });
 });
 
