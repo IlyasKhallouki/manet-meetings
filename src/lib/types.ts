@@ -296,7 +296,13 @@ export interface SessionMeta {
    * Job running in the offscreen document. Its outcome arrives as 'offscreen/job-done'
    * with the same id, so any worker instance can record it.
    */
-  job?: { id: string; kind: 'process' | 'save'; startedAt: number };
+  job?: {
+    id: string;
+    kind: 'process' | 'save';
+    startedAt: number;
+    /** A process job that only summarizes the stored result again (the profile changed). */
+    summaryOnly?: boolean;
+  };
   /** Transcription attempt number of the last process job (1 = first). */
   attempt?: number;
   /** When an automatic retry after a transient Gemini failure is scheduled, epoch ms. */

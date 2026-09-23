@@ -40,6 +40,12 @@ const RESULT: SessionResult = {
   createdAt: T0,
 };
 
+/** A stored transcript with something said in it. */
+const TRANSCRIBED: SessionResult = {
+  ...RESULT,
+  transcript: { turns: [{ speaker: 'Alice', start: 0, end: 4000, text: 'Bonjour' }], source: 'audio+captions', notes: [] },
+};
+
 /** State a previous worker left behind: the offscreen document survived and is still recording. */
 function offscreenStillRecording(...ids: string[]) {
   h.offscreen.start();
@@ -348,6 +354,51 @@ describe('interrupted jobs and alarms', () => {
     expect(h.offscreen.callsOf('offscreen/save').map((j) => j.meta.id).sort()).toEqual([a, b].sort());
     expect((await getSession(a))?.status).toBe('saved');
     expect((await getSession(b))?.status).toBe('saved');
+  });
+
+  it('writes the notes again, without transcribing, when a job that only had to do that died', async () => {
+    // The profile changed after transcription; the new notes were being written when the worker and document went.
+    await putSession(
+      stored({
+        status: 'processing',
+        route: 'team',
+        profileId: 'personal',
+        job: { id: 'ja', kind: 'process', startedAt: T0, summaryOnly: true },
+      }),
+    );
+    await putResult(ID, { ...TRANSCRIBED, profile: { id: 'team', name: 'Team' } });
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    const processes = h.offscreen.callsOf('offscreen/process');
+    expect(processes).toHaveLength(1);
+    expect(processes[0]?.reuse?.profile?.id).toBe('team');
+    expect(processes[0]?.profile.id).toBe('personal');
+    expect(h.offscreen.callsOf('offscreen/save').at(-1)?.profile.databaseId).toBe('personal-db');
+    expect((await getSession(ID))?.status).toBe('saved');
+  });
+
+  it('keeps the transcript of a job that only had to write the notes again, when auto-transcribe is off', async () => {
+    await configure({ autoTranscribe: false });
+    await putSession(
+      stored({
+        status: 'processing',
+        route: 'team',
+        profileId: 'personal',
+        job: { id: 'ja', kind: 'process', startedAt: T0, summaryOnly: true },
+      }),
+    );
+    await putResult(ID, { ...TRANSCRIBED, profile: { id: 'team', name: 'Team' } });
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    const meta = await getSession(ID);
+    // Save writes the notes for Personal first; Transcribe isn't needed again.
+    expect(meta).toMatchObject({ status: 'processed' });
+    expect(meta?.job).toBeUndefined();
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
   });
 
   it('leaves a session alone while the offscreen document still runs its job', async () => {

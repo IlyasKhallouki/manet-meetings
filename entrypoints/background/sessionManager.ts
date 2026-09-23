@@ -776,6 +776,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   // -------------------------------------------------------------------------
 
   async function applyRoute(id: string, route: Route, explicit: boolean): Promise<void> {
+    // The route sets the profile too (until the routing window goes).
+    const current = await getSession(id);
+    if (current && (current.status === 'awaiting-route' || (explicit && REROUTABLE.has(current.status)))) {
+      await stampLegacyResult(current, route);
+    }
     let routed = false;
     const meta = await updateSession(id, (m) => {
       if (m.status === 'awaiting-route') {
@@ -842,24 +847,43 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const meta = await updateSession(id, (m) => {
       if (RUNNING.has(m.status)) return m;
       changed = true;
-      return { ...m, status: 'failed', stage: undefined, job: undefined, error };
+      // Waiting for the person now, not for a retry (which would only fail the same way).
+      return { ...m, status: 'failed', stage: undefined, job: undefined, error, retryAt: undefined };
     });
     if (meta && changed) await notify(id, failureNote(meta, kind, problems.missingSettings(missing)));
   }
 
   /** The meeting's profile was deleted: it waits for another (Meetings offers them). */
   async function markProfileMissing(id: string, kind: Job['kind']): Promise<void> {
+    const error = problems.profileDeleted;
     let changed = false;
     const meta = await updateSession(id, (m) => {
       if (RUNNING.has(m.status)) return m;
       changed = true;
-      return { ...m, status: 'failed', stage: undefined, job: undefined, error: problems.profileDeleted };
+      // As with missing settings: no retry is due any more.
+      return { ...m, status: 'failed', stage: undefined, job: undefined, error, retryAt: undefined };
     });
-    if (meta && changed) await notify(id, failureNote(meta, kind, problems.profileDeleted));
+    if (meta && changed) await notify(id, failureNote(meta, kind, error));
+  }
+
+  /**
+   * Before a meeting's profile changes to `next`: a result stored before profiles records the
+   * profile its notes were written for (the meeting's current one), so Save writes them
+   * again for the new one.
+   */
+  async function stampLegacyResult(meta: SessionMeta, next: string): Promise<void> {
+    const writtenFor = meta.profileId;
+    if (writtenFor === undefined || writtenFor === next || RUNNING.has(meta.status)) return;
+    const result = await getResult(meta.id);
+    if (!result || result.profile) return;
+    const name = profileById(await deps.getSettings(), writtenFor)?.name ?? writtenFor;
+    await putResult(meta.id, { ...result, profile: { id: writtenFor, name } });
   }
 
   async function changeProfile(id: string, profileId: string): Promise<void> {
     if (!profileById(await deps.getSettings(), profileId)) throw new MeetingProblem(problems.unknownProfile);
+    const current = await getSession(id);
+    if (current && PROFILE_CHANGEABLE.has(current.status)) await stampLegacyResult(current, profileId);
     const meta = await updateSession(id, (m) => {
       if (!PROFILE_CHANGEABLE.has(m.status)) throw new MeetingProblem(problems.cannotChangeProfile(m.status));
       return m.profileId === profileId ? m : { ...m, profileId };
@@ -915,7 +939,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       return;
     }
 
-    const job = newJob('process');
+    const reuse = opts.summaryOnly ? await getResult(id) : null;
+    // Marked, so a restart that interrupts it writes the notes again instead of transcribing.
+    const job: Job = reuse ? { ...newJob('process'), summaryOnly: true } : newJob('process');
     const attempt = opts.attempt ?? 1;
     let claimed = false;
     const processing = await updateSession(id, (m) => {
@@ -940,7 +966,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!claimed || !processing) return;
 
     const force = isForced(processing);
-    const reuse = opts.summaryOnly ? await getResult(id) : null;
     await launch(id, job.id, 'process', async () => {
       const captions = await loadCaptions(id);
       await deps.offscreen.send('offscreen/process', {
@@ -973,7 +998,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       return;
     }
     // The notes were written for another profile: write them again for this one; the save follows.
-    const writtenFor = result.profile?.id ?? meta.route;
+    const writtenFor = result.profile?.id;
     if (SAVABLE.has(meta.status) && writtenFor !== undefined && writtenFor !== profile.id) {
       await transcribeNow(id, { summaryOnly: true, ...(opts.force ? { force: true } : {}) });
       return;
@@ -1301,7 +1326,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const reset: Interrupted[] = [];
     for (const s of stuck) {
       if (s.job && running.has(s.job.id)) continue;
-      const hasResult = s.status === 'saving' && (await getResult(s.id)) !== null;
+      // A job that only wrote the notes again leaves the transcript as it was: Save writes them again first.
+      const keepsResult = s.status === 'saving' || s.job?.summaryOnly === true;
+      const hasResult = keepsResult && (await getResult(s.id)) !== null;
       const next: SessionStatus = hasResult ? 'processed' : 'ready';
       let changed = false;
       await updateSession(s.id, (m) => {
@@ -1310,8 +1337,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         return { ...m, status: next, stage: undefined, job: undefined };
       });
       if (!changed) continue;
-      if (s.status === 'processing') reset.push({ id: s.id, kind: 'process', attempt: s.attempt ?? 1 });
-      else if (hasResult) reset.push({ id: s.id, kind: 'save', attempt: s.attempt ?? 1 });
+      if (hasResult) reset.push({ id: s.id, kind: 'save', attempt: s.attempt ?? 1 });
+      else if (s.status === 'processing') reset.push({ id: s.id, kind: 'process', attempt: s.attempt ?? 1 });
     }
     return reset;
   }
