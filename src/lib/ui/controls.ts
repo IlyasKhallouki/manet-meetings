@@ -174,7 +174,7 @@ export function visuallyHidden(text: string): HTMLSpanElement {
 }
 
 // ---------------------------------------------------------------------------------------
-// Segmented control (Team | Personal)
+// Segmented control (Paragraph | Bullets)
 
 export interface SegmentOption<V extends string> {
   value: V;

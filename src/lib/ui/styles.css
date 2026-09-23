@@ -1187,11 +1187,11 @@
     min-inline-size: 0;
   }
 
-  /* ---- Segmented (Team | Personal) --------------------------------------------------- */
+  /* ---- Segmented (Paragraph | Bullets) ---------------------------------------------- */
   /* Track and thumb are both capsules → concentric by construction. The pressed segment
    * IS the thumb: --seg-thumb with a 1 px --border ring (3.22 light / 3.51 dark against
    * the track) and a soft lift, never the shadow alone; the ✓ keeps the state readable
-   * without colour. Never narrower than its labels: a Team | Personal control that
+   * without colour. Never narrower than its labels: a segmented control that
    * truncates is useless. */
   .segmented {
     display: inline-grid;
