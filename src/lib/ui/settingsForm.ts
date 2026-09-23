@@ -324,14 +324,20 @@ export interface CheckMessage {
   text: string;
 }
 
+/** Check result under a profile's database field, or (Task 12) a route's own. */
+export function databaseCheckMessage(result: VerifyResult | null): CheckMessage {
+  if (!result) return { tone: 'neutral', text: 'No database yet. Add one to save meetings with this profile.' };
+  if (result.ok) return { tone: 'done', text: `${quoted(result.title)} is ready.` };
+  // verifyDatabase already words each problem for the field it sits under.
+  return { tone: 'caution', text: result.problems.join(' ') };
+}
+
 function databaseMessage(result: VerifyResult | null, route: Route): CheckMessage {
   if (!result) {
     const name = route === 'team' ? 'Team' : 'Personal';
     return { tone: 'neutral', text: `Not set yet. Add it to save meetings to ${name}.` };
   }
-  if (result.ok) return { tone: 'done', text: `${quoted(result.title)} is ready.` };
-  // verifyDatabase already words each problem for the field it sits under.
-  return { tone: 'caution', text: result.problems.join(' ') };
+  return databaseCheckMessage(result);
 }
 
 /**

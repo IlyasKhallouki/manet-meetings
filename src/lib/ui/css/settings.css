@@ -190,3 +190,61 @@ body.page-settings .field-head > .saved {
 body.page-settings .field-head > .saved > .glyph {
   align-self: center;
 }
+
+/* ---- Profile editor -------------------------------------------------------------------- */
+/* ‹ Settings, then the profile's name as the page title, same spacing as the lede. */
+body.page-settings .profile-editor-header {
+  margin: 0 0 var(--s5);
+}
+
+body.page-settings .profile-editor-header > .link {
+  margin-inline-start: calc(var(--s4) * -1);
+}
+
+body.page-settings .profile-editor-title {
+  margin: var(--s1) 0 0;
+}
+
+/* One card per section: same r18 --surface as a .group, its rows separated the same way. */
+body.page-settings .profile-sections {
+  display: grid;
+  gap: var(--s4);
+}
+
+body.page-settings .profile-section {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s4);
+  border-radius: var(--r-group);
+  background: var(--fill);
+}
+
+@media (forced-colors: active) {
+  body.page-settings .profile-section {
+    border: 1px solid CanvasText;
+  }
+}
+
+body.page-settings .profile-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s4);
+  margin-inline-start: calc(var(--s4) * -1);
+}
+
+/* Delete profile…: sits below the last card like a section footer, its confirm swapped
+ * in place so nothing else on the page moves. */
+body.page-settings .profile-delete {
+  margin-block-start: var(--s2);
+  padding-inline: var(--s4);
+}
+
+body.page-settings .profile-delete-link {
+  color: var(--live);
+}
+
+body.page-settings .profile-delete-actions {
+  display: flex;
+  gap: var(--s4);
+  margin-block-start: var(--s2);
+}
