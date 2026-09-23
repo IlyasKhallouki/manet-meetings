@@ -115,6 +115,11 @@ describe('popupState', () => {
     });
   });
 
+  it('carries the recording’s profile', () => {
+    expect(recording({ profileId: 'client' }).profileId).toBe('client');
+    expect(recording()).not.toHaveProperty('profileId');
+  });
+
   it('shows a recording running in another tab, whatever this tab is, and which tab it is', () => {
     const state = popupState({ tab: { id: 9, url: 'https://example.com/' }, active, session: session() });
     expect(state).toMatchObject({ kind: 'recording', thisTab: false, tabId: 7 });
@@ -396,8 +401,12 @@ describe('recentRow', () => {
   const NOW = Date.UTC(2026, 8, 19, 15, 0);
   const TODAY = 'Today\u00a014:02';
   const at = Date.UTC(2026, 8, 19, 14, 2);
+  const names = new Map([
+    ['team', 'Team'],
+    ['personal', 'Personal'],
+  ]);
   const done = (patch: Partial<SessionMeta>) =>
-    recentRow(session({ startedAt: at, durationMs: 32 * 60_000, route: 'team', ...patch }), NOW, FMT);
+    recentRow(session({ startedAt: at, durationMs: 32 * 60_000, route: 'team', profileId: 'team', ...patch }), NOW, FMT, names);
 
   it('answers "did it reach Notion?" with a way to open it', () => {
     expect(done({ status: 'saved', meetingTitle: 'Weekly product sync', notion: { pageId: 'p', url: 'https://n/p' } })).toEqual({
@@ -453,9 +462,27 @@ describe('recentRow', () => {
     expect(done({ status: 'failed', retryAt: Date.UTC(2026, 8, 19, 16, 37) }).details).toEqual(['Trying again at 16:37', TODAY]);
   });
 
+  it('names the meeting’s profile where it goes, and nothing for a profile deleted since', () => {
+    expect(done({ status: 'saved', profileId: 'personal' }).details).toEqual([TODAY, '32 min', 'Personal']);
+    expect(done({ status: 'processed', profileId: 'gone' }).details).toEqual([TODAY, '32 min']);
+    // Without the names (or the profile), the row says nothing of where it goes.
+    const bare = recentRow(session({ status: 'saved', startedAt: at, durationMs: 32 * 60_000, profileId: 'team' }), NOW, FMT);
+    expect(bare.details).toEqual([TODAY, '32 min']);
+  });
+
   it('dates older meetings like the other surfaces, and leaves out what it doesn’t know', () => {
     const old = recentRow(session({ status: 'ready', startedAt: Date.UTC(2026, 8, 16, 16, 42), route: undefined }), NOW, FMT);
     expect(old.details).toEqual(['Wed\u00a016\u00a0Sep\u00a016:42']);
+  });
+});
+
+describe('recentRow with profiles', () => {
+  const NOW = Date.UTC(2026, 8, 19, 15, 0);
+
+  it('names the profile', () => {
+    const names = new Map([['client', 'Client meeting']]);
+    const row = recentRow(session({ status: 'saved', profileId: 'client', notion: { pageId: 'p', url: 'u' } }), NOW, {}, names);
+    expect(row.details).toContain('Client meeting');
   });
 });
 

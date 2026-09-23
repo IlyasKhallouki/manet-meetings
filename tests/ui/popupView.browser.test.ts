@@ -11,6 +11,10 @@ import {
 } from '@lib/ui/popupView';
 
 const T0 = Date.UTC(2026, 8, 19, 8, 0, 0);
+const TAB_ID = 7;
+const SESSION_ID = 's1';
+/** Where the popup keeps its pick for the browser session. */
+const PROFILE_KEY = 'manet:popup-profile';
 const FMT = { locale: 'en-GB', timeZone: 'UTC' };
 
 function handlers() {
@@ -22,8 +26,9 @@ function handlers() {
       settle.push({ resolve, reject });
     });
   const h: PopupHandlers = {
-    record: (tabId) => deferred(`record:${tabId}`),
+    record: (tabId, profileId) => deferred(`record:${tabId}:${profileId}`),
     stop: (id) => deferred(`stop:${id}`),
+    setProfile: (id, profileId) => deferred(`setProfile:${id}:${profileId}`),
     goToCall: (tabId) => void calls.push(`goToCall:${tabId}`),
     grantMic: () => void calls.push('grantMic'),
     openSettings: () => void calls.push('openSettings'),
@@ -87,6 +92,7 @@ function meta(id: string, patch: Partial<SessionMeta>): SessionMeta {
     durationMs: 32 * 60_000,
     status: 'ready',
     route: 'team',
+    profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 10, bytes: 1000, micIncluded: true },
     captionCount: 12,
@@ -108,6 +114,7 @@ beforeEach(() => {
 afterEach(() => {
   root.remove();
   document.body.className = '';
+  sessionStorage.removeItem(PROFILE_KEY);
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -215,13 +222,13 @@ describe('popup: Record and Stop', () => {
     const record = hero();
     record.focus();
     record.click();
-    expect(h.calls).toEqual(['record:7']);
+    expect(h.calls).toEqual(['record:7:team']);
     expect(text(record)).toBe('Starting…');
     expect(record.getAttribute('aria-disabled')).toBe('true');
     expect(record.disabled).toBe(false);
     expect(document.activeElement).toBe(record);
     record.click(); // pending: ignored
-    expect(h.calls).toEqual(['record:7']);
+    expect(h.calls).toEqual(['record:7:team']);
 
     h.settle[0]!.reject(new Error('Another tab is already recording.'));
     await flush();
@@ -253,10 +260,10 @@ describe('popup: Record and Stop', () => {
     // The impatient double click.
     time += HERO_GUARD_MS - 1;
     record.click();
-    expect(h.calls).toEqual(['record:7']);
+    expect(h.calls).toEqual(['record:7:team']);
     time += 1;
     record.click();
-    expect(h.calls).toEqual(['record:7', 'stop:s1']);
+    expect(h.calls).toEqual(['record:7:team', 'stop:s1']);
     expect(text(record)).toBe('Stopping…');
   });
 
@@ -274,7 +281,7 @@ describe('popup: Record and Stop', () => {
     expect(h.calls).toEqual(['stop:s1']);
     time += HERO_GUARD_MS;
     hero().click();
-    expect(h.calls).toEqual(['stop:s1', 'record:7']);
+    expect(h.calls).toEqual(['stop:s1', 'record:7:team']);
     expect(root.querySelector('[data-role="stopped"]')).toBeNull();
   });
 
@@ -290,6 +297,155 @@ describe('popup: Record and Stop', () => {
     expect(text(status)).toBe('Recording');
     v.update(model(), T0 + 62_000);
     expect(text(status)).toBe('Recording stopped');
+  });
+});
+
+describe('popup: the Profile row', () => {
+  const profiles = [
+    { id: 'team', name: 'Team' },
+    { id: 'client', name: 'Client meeting' },
+  ];
+  const profile = () => root.querySelector<HTMLButtonElement>('[data-key="profile"]');
+  const menu = () => root.querySelector<HTMLElement>('.menu')!;
+  const choose = (id: string) => document.querySelector<HTMLElement>(`[data-key="profile-${id}"]`)!.click();
+  const checked = () => [...menu().querySelectorAll('[aria-checked="true"]')].map((el) => text(el));
+
+  it('records with the profile picked in the popup', () => {
+    const h = handlers();
+    const v = view(h.handlers);
+    v.update(model({ state: onCall, profiles, defaultProfileId: 'team' }), T0);
+    const row = profile()!;
+    expect(row.textContent).toBe('Team');
+    expect(text(row.closest('[data-role="profile"]'))).toBe('Profile Team');
+    row.click();
+    expect(checked()).toEqual(['Team']);
+    choose('client');
+    v.update(model({ state: onCall, profiles, defaultProfileId: 'team' }), T0 + 1000);
+    expect(profile()!.textContent).toBe('Client meeting');
+    root.querySelector<HTMLButtonElement>('[data-key="record"]')!.click();
+    expect(h.calls).toEqual([`record:${TAB_ID}:client`]);
+  });
+
+  it('changes the profile of the recording', () => {
+    const h = handlers();
+    view(h.handlers).update(model({ state: recording({ profileId: 'team' }), profiles, defaultProfileId: 'team' }), T0 + 60_000);
+    profile()!.click();
+    choose('client');
+    expect(h.calls).toEqual([`setProfile:${SESSION_ID}:client`]);
+  });
+
+  it('hides the row when there is only one profile, or no call', () => {
+    const v = view();
+    v.update(model({ state: onCall, profiles: [profiles[0]!], defaultProfileId: 'team' }), T0);
+    expect(profile()).toBeNull();
+    v.update(model({ state: { kind: 'not-meet', onMeet: true }, profiles }), T0);
+    expect(profile()).toBeNull();
+    v.update(model({ state: onCall, profiles }), T0);
+    expect(profile()).not.toBeNull();
+  });
+
+  it('sits right above the hero, one line tall, and stays put from Record to Stop', () => {
+    const h = handlers();
+    const v = view(h.handlers);
+    v.update(model({ state: onCall, profiles }), T0);
+    const row = root.querySelector<HTMLElement>('[data-role="profile"]')!;
+    const button = profile()!;
+    expect(row.nextElementSibling).toBe(root.querySelector('[data-role="hero"]'));
+    const dd = row.querySelector('dd')!;
+    const lineHeight = parseFloat(getComputedStyle(dd).lineHeight);
+    expect(row.getBoundingClientRect().height).toBeLessThanOrEqual(lineHeight + 0.5);
+    // Its label lines up with the facts' labels in the card above.
+    const factLabel = root.querySelector('[data-role="state"] dt')!.getBoundingClientRect();
+    expect(row.querySelector('dt')!.getBoundingClientRect().left).toBeCloseTo(factLabel.left, 0);
+    const heroTop = hero().getBoundingClientRect().top;
+
+    hero().click();
+    // Starting…: nothing above the hero moves.
+    expect(hero().getBoundingClientRect().top).toBe(heroTop);
+    v.update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 1000);
+    expect(profile()).toBe(button);
+    expect(root.querySelector('[data-role="profile"]')).toBe(row);
+    expect(text(button)).toBe('Team');
+  });
+
+  it('shows the recording’s own profile, whatever the popup had picked', () => {
+    const v = view();
+    v.update(model({ state: onCall, profiles }), T0);
+    profile()!.click();
+    choose('client');
+    // Recorded with the shortcut: the default profile.
+    v.update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
+    expect(profile()!.textContent).toBe('Team');
+    profile()!.click();
+    expect(checked()).toEqual(['Team']);
+  });
+
+  it('closes the menu on a choice and puts focus back on the Profile button', () => {
+    view().update(model({ state: onCall, profiles }), T0);
+    const button = profile()!;
+    button.focus();
+    button.click();
+    expect(menu().matches(':popover-open')).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    choose('client');
+    expect(menu().matches(':popover-open')).toBe(false);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute('aria-label')).toBe('Profile: Client meeting');
+  });
+
+  it('shows a failed change in the hero’s error line, and leaves Stop alone meanwhile', async () => {
+    const h = handlers();
+    view(h.handlers).update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
+    const button = profile()!;
+    const stop = hero();
+    button.click();
+    choose('client');
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(stop.hasAttribute('aria-disabled')).toBe(false);
+    button.click(); // pending: no second menu
+    expect(menu().matches(':popover-open')).toBe(false);
+
+    h.settle[0]!.reject(new Error('That profile no longer exists. Reload the page and choose another.'));
+    await flush();
+    expect(text(root.querySelector('[role="alert"]'))).toBe(
+      'Couldn’t change the profile: That profile no longer exists. Reload the page and choose another.',
+    );
+    expect(button.hasAttribute('aria-busy')).toBe(false);
+    expect(document.activeElement).toBe(button);
+    expect(hero()).toBe(stop);
+  });
+
+  it('leaves an open menu alone on a clock tick, and closes it when the profiles change', () => {
+    const v = view();
+    v.update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 60_000);
+    const button = profile()!;
+    button.focus();
+    button.click();
+    v.update(model({ state: recording({ profileId: 'team' }), profiles }), T0 + 61_000);
+    expect(menu().matches(':popover-open')).toBe(true);
+    v.update(model({ state: recording({ profileId: 'team' }), profiles: [...profiles, { id: 'x', name: 'Board' }] }), T0 + 62_000);
+    expect(menu().matches(':popover-open')).toBe(false);
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('keeps the pick for the next popup, and forgets a profile deleted since', () => {
+    view().update(model({ state: onCall, profiles }), T0);
+    profile()!.click();
+    choose('client');
+    expect(sessionStorage.getItem(PROFILE_KEY)).toBe('client');
+
+    // The popup opens again.
+    const h = handlers();
+    const v = view(h.handlers);
+    v.update(model({ state: onCall, profiles }), T0);
+    expect(profile()!.textContent).toBe('Client meeting');
+
+    // Client meeting was deleted in Settings: back to the default.
+    v.update(model({ state: onCall, profiles: [profiles[0]!, { id: 'personal', name: 'Personal' }] }), T0);
+    expect(profile()!.textContent).toBe('Team');
+    hero().click();
+    expect(h.calls).toEqual([`record:${TAB_ID}:team`]);
   });
 });
 

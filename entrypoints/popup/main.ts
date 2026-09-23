@@ -37,12 +37,17 @@ async function focusTab(tabId: number): Promise<void> {
 }
 
 const view = createPopupView(root, {
-  async record(tabId) {
-    await startRecording(tabId);
+  async record(tabId, profileId) {
+    await startRecording(tabId, profileId);
     await refresh();
   },
   async stop(sessionId) {
     await sendToBackground('session/stop', { sessionId });
+    await refresh();
+  },
+  async setProfile(sessionId, profileId) {
+    await sendToBackground('session/set-profile', { sessionId, profileId });
+    // The row shows the new profile as the request settles, not a tick later.
     await refresh();
   },
   goToCall: (tabId) => leaveTo(focusTab(tabId)),
@@ -99,6 +104,7 @@ async function refresh(): Promise<void> {
     mic,
     includeMic: settings.includeMic,
     setup: setupGaps(settings),
+    // The Profile row's choices, and the names Recent gives each meeting's profile.
     profiles: settings.profiles.map(({ id, name }) => ({ id, name })),
     defaultProfileId: settings.defaultProfileId,
     geminiKeyMissing: !settings.geminiApiKey,

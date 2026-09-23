@@ -6,7 +6,9 @@
  * Popover API in manual mode (top layer, Chrome 114+) with our own dismissal, because
  * light dismiss would close the menu on the pointerdown that should toggle it. CSS anchor
  * positioning needs Chrome 125 and the manifest allows 116, so it is positioned here:
- * trailing edge under the button, flipped above it near the bottom of the viewport.
+ * trailing edge under the button, flipped above it near the bottom of the viewport. When
+ * it fits neither way (a short window such as the toolbar popup, which can't show anything
+ * past its own edge), it takes the roomier side and scrolls.
  *
  * Keyboard (WAI-ARIA menu button): Enter, Space or ↓ on the button opens it on the first
  * item, ↑ on the last; ↑ ↓ Home End and a letter move between items; Enter or Space
@@ -88,7 +90,19 @@ export function createMenu(host: HTMLElement): Menu {
     const list = items();
     if (list.length === 0) return;
     const i = (index + list.length) % list.length;
-    list[i]!.focus({ preventScroll: true });
+    const item = list[i]!;
+    item.focus({ preventScroll: true });
+    revealItem(item);
+  }
+
+  /** In a menu that scrolls, brings the item into view (only the menu scrolls, never the page). */
+  function revealItem(item: HTMLElement): void {
+    if (element.scrollHeight <= element.clientHeight) return;
+    const pad = parseFloat(getComputedStyle(element).paddingBlockStart) || 0;
+    const top = item.offsetTop - pad;
+    const bottom = item.offsetTop + item.offsetHeight + pad;
+    if (top < element.scrollTop) element.scrollTop = top;
+    else if (bottom > element.scrollTop + element.clientHeight) element.scrollTop = bottom - element.clientHeight;
   }
 
   function currentIndex(): number {
@@ -137,17 +151,23 @@ export function createMenu(host: HTMLElement): Menu {
     if (!anchor) return;
     const a = anchor.getBoundingClientRect();
     const m = element.getBoundingClientRect();
+    // Its full height even while capped (no border), measured without lifting the cap: that
+    // would lose how far it has been scrolled.
+    const full = Math.max(m.height, element.scrollHeight);
     const vw = document.documentElement.clientWidth;
     const vh = window.innerHeight;
     let left = a.right - m.width;
     left = Math.min(left, vw - EDGE - m.width);
     left = Math.max(EDGE, left);
-    let top = a.bottom + GAP;
-    let placement = 'below';
-    if (top + m.height > vh - EDGE && a.top - GAP - m.height >= EDGE) {
-      top = a.top - GAP - m.height;
-      placement = 'above';
-    }
+    const below = vh - EDGE - (a.bottom + GAP);
+    const above = a.top - GAP - EDGE;
+    const placement = full <= below || (full > above && below >= above) ? 'below' : 'above';
+    const room = Math.floor(Math.max(0, placement === 'below' ? below : above));
+    const capped = full > room;
+    const height = capped ? room : full;
+    element.style.maxBlockSize = capped ? `${room}px` : '';
+    element.style.overflowY = capped ? 'auto' : '';
+    const top = placement === 'below' ? a.bottom + GAP : a.top - GAP - height;
     element.style.left = `${Math.round(left)}px`;
     element.style.top = `${Math.round(Math.max(EDGE, top))}px`;
     element.dataset.placement = placement;
@@ -159,7 +179,10 @@ export function createMenu(host: HTMLElement): Menu {
     if (element.contains(target) || anchor.contains(target)) return;
     close();
   };
-  const onViewport = () => position();
+  // The page scrolled or resized; the menu's own scrolling moves nothing.
+  const onViewport = (event: Event) => {
+    if (event.target !== element) position();
+  };
 
   function open(target: HTMLElement, list: MenuItem[], options: OpenOptions = {}): void {
     if (anchor && anchor !== target) close();
@@ -172,6 +195,9 @@ export function createMenu(host: HTMLElement): Menu {
     if (!element.matches(':popover-open')) element.showPopover();
     target.setAttribute('aria-expanded', 'true');
     position();
+    // A menu that scrolls opens on the current choice.
+    const chosen = entries.find((e) => e.item.checked);
+    if (chosen) revealItem(chosen.el);
     document.addEventListener('pointerdown', onOutside, true);
     window.addEventListener('resize', onViewport);
     window.addEventListener('scroll', onViewport, true);

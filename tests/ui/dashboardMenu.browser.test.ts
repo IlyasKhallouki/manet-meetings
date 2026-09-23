@@ -186,6 +186,52 @@ describe('menu position', () => {
     expect(Math.round(m.bottom)).toBe(Math.round(a.top - 4));
   });
 
+  it('takes the roomier side and scrolls when it fits neither way, the focused item in view', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ label: `Profile ${i + 1}`, onSelect: () => undefined }));
+    place({ top: '40vh', left: '300px' });
+    menu.open(anchor, many, { focus: 'first' });
+    const a = anchor.getBoundingClientRect();
+    const m = menu.element.getBoundingClientRect();
+    expect(menu.element.dataset.placement).toBe('below');
+    expect(Math.round(m.top)).toBe(Math.round(a.bottom + 4));
+    expect(m.bottom).toBeLessThanOrEqual(window.innerHeight - 8 + 0.5);
+    expect(menu.element.scrollHeight).toBeGreaterThan(menu.element.clientHeight);
+
+    const inView = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      const box = menu.element.getBoundingClientRect();
+      return r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5;
+    };
+    key(menu.element, 'End');
+    expect(document.activeElement?.textContent).toBe('Profile 40');
+    expect(inView(document.activeElement!)).toBe(true);
+    // Re-anchoring (the page ticked, or the menu's own scroll) keeps where it was scrolled to.
+    const scrolled = menu.element.scrollTop;
+    expect(scrolled).toBeGreaterThan(0);
+    menu.position();
+    menu.element.dispatchEvent(new Event('scroll'));
+    expect(menu.element.scrollTop).toBe(scrolled);
+    expect(menu.element.getBoundingClientRect().height).toBeCloseTo(m.height, 0);
+    key(menu.element, 'Home');
+    expect(inView(document.activeElement!)).toBe(true);
+    expect(menu.element.scrollTop).toBe(0);
+
+    // Opened by the pointer, it shows the current choice.
+    menu.close();
+    menu.open(anchor, many.map((item, i) => ({ ...item, checked: i === 30 })));
+    expect(inView(menu.element.querySelector('[aria-checked="true"]')!)).toBe(true);
+
+    // Near the bottom, above is the roomier side.
+    menu.close();
+    place({ top: 'auto', bottom: '30vh' });
+    menu.open(anchor, many);
+    const b = anchor.getBoundingClientRect();
+    const up = menu.element.getBoundingClientRect();
+    expect(menu.element.dataset.placement).toBe('above');
+    expect(up.top).toBeGreaterThanOrEqual(8 - 0.5);
+    expect(Math.round(up.bottom)).toBe(Math.round(b.top - 4));
+  });
+
   it('stays inside the viewport at the leading edge', () => {
     place({ top: '100px', left: '0px' });
     menu.open(anchor, items());

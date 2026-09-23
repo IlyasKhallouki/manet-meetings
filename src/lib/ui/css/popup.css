@@ -17,6 +17,8 @@
  *   section.state.popup-card   an inset grouped card (--surface, r18, 14/16 padding):
  *                      h1.headline (17/22 600; --live while recording) + .clock (17/22 500,
  *                      tabular) / 12 / .state-sub (14/19 --label-2, one line) / 12 / dl.facts
+ *   .popup-profile     on a call and recording, with 2+ profiles: one fact row, "Profile" +
+ *                      a plain pop-up button (name ⌄), lined up with the card's facts
  *   .hero-block        the one 48 px capsule, the ▲ error under it, the hint + kbd (13/18)
  *   callout | note     one setup block at most, r18, on --caution-weak / --fill
  *   section.recent     not on a call only: .section-header + an inset grouped card of
@@ -286,6 +288,44 @@ body.popup .roll-name.is-speaking {
 
 body.popup .roll-more {
   white-space: nowrap;
+}
+
+/* ---- Profile ------------------------------------------------------------------------- */
+/* A fact row under the card, not in it: inset like the card's content, so its label and
+ * value share the facts' columns (and stack with them at large text). */
+body.popup .popup-profile {
+  padding-inline: var(--s4);
+}
+
+body.popup .popup-profile dd {
+  display: flex;
+  min-inline-size: 0;
+}
+
+/* A plain pop-up button: the name and ⌄ in tint, its text on the value column (the plain
+ * button's 10 px side padding hangs into the gutter) and its 30 px capsule overhanging a
+ * 20 px value line, so the row is exactly one line tall. */
+body.popup .popup-profile-btn {
+  gap: var(--s1);
+  max-inline-size: calc(100% + 10px);
+  margin-block: calc((1.25rem - var(--h-plain)) / 2);
+  margin-inline-start: -10px;
+}
+
+body.popup .popup-profile-btn[aria-expanded='true'] {
+  background: var(--fill);
+}
+
+body.popup .popup-profile-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.popup .popup-profile-btn > .glyph-chevron {
+  flex: none;
+  inline-size: 0.8em;
+  block-size: 0.8em;
 }
 
 /* ---- Hero ---------------------------------------------------------------------------- */

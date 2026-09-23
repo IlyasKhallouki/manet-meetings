@@ -1,8 +1,8 @@
 /**
  * The toolbar popup. No header: the state is the headline, with one button per state.
  *
- *   Recording      ● Recording 12:48 / title · code / Speakers (the roll) + Audio / Stop recording
- *   On a call      title / Meet call code / Speakers + Audio / Record this call
+ *   Recording      ● Recording 12:48 / title · code / Speakers (the roll) + Audio / Profile / Stop recording
+ *   On a call      title / Meet call code / Speakers + Audio / Profile / Record this call
  *   Not on a call  No call in this tab / what to do
  *   Not recording  + one setup block (▲ callout when saving is blocked, else the ⓘ Gemini note)
  *   Not on a call  + Recent (the last 3 meetings)
@@ -16,19 +16,37 @@
  * into words and are tested without a DOM. What counts as a recording problem is not decided
  * here: speakersFact and audioFact word what recordingHealth finds, the rules the Meetings
  * row and the toolbar's "!" follow too. Dates, times and lengths are sessionView's, so the
- * popup, Meetings and the routing window write them alike. createPopupView keeps three things
+ * popup, Meetings and the routing window write them alike. createPopupView keeps four things
  * persistent so they are patched, not rebuilt: the hero button (Record → Stop cross-fades
- * in place, and a click on it is never lost to a re-render), the roll (only new names fade
- * in) and the clock.
+ * in place, and a click on it is never lost to a re-render), the Profile row (its button
+ * keeps focus and anchors the profile menu), the roll (only new names fade in) and the clock.
+ *
+ * The Profile row (with more than one profile): before recording, the popup's own pick,
+ * which Record passes on (the default profile until one is picked, remembered for the
+ * browser session); while recording, the recording's profile, changed in the background.
  */
 import { meetCodeFromUrl } from '../meet/meetCode';
 import { defaultProfile } from '../profiles';
 import { minutesText, recordingHealth, silenceText, type RecordingHealth } from '../recordingHealth';
 import type { ActiveRecording } from '../storage/sessionStore';
 import type { Profile, SessionMeta, Settings, SpeakerInfo } from '../types';
-import { button, callout, factList, kbd, note, toneGlyph, visuallyHidden, type Fact, type Tone } from './controls';
+import {
+  button,
+  callout,
+  factList,
+  isInert,
+  kbd,
+  note,
+  setBusy,
+  setDisabled,
+  toneGlyph,
+  visuallyHidden,
+  type Fact,
+  type Tone,
+} from './controls';
 import { h, keepFocus, mount, type Child } from './dom';
 import { svg } from './icons';
+import { createMenu, menuButtonAttrs, menuButtonKeys, type MenuItem } from './menu';
 import type { MicPermission } from './mic';
 import { failureKind, formatLength, formatTime, stageStep, statusView, whenText, type FormatOptions } from './sessionView';
 import type { FieldName } from './settingsForm';
@@ -65,6 +83,8 @@ export type PopupState =
       captionsError?: string;
       /** The roll, from the session meta (ordered by first speech). */
       speakers?: SpeakerInfo[];
+      /** The recording's profile (a Settings.profiles id); absent: the default one. */
+      profileId?: string;
     };
 
 export interface PopupInput {
@@ -109,6 +129,7 @@ export function popupState({ tab, active, session }: PopupInput): PopupState {
     if (session.audio.lastChunkAt !== undefined) state.lastChunkAt = session.audio.lastChunkAt;
     if (session.captionsError) state.captionsError = session.captionsError;
     if (session.speakers) state.speakers = session.speakers;
+    if (session.profileId) state.profileId = session.profileId;
     return state;
   }
   const url = tab?.url ?? '';
@@ -351,13 +372,20 @@ export interface RecentRowView {
 /**
  * One Recent row: glyph + title (+ Open in Notion) / status · when · how long · where.
  * "Today 14:02", "Wed 16 Sep 14:02" and "32 min" as Meetings and the routing window write them.
+ * Where is the meeting's profile, named from `profileNames` (every profile's name by id);
+ * nothing when that profile was deleted since.
  */
-export function recentRow(meta: SessionMeta, now: number, opts: FormatOptions = {}): RecentRowView {
+export function recentRow(
+  meta: SessionMeta,
+  now: number,
+  opts: FormatOptions = {},
+  profileNames?: ReadonlyMap<string, string>,
+): RecentRowView {
   const title = meta.meetingTitle?.trim();
   const when = whenText(meta.startedAt, now, opts);
   const durationMs = meta.durationMs ?? (meta.endedAt !== undefined ? meta.endedAt - meta.startedAt : undefined);
   const length = durationMs === undefined ? null : formatLength(durationMs);
-  const route = meta.route === 'team' ? 'Team' : meta.route === 'personal' ? 'Personal' : null;
+  const where = (meta.profileId && profileNames?.get(meta.profileId)) || null;
   const list = (...parts: (string | null)[]) => parts.filter((p): p is string => Boolean(p));
   const row = { id: meta.id, title: title || meta.meetCode, isCode: !title };
   const saved = (status: string, details: string[]): RecentRowView =>
@@ -369,15 +397,15 @@ export function recentRow(meta: SessionMeta, now: number, opts: FormatOptions = 
     case 'awaiting-route':
       return { ...row, tone: 'caution', status: 'Choose Team or Personal', details: list(when, length) };
     case 'ready':
-      return { ...row, tone: 'neutral', status: 'Not transcribed', details: list(when, length, route) };
+      return { ...row, tone: 'neutral', status: 'Not transcribed', details: list(when, length, where) };
     case 'processing':
     case 'saving':
       // The Meetings row's word and step (sessionView), so both surfaces count the same.
       return { ...row, tone: 'working', status: statusView(meta).label, details: [`Step ${stageStep(meta)} of 8`, when] };
     case 'processed':
-      return { ...row, tone: 'caution', status: 'Transcribed, not saved yet', details: list(when, length, route) };
+      return { ...row, tone: 'caution', status: 'Transcribed, not saved yet', details: list(when, length, where) };
     case 'saved':
-      return saved('Saved to Notion', list(when, length, route));
+      return saved('Saved to Notion', list(when, length, where));
     case 'duplicate':
       return saved(`Saved by ${meta.notion?.recordedBy?.trim() || 'a teammate'}`, list(when, length));
     case 'empty':
@@ -385,7 +413,7 @@ export function recentRow(meta: SessionMeta, now: number, opts: FormatOptions = 
     case 'failed': {
       // The same rule Meetings uses (a stored transcript can't be known here, hence false).
       const status = failureKind(meta, false) === 'save' ? 'Couldn’t save to Notion' : 'Couldn’t transcribe';
-      const details = meta.retryAt === undefined ? list(when, length, route) : [`Trying again at ${formatTime(meta.retryAt, opts)}`, when];
+      const details = meta.retryAt === undefined ? list(when, length, where) : [`Trying again at ${formatTime(meta.retryAt, opts)}`, when];
       return { ...row, tone: 'caution', status, details };
     }
   }
@@ -421,9 +449,11 @@ export interface PopupModel {
 }
 
 export interface PopupHandlers {
-  /** Rejects with a user-facing reason when the recording could not start. */
-  record(tabId: number): Promise<void>;
+  /** Records `tabId` for `profileId`; rejects with a user-facing reason when it could not start. */
+  record(tabId: number, profileId: string): Promise<void>;
   stop(sessionId: string): Promise<void>;
+  /** Changes the recording's profile; rejects with a user-facing reason. */
+  setProfile(sessionId: string, profileId: string): Promise<void>;
   /** Focuses the tab being recorded. */
   goToCall(tabId: number): void;
   grantMic(): void;
@@ -448,8 +478,34 @@ export const HERO_GUARD_MS = 800;
 /** "Checking this tab…" only appears if the first state takes longer than this. */
 export const LOADING_DELAY_MS = 300;
 export const RECENT_COUNT = 3;
+/** sessionStorage: the profile picked here, so the popup opened again in this browser session keeps it. */
+const PICKED_PROFILE_KEY = 'manet:popup-profile';
 
 type HeroAction = 'record' | 'stop';
+/** A request the popup sends: the hero's, or a change of the recording's profile. */
+type Request = HeroAction | 'profile';
+
+const FAILED: Record<Request, string> = {
+  record: 'Couldn’t start recording',
+  stop: 'Couldn’t stop recording',
+  profile: 'Couldn’t change the profile',
+};
+
+function loadPickedProfile(): string | null {
+  try {
+    return sessionStorage.getItem(PICKED_PROFILE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function savePickedProfile(id: string): void {
+  try {
+    sessionStorage.setItem(PICKED_PROFILE_KEY, id);
+  } catch {
+    // Storage blocked: the pick lasts as long as this popup.
+  }
+}
 
 interface RollItem {
   el: HTMLSpanElement;
@@ -463,7 +519,12 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   const clock = options.clock ?? (() => performance.now());
   let model: PopupModel | null = null;
   let now = 0;
+  /** The hero's request, while it runs. */
   let busy: HeroAction | null = null;
+  /** A change of the recording's profile is on its way. */
+  let profileBusy = false;
+  /** The profile picked here for the next recording (the default until then). */
+  let pickedProfileId = loadPickedProfile();
   let error: string | undefined;
   /** This popup stopped the recording: say where the choice happens next. */
   let stopped = false;
@@ -515,6 +576,32 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   );
 
   mount(root, stateEl, stoppedSlot, heroBlock, setupSlot, recentSlot, announcer, footer);
+  // The one menu (the profiles), outside every patched block.
+  const menu = createMenu(root);
+
+  // The Profile row: one element for the life of the popup, put above the hero while it
+  // applies. Its button keeps focus through updates and anchors the menu.
+  const profileNameEl = h('span', { class: 'popup-profile-name' });
+  const profileButton = button([profileNameEl, svg('chevron')], {
+    kind: 'plain',
+    class: 'popup-profile-btn',
+    attrs: { ...menuButtonAttrs(menu), 'data-key': 'profile' },
+    onClick: (event) => {
+      if (menu.anchor === profileButton) menu.close({ restoreFocus: true });
+      else openProfiles(event.detail === 0 ? 'first' : 'menu');
+    },
+  });
+  profileButton.addEventListener(
+    'keydown',
+    menuButtonKeys((focus) => {
+      if (!isInert(profileButton)) openProfiles(focus);
+    }),
+  );
+  const profileRow = h(
+    'div',
+    { class: 'popup-profile', 'data-role': 'profile' },
+    h('dl', { class: 'facts' }, h('dt', null, 'Profile'), h('dd', { 'data-fact': 'profile' }, profileButton)),
+  );
 
   // Paint the footer now; say what is happening only if it takes a noticeable while.
   const loadingTimer = setTimeout(() => {
@@ -532,16 +619,22 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   }
 
   function onHero(): void {
-    const s = model?.state;
-    if (!s || busy || clock() < heroArmedAt) return;
-    if (heroAction === 'record' && s.kind === 'idle') run('record', () => handlers.record(s.tabId));
+    const m = model;
+    const s = m?.state;
+    if (!m || !s || busy || clock() < heroArmedAt) return;
+    if (heroAction === 'record' && s.kind === 'idle') run('record', () => handlers.record(s.tabId, pickedProfile(m)));
     else if (heroAction === 'stop' && s.kind === 'recording') run('stop', () => handlers.stop(s.sessionId));
   }
 
-  function run(action: HeroAction, request: () => Promise<void>): void {
-    busy = action;
+  /** The hero's requests and profile changes; a failure shows in the hero's error line. */
+  function run(action: Request, request: () => Promise<void>): void {
+    if (action === 'profile') {
+      profileBusy = true;
+    } else {
+      busy = action;
+      stopped = false;
+    }
     error = undefined;
-    stopped = false;
     let promise: Promise<void>;
     try {
       promise = request();
@@ -555,10 +648,11 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       },
       (err: unknown) => {
         const reason = err instanceof Error ? err.message : String(err);
-        error = `${action === 'record' ? 'Couldn’t start recording' : 'Couldn’t stop recording'}: ${reason}`;
+        error = `${FAILED[action]}: ${reason}`;
       },
     ).finally(() => {
-      busy = null;
+      if (action === 'profile') profileBusy = false;
+      else busy = null;
       render();
     });
   }
@@ -725,6 +819,88 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
     }
   }
 
+  // ---- Profile -----------------------------------------------------------------------
+
+  const knownProfile = (m: PopupModel, id: string | null | undefined): id is string =>
+    typeof id === 'string' && m.profiles.some((p) => p.id === id);
+
+  /** The default profile, or the first one when the default id is stale (profiles.defaultProfile). */
+  function defaultProfileId(m: PopupModel): string {
+    return knownProfile(m, m.defaultProfileId) ? m.defaultProfileId : (m.profiles[0]?.id ?? m.defaultProfileId);
+  }
+
+  /** What Record passes on: the popup's pick, or the default when none (or it was deleted since). */
+  function pickedProfile(m: PopupModel): string {
+    return knownProfile(m, pickedProfileId) ? pickedProfileId : defaultProfileId(m);
+  }
+
+  /** The profile the row shows: the recording's own while recording (null: deleted since), else the pick. */
+  function shownProfile(m: PopupModel, s: PopupState): string | null {
+    if (s.kind !== 'recording') return pickedProfile(m);
+    if (s.profileId === undefined) return defaultProfileId(m);
+    return knownProfile(m, s.profileId) ? s.profileId : null;
+  }
+
+  /** What an open profile menu was built from; a different one now means its items went stale. */
+  function profileSignature(m: PopupModel, s: PopupState): string {
+    const session = s.kind === 'recording' ? s.sessionId : '';
+    const profiles = m.profiles.map((p) => [p.id, p.name]);
+    return JSON.stringify([s.kind, session, profiles, shownProfile(m, s), profileFrozen()]);
+  }
+
+  /** No choice while a request runs: Record has taken the pick, or a change is on its way. */
+  function profileFrozen(): boolean {
+    return busy !== null || profileBusy;
+  }
+
+  function openProfiles(focus: 'first' | 'last' | 'menu'): void {
+    const m = model;
+    if (!m || !profileRow.isConnected || profileFrozen()) return;
+    const s = m.state;
+    const current = shownProfile(m, s);
+    const items: MenuItem[] = m.profiles.map((p) => ({
+      label: p.name,
+      checked: p.id === current,
+      attrs: { 'data-key': `profile-${p.id}` },
+      onSelect: () => pickProfile(p.id),
+    }));
+    menu.open(profileButton, items, { focus, signature: profileSignature(m, s), label: 'Profile' });
+  }
+
+  /** Before recording, the pick is the popup's own; while recording, the recording's profile changes. */
+  function pickProfile(id: string): void {
+    const s = model?.state;
+    if (s?.kind === 'recording') {
+      if (id === s.profileId) return;
+      const sessionId = s.sessionId;
+      run('profile', () => handlers.setProfile(sessionId, id));
+    } else if (s?.kind === 'idle') {
+      pickedProfileId = id;
+      savePickedProfile(id);
+      render();
+    }
+  }
+
+  function renderProfile(m: PopupModel, s: PopupState): void {
+    const show = (s.kind === 'idle' || s.kind === 'recording') && m.profiles.length > 1;
+    // An open menu whose choices went stale closes (focus goes back to the button) before
+    // the row can leave.
+    if (menu.anchor === profileButton && (!show || menu.signature !== profileSignature(m, s))) menu.close();
+    if (!show) {
+      profileRow.remove();
+      return;
+    }
+    if (!profileRow.isConnected) heroBlock.before(profileRow);
+    const current = shownProfile(m, s);
+    const name = current === null ? 'Choose profile' : profileName(m, current);
+    if (profileNameEl.textContent !== name) {
+      profileNameEl.textContent = name;
+      profileButton.setAttribute('aria-label', current === null ? name : `Profile: ${name}`);
+    }
+    setBusy(profileButton, profileBusy);
+    if (!profileBusy) setDisabled(profileButton, busy !== null);
+  }
+
   // ---- Hero --------------------------------------------------------------------------
 
   function renderHero(m: PopupModel, s: PopupState): void {
@@ -826,7 +1002,8 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
    * Recent under the facts, the hero and a setup callout would outgrow Chrome's 600 px.
    */
   function renderRecent(m: PopupModel, s: PopupState): void {
-    const rows = s.kind === 'not-meet' ? m.recent.slice(0, RECENT_COUNT).map((meta) => recentRow(meta, now, fmt)) : [];
+    const names = new Map(m.profiles.map((p) => [p.id, p.name]));
+    const rows = s.kind === 'not-meet' ? m.recent.slice(0, RECENT_COUNT).map((meta) => recentRow(meta, now, fmt, names)) : [];
     patch('recent', recentSlot, JSON.stringify(rows), () =>
       rows.length
         ? h(
@@ -879,6 +1056,7 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       }
       renderFacts(m, s);
       renderStopped(s);
+      renderProfile(m, s);
       renderHero(m, s);
       renderSetup(m, s);
       renderRecent(m, s);
@@ -886,6 +1064,8 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       if (meetingsButton.textContent !== label) meetingsButton.textContent = label;
     });
     announce(s);
+    // The roll or the notes above may have moved the Profile button.
+    if (menu.anchor) menu.position();
     rendered = true;
   }
 

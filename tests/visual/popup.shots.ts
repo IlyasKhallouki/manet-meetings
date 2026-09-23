@@ -72,6 +72,17 @@ function recording(patch: Partial<Recording> = {}): Recording {
 const onCall: PopupState = { kind: 'idle', tabId: 1, meetCode: 'abc-defg-hij', title: 'Weekly product sync' };
 const RECENT = SESSIONS.filter((s) => s.status !== 'recording');
 const LONG_TITLE = 'Onboarding — Lumind × Nova: pricing, pilots and the Q4 roadmap review';
+/** More profiles than the starter two, one with a name as long as Settings allows. */
+const PROFILES: PopupModel['profiles'] = [
+  { id: 'team', name: 'Team' },
+  { id: 'personal', name: 'Personal' },
+  { id: 'client', name: 'Client meeting' },
+  { id: 'long', name: 'Quarterly business review with the Halstead audit steering group' },
+];
+const MANY_PROFILES: PopupModel['profiles'] = [
+  ...PROFILES,
+  ...['Interview', '1:1', 'Board', 'Sales call', 'Standup', 'Retro'].map((name, i) => ({ id: `p${i + 5}`, name })),
+];
 
 function model(state: PopupState, patch: Partial<PopupModel> = {}): PopupModel {
   return {
@@ -96,6 +107,7 @@ function handlers(patch: Partial<PopupHandlers> = {}): PopupHandlers {
   return {
     record: ok,
     stop: ok,
+    setProfile: ok,
     goToCall: () => {},
     grantMic: () => {},
     openSettings: () => {},
@@ -266,6 +278,15 @@ gallery('popup', [
       { mic: 'granted', includeMic: false, setup: ['token', 'database'] },
     ),
   ),
+  // The Profile row's menu, and a name too long for the row.
+  popup('on-call-profile-menu', model(onCall, { profiles: PROFILES }), {
+    then: (root) => root.querySelector<HTMLButtonElement>('[data-key="profile"]')!.click(),
+  }),
+  popup('recording-long-profile', model(recording({ profileId: 'long' }), { profiles: PROFILES })),
+  // More profiles than the popup has room for, above or below the row: the menu scrolls.
+  popup('recording-profile-menu-many', model(recording({ profileId: 'p7' }), { profiles: MANY_PROFILES }), {
+    then: (root) => root.querySelector<HTMLButtonElement>('[data-key="profile"]')!.click(),
+  }),
   // Starting…, then the start failed.
   popup('on-call-starting', model(onCall), {
     handlers: { record: never },

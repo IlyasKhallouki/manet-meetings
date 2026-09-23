@@ -84,6 +84,7 @@ function popup(name: string, state: PopupState, o: { stopFails?: boolean } = {})
         {
           record: ok,
           stop: o.stopFails ? () => Promise.reject(new MeetingProblem(problems.noResponse)) : ok,
+          setProfile: ok,
           goToCall: () => {},
           grantMic: () => {},
           openSettings: () => {},
