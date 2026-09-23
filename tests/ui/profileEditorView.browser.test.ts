@@ -164,6 +164,112 @@ describe('profile editor', () => {
     expect(titleInput.value).toBe('Overview');
   });
 
+  it('keeps focus on the field the user moved to once an Enter-commit resolves', async () => {
+    const { el, settle } = setupDelayed(10);
+    const nameInput = el<HTMLInputElement>('name');
+    nameInput.focus();
+    nameInput.value = 'Weekly meeting';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    nameInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const dbInput = el<HTMLInputElement>('databaseId');
+    dbInput.focus();
+    await settle();
+    expect(document.activeElement).toBe(dbInput);
+  });
+
+  it('keeps focus when the settings reload', () => {
+    const { el, view, get } = setup();
+    const dbInput = el<HTMLInputElement>('databaseId');
+    dbInput.focus();
+    view.load({ ...get() });
+    expect(document.activeElement).toBe(dbInput);
+  });
+
+  it('keeps focus and typing in the next field while the previous one saves', async () => {
+    const { el, settle, get } = setupDelayed(10);
+    const nameInput = el<HTMLInputElement>('name');
+    nameInput.focus();
+    nameInput.value = 'Weekly meeting';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    const promptInput = el<HTMLTextAreaElement>('prompt');
+    promptInput.focus();
+    promptInput.value = 'Keep it short';
+    promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    expect(get().profiles[1]!.name).toBe('Weekly meeting');
+    expect(document.activeElement).toBe(promptInput);
+    expect(promptInput.value).toBe('Keep it short');
+  });
+
+  it('never deletes the profile once it becomes the default, even from an open confirm', async () => {
+    const { el, settle, handlers, view } = setup();
+    el('delete').click();
+    const confirm = el('delete-confirm');
+    el<HTMLInputElement>('default').click();
+    confirm.click();
+    await settle();
+    expect(handlers.makeDefault).toHaveBeenCalledWith('personal');
+    expect(handlers.remove).not.toHaveBeenCalled();
+    expect(handlers.back).not.toHaveBeenCalled();
+    expect(view.element.querySelector('[data-key="delete-confirm"]')).toBeNull();
+    expect(el('delete').getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('closes the delete confirm when another tab makes the profile the default', () => {
+    const { el, view, get } = setup();
+    el('delete').click();
+    view.load({ ...get(), defaultProfileId: 'personal' });
+    expect(view.element.querySelector('[data-key="delete-confirm"]')).toBeNull();
+    expect(el('delete').getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('follows a change from elsewhere in a focused field that was not edited, and writes nothing back', async () => {
+    const { el, view, get, handlers, settle } = setup();
+    const nameInput = el<HTMLInputElement>('name');
+    nameInput.focus();
+    const renamed = (name: string): Settings => ({
+      ...get(),
+      profiles: get().profiles.map((p) => (p.id === 'personal' ? { ...p, name } : p)),
+    });
+    view.load(renamed('Renamed elsewhere'));
+    expect(nameInput.value).toBe('Renamed elsewhere');
+    nameInput.blur();
+    await settle();
+    expect(handlers.save).not.toHaveBeenCalled();
+    expect(nameInput.value).toBe('Renamed elsewhere');
+
+    // An edit in progress is still kept.
+    nameInput.focus();
+    nameInput.value = 'Draft';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    view.load(renamed('Renamed again'));
+    expect(nameInput.value).toBe('Draft');
+  });
+
+  it('shows the profile as deleted when it goes while a save is in flight', async () => {
+    const { el, settle, handlers, view } = setupDelayed(10);
+    const nameInput = el<HTMLInputElement>('name');
+    nameInput.focus();
+    nameInput.value = 'Weekly meeting';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    nameInput.blur();
+    await handlers.remove('personal');
+    await settle();
+    expect(view.element.textContent).toContain('This profile was deleted.');
+  });
+
+  it('drops an edit left in a field once its profile is deleted', async () => {
+    const { el, settle, handlers, view } = setup();
+    el<HTMLInputElement>('name').value = 'Half typed';
+    el('delete').click();
+    el('delete-confirm').click();
+    await settle();
+    expect(handlers.back).toHaveBeenCalled();
+    view.flush();
+    await settle();
+    expect(handlers.save).not.toHaveBeenCalled();
+  });
+
   it('shows the committed value once a delayed save resolves, even if Esc fired first', async () => {
     const { el, settle } = setupDelayed(10);
     const nameInput = el<HTMLInputElement>('name');

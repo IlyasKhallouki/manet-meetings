@@ -10,7 +10,8 @@
  * Profiles are listed, one row each with its database's last check; a row opens the
  * profile editor (handlers.openProfile, profileEditorView.ts), which edits the profile.
  * Share (shareView.ts) exports the settings to a file and imports one in a single write,
- * queued with the field commits, then checks every profile's database.
+ * queued with the field commits and merged into the settings stored when it runs, then
+ * checks every profile's database.
  * Check results sit under the field or on the row they describe and say when they tested
  * a value that isn't saved. While meetings can't be saved to Notion, a checklist at the
  * top lists what is missing; each item focuses its field, as options.html#<setting> does
@@ -50,6 +51,12 @@ import {
 } from './settingsForm';
 
 export interface OptionsHandlers {
+  /**
+   * The settings stored right now (settings.ts getSettings). A new profile and an import
+   * are built from them when their write runs, so a change made meanwhile elsewhere (another
+   * tab, the popup) isn't overwritten. Without it, from the last settings this view saw.
+   */
+  read?(): Promise<Settings>;
   /** Writes only these fields (settings.ts updateSettings) and returns the stored settings. */
   update(patch: Partial<Settings>): Promise<Settings>;
   verifyGemini(apiKey: string): Promise<{ ok: true } | { ok: false; error: string }>;
@@ -57,8 +64,11 @@ export interface OptionsHandlers {
   openPermissionPage(): void;
   /** Shows a profile's editor (options.html#profile/<id>), on `field` when given. */
   openProfile(profileId: string, field?: ProfileField): void;
-  /** Settings › Share's storage and download; the view supplies the stored settings and the check after an import. */
-  share: Pick<ShareHandlers, 'apply' | 'download'>;
+  /**
+   * Settings › Share's storage (the whole merged settings, in one write) and download; the
+   * view supplies the stored settings and the check after an import.
+   */
+  share: { apply(next: Settings): Promise<Settings>; download: ShareHandlers['download'] };
 }
 
 export interface OptionsView {
@@ -70,8 +80,9 @@ export interface OptionsView {
   setMic(permission: MicPermission): void;
   /**
    * Moves focus to a setting by its name (options.html#geminiApiKey): a field, a switch,
-   * 'profiles' (the first profile's row) or 'profile-<id>' (that profile's row, back from
-   * its editor). False, and focus stays, for any other name.
+   * 'profiles' (the default profile's row: the database the popup and Meetings ask for) or
+   * 'profile-<id>' (that profile's row, back from its editor). False, and focus stays, for
+   * any other name.
    */
   focus(name: string): boolean;
   /**
@@ -171,12 +182,19 @@ export function createOptionsView(
       },
     );
   }
-  function write(patch: Partial<Settings>): Promise<Settings> {
-    return enqueue(() => handlers.update(patch)).then((next) => (stored = next));
+  /** The settings stored now, read when a write runs (after every write queued before it). */
+  async function latest(): Promise<Settings> {
+    return handlers.read ? handlers.read() : stored!;
+  }
+  /** Writes `patch`, or the patch built from the settings stored when the write runs. */
+  function write(patch: Partial<Settings> | ((current: Settings) => Partial<Settings>)): Promise<Settings> {
+    return enqueue(async () => handlers.update(typeof patch === 'function' ? patch(await latest()) : patch)).then(
+      (next) => (stored = next),
+    );
   }
   /** An import: the whole settings at once. Every field then follows them, as on load(). */
-  function applyImport(next: Settings): Promise<Settings> {
-    return enqueue(() => handlers.share.apply(next)).then((saved) => {
+  function applyImport(merge: (current: Settings) => Settings): Promise<Settings> {
+    return enqueue(async () => handlers.share.apply(merge(await latest()))).then((saved) => {
       load(saved);
       return saved;
     });
@@ -525,14 +543,15 @@ export function createOptionsView(
 
   async function addProfile(): Promise<void> {
     if (!stored) return;
-    const created = newProfile(stored.profiles);
+    const id = crypto.randomUUID();
     setDisabled(addProfileButton, true);
     try {
-      await write({ profiles: [...stored.profiles, created] });
+      // Added to the profiles stored when the write runs, not the ones shown now.
+      await write((current) => ({ profiles: [...current.profiles, newProfile(current.profiles, id)] }));
       renderMessage(addProfileMsg, null);
       renderProfiles();
       afterSave();
-      handlers.openProfile(created.id);
+      handlers.openProfile(id);
     } catch (err) {
       renderMessage(addProfileMsg, `Couldn’t add a profile: ${errorText(err)}`);
     } finally {
@@ -663,7 +682,8 @@ export function createOptionsView(
   function controlFor(name: string): HTMLElement | null {
     if (texts.has(name as TextName)) return texts.get(name as TextName)!.input;
     if (switches.has(name as SwitchName)) return switches.get(name as SwitchName)!;
-    if (name === 'profiles') return profileRows.get(stored?.profiles[0]?.id ?? '') ?? null;
+    // The default profile's: its database is the one the popup and Meetings ask for.
+    if (name === 'profiles') return stored ? (profileRows.get(defaultProfile(stored).id) ?? null) : null;
     if (name.startsWith('profile-')) return profileRows.get(name.slice('profile-'.length)) ?? null;
     return null;
   }
@@ -715,6 +735,13 @@ export function createOptionsView(
     class: 'settings-days',
   });
   const daysUnit = h('span', { class: 'settings-days-unit', id: 'retentionDays-unit' }, 'days after saving to Notion');
+
+  const share = createShareView({
+    current: () => stored,
+    apply: applyImport,
+    download: (fileName, text) => handlers.share.download(fileName, text),
+    imported: () => void checkDatabases(),
+  });
 
   const groups = [
     section({
@@ -796,12 +823,7 @@ export function createOptionsView(
         }),
       ],
     }),
-    createShareView({
-      current: () => stored,
-      apply: applyImport,
-      download: (fileName, text) => handlers.share.download(fileName, text),
-      imported: () => void checkDatabases(),
-    }).element,
+    share.element,
   ];
   for (const group of groups) group.querySelector('.group')?.classList.add('roomy');
   days.setAttribute('aria-describedby', `retentionDays-unit ${days.getAttribute('aria-describedby') ?? ''}`.trim());
@@ -839,6 +861,7 @@ export function createOptionsView(
     renderCount();
     renderMic();
     renderSetup();
+    share.refresh();
   }
 
   return {

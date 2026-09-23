@@ -2,7 +2,7 @@
  * Settings › Share: export the stored profiles and settings to a manet-config file, and
  * import one back. Export opens an inline form in its own row; import reads a chosen file,
  * previews what it would change (profileConfig() does the diffing), and applies the merge
- * in one write. Pure DOM, driven entirely by the handlers it's given, so it renders the
+ * in one write, merged into the settings stored when that write runs. Pure DOM, driven entirely by the handlers it's given, so it renders the
  * same in tests and on the page.
  */
 import { buildConfigFile, configFileName, mergeConfig, parseConfigFile, previewConfig, serializeConfig, type ConfigFile } from '../config';
@@ -17,8 +17,11 @@ import { shortDay } from './sessionView';
 export interface ShareHandlers {
   /** The stored settings, or null before they load. */
   current(): Settings | null;
-  /** Stores the whole merged settings; resolves to what was stored. */
-  apply(next: Settings): Promise<Settings>;
+  /**
+   * Stores `merge` applied to the settings stored when the write runs (not the ones the
+   * preview showed), in one write; resolves to what was stored.
+   */
+  apply(merge: (current: Settings) => Settings): Promise<Settings>;
   /** Hands the file to the browser as a download. */
   download(fileName: string, text: string): void;
   /** After an import: check every profile's database. */
@@ -33,6 +36,8 @@ export interface ShareViewOptions {
 
 export interface ShareView {
   element: HTMLElement;
+  /** Updates an open import preview to handlers.current(): call it when storage changes. */
+  refresh(): void;
 }
 
 const HINT = 'Give everyone the same profiles and settings. Your name and meetings are never in the file.';
@@ -183,8 +188,16 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
   importError.hidden = true;
 
   let pendingFile: ConfigFile | null = null;
+  /** While an import is being written: its preview stays as it was. */
+  let importing = false;
   const importPreview = h('div', { class: 'share-form', 'data-role': 'import-preview' });
   importPreview.hidden = true;
+  const importCancelButton = button('Cancel', { attrs: { 'data-key': 'import-cancel' }, onClick: () => closeImport() });
+  const importGoButton = button('Import', { kind: 'prominent', attrs: { 'data-key': 'import-go' }, onClick: () => void doImport() });
+  const importActions = h('div', { class: 'share-form-actions' }, importCancelButton, importGoButton);
+  const importMsg = h('p', { class: 'field-msg' });
+  /** The preview's lines, before its buttons: refresh() swaps only these, so focus stays. */
+  let previewNodes: HTMLElement[] = [];
 
   async function onFileChosen(): Promise<void> {
     const file = fileInput.files?.[0];
@@ -208,16 +221,23 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
   function renderImportPreview(file: ConfigFile): void {
     const current = handlers.current();
     if (!current) return;
-    const cancelButton = button('Cancel', { attrs: { 'data-key': 'import-cancel' }, onClick: () => closeImport() });
-    const goButton = button('Import', { kind: 'prominent', attrs: { 'data-key': 'import-go' }, onClick: () => void doImport() });
-    const importMsg = h('p', { class: 'field-msg' });
-    importPreview.replaceChildren(
-      ...previewLines(current, file, now(), format),
-      h('div', { class: 'share-form-actions' }, cancelButton, goButton),
-      importMsg,
-    );
+    previewNodes = previewLines(current, file, now(), format);
+    setDisabled(importGoButton, false);
+    setDisabled(importCancelButton, false);
+    importMsg.replaceChildren();
+    delete importMsg.dataset.tone;
+    importPreview.replaceChildren(...previewNodes, importActions, importMsg);
     importActionBar.hidden = true;
     importPreview.hidden = false;
+  }
+
+  function refresh(): void {
+    const current = handlers.current();
+    if (!pendingFile || importing || importPreview.hidden || !current) return;
+    const lines = previewLines(current, pendingFile, now(), format);
+    importActions.before(...lines);
+    for (const node of previewNodes) node.remove();
+    previewNodes = lines;
   }
 
   function closeImport(): void {
@@ -229,27 +249,24 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
 
   async function doImport(): Promise<void> {
     const file = pendingFile;
-    const current = handlers.current();
-    if (!file || !current) return;
-    const goButton = importPreview.querySelector<HTMLButtonElement>('[data-key="import-go"]');
-    const cancelButton = importPreview.querySelector<HTMLButtonElement>('[data-key="import-cancel"]');
-    const msg = importPreview.querySelector<HTMLElement>('.field-msg:last-child');
-    if (goButton) setDisabled(goButton, true);
-    if (cancelButton) setDisabled(cancelButton, true);
+    if (!file || importing) return;
+    importing = true;
+    setDisabled(importGoButton, true);
+    setDisabled(importCancelButton, true);
     try {
-      await handlers.apply(mergeConfig(current, file));
+      await handlers.apply((current) => mergeConfig(current, file));
       importPreview.replaceChildren(
         h('p', { class: 'field-msg', role: 'status' }, svg('done', { class: 'tone-done' }), h('span', null, `Imported “${file.name}”`)),
       );
       pendingFile = null;
       handlers.imported();
     } catch (err) {
-      if (msg) {
-        msg.dataset.tone = 'caution';
-        msg.replaceChildren(svg('caution', { class: 'tone-caution' }), h('span', null, `Couldn’t import: ${errorText(err)}`));
-      }
-      if (goButton) setDisabled(goButton, false);
-      if (cancelButton) setDisabled(cancelButton, false);
+      importMsg.dataset.tone = 'caution';
+      importMsg.replaceChildren(svg('caution', { class: 'tone-caution' }), h('span', null, `Couldn’t import: ${errorText(err)}`));
+      setDisabled(importGoButton, false);
+      setDisabled(importCancelButton, false);
+    } finally {
+      importing = false;
     }
   }
 
@@ -261,5 +278,5 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
   // repeated on each row.
   group.querySelector('.section-header')?.after(h('p', { class: 'hint', 'data-role': 'share-hint' }, HINT));
 
-  return { element: group };
+  return { element: group, refresh };
 }

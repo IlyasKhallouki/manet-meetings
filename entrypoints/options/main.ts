@@ -2,6 +2,7 @@ import '@lib/ui/styles.css';
 import { verifyApiKey } from '@lib/gemini/rest';
 import { errorMessage } from '@lib/messages';
 import { verifyDatabase } from '@lib/notion/verify';
+import { defaultProfile } from '@lib/profiles';
 import { getSettings, settingsItem, updateSettings } from '@lib/settings';
 import type { Settings } from '@lib/types';
 import { callout } from '@lib/ui/controls';
@@ -35,9 +36,21 @@ function download(fileName: string, text: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+let latest: Settings | null = null;
+/** The profile editor while options.html#profile/<id> is showing. */
+let editor: { profileId: string; view: ProfileEditorView } | null = null;
+
+/** What a write stored is the latest: an editor opened next doesn't wait for the watcher. */
+function keep(settings: Settings): Settings {
+  latest = settings;
+  return settings;
+}
+
 const view = createOptionsView(root, {
+  // A new profile and an import are built from what is stored when they write.
+  read: () => getSettings(),
   // Each commit writes only its own field, merged into what is stored now.
-  update: (patch) => updateSettings(patch),
+  update: (patch) => updateSettings(patch).then(keep),
   verifyGemini: (apiKey) => verifyApiKey(apiKey),
   verifyNotion: (token, databaseId) => verifyDatabase(token, databaseId),
   openPermissionPage: () => {
@@ -48,14 +61,10 @@ const view = createOptionsView(root, {
   },
   share: {
     // An import is the whole merged settings, stored in one write.
-    apply: (next) => updateSettings(next),
+    apply: (next) => updateSettings(next).then(keep),
     download,
   },
 });
-
-let latest: Settings | null = null;
-/** The profile editor while options.html#profile/<id> is showing. */
-let editor: { profileId: string; view: ProfileEditorView } | null = null;
 
 function refresh(): Promise<void> {
   return getSettings().then((settings) => {
@@ -67,14 +76,19 @@ function refresh(): Promise<void> {
 
 /** Writes the stored profiles with `change` applied; resolves to what was stored. */
 async function updateProfiles(change: (profiles: Settings['profiles']) => Settings['profiles']): Promise<Settings> {
-  return updateSettings({ profiles: change((await getSettings()).profiles) });
+  return updateSettings({ profiles: change((await getSettings()).profiles) }).then(keep);
 }
 
 function createEditor(profileId: string): ProfileEditorView {
   return createProfileEditorView(profileId, {
     save: (profile) => updateProfiles((profiles) => profiles.map((p) => (p.id === profile.id ? profile : p))),
-    remove: (id) => updateProfiles((profiles) => profiles.filter((p) => p.id !== id)),
-    makeDefault: (id) => updateSettings({ defaultProfileId: id }),
+    remove: async (id) => {
+      // Checked against storage too: another tab may have made it the default meanwhile.
+      const settings = await getSettings();
+      if (defaultProfile(settings).id === id) throw new Error('Make another profile the default first.');
+      return updateSettings({ profiles: settings.profiles.filter((p) => p.id !== id) }).then(keep);
+    },
+    makeDefault: (id) => updateSettings({ defaultProfileId: id }).then(keep),
     // The stored token: the editor has no token field of its own.
     verifyDatabase: async (databaseId) => verifyDatabase((await getSettings()).notionToken, databaseId),
     back: () => {
@@ -156,7 +170,12 @@ function route(): void {
     return;
   }
   const left = leaveEditor();
-  if (left && !location.hash) view.focus(`profile-${left}`);
+  if (left && !location.hash) {
+    // The rows follow the editor's writes (a delete) before the watcher gets to them.
+    if (latest) view.load(latest);
+    // A deleted profile has no row left: the Profiles group's default row instead.
+    if (!view.focus(`profile-${left}`)) view.focus('profiles');
+  }
   focusFromHash();
 }
 

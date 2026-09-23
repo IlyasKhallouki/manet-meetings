@@ -90,6 +90,7 @@ function store(initial: Settings = SETTINGS, overrides: Partial<OptionsHandlers>
   const applied: Settings[] = [];
   const calls: string[] = [];
   const handlers: OptionsHandlers = {
+    read: async () => current,
     update: async (patch) => {
       patches.push(patch);
       current = { ...current, ...patch };
@@ -181,11 +182,19 @@ describe('links to a field (options.html#<field>)', () => {
       expect(view.focus(name), name).toBe(true);
       expect(document.activeElement, name).toBe(field(name));
     }
-    // The Profiles group: its first row.
+    // The Profiles group: the default profile's row.
     expect(view.focus('profiles')).toBe(true);
     expect(document.activeElement).toBe(root.querySelector('[data-key="profile-team"]'));
     // A profile's own row (back from its editor).
     expect(view.focus('profile-personal')).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('[data-key="profile-personal"]'));
+  });
+
+  it('focuses the default profile’s row for the Profiles group, first or not', () => {
+    const s = store({ ...SETTINGS, defaultProfileId: 'personal' });
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(s.current());
+    expect(view.focus('profiles')).toBe(true);
     expect(document.activeElement).toBe(root.querySelector('[data-key="profile-personal"]'));
   });
 
@@ -600,6 +609,22 @@ describe('Profiles group', () => {
     expect(root.querySelectorAll('[data-key^="profile-"]')).toHaveLength(3);
   });
 
+  it('adds a profile to the profiles stored when it writes, not the ones last shown', async () => {
+    const s = store();
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    // Another tab adds a profile; this page hasn't heard yet.
+    const client = { ...starterProfiles(DB)[0]!, id: 'client', name: 'Client meeting' };
+    await s.handlers.update({ profiles: [...SETTINGS.profiles, client] });
+    root.querySelector<HTMLButtonElement>('[data-key="add-profile"]')!.click();
+    await until(() => s.patches.length === 2);
+    const saved = s.patches[1]!.profiles!;
+    expect(saved.map((p) => p.id).slice(0, 3)).toEqual(['team', 'personal', 'client']);
+    expect(saved).toHaveLength(4);
+    await until(() => vi.mocked(s.handlers.openProfile).mock.calls.length === 1);
+    expect(s.handlers.openProfile).toHaveBeenCalledWith(saved[3]!.id);
+  });
+
   it('checks every profile’s database and shows the result on its row', async () => {
     const verifyNotion = vi
       .fn<OptionsHandlers['verifyNotion']>()
@@ -656,6 +681,48 @@ describe('Profiles group', () => {
 });
 
 describe('Share group', () => {
+  const client = { ...starterProfiles(DB)[0]!, id: 'client', name: 'Client meeting' };
+  const TEAM_CONFIG = { ...SETTINGS, retentionDays: 30, profiles: [...starterProfiles(DB, ''), client] };
+
+  /** Picks a config file exported from `from` and waits for its preview. */
+  async function chooseConfig(from: Settings): Promise<HTMLElement> {
+    const input = root.querySelector<HTMLInputElement>('#settings-share input[type="file"]')!;
+    const file = new File([serializeConfig(buildConfigFile(from, { name: 'Acme team', includeKeys: false }))], 'manet-config.json', {
+      type: 'application/json',
+    });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change'));
+    await until(() => root.querySelector('[data-key="import-go"]') !== null);
+    return root.querySelector<HTMLElement>('[data-role="import-preview"]')!;
+  }
+
+  it('merges an import into the settings stored when it writes, not the ones previewed', async () => {
+    const s = store();
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    await chooseConfig(TEAM_CONFIG);
+    // Another tab renames you; this page hasn't heard yet.
+    await s.handlers.update({ displayName: 'From another tab' });
+    root.querySelector<HTMLButtonElement>('[data-key="import-go"]')!.click();
+    await until(() => s.applied.length === 1);
+    expect(s.applied[0]!.displayName).toBe('From another tab');
+    expect(s.applied[0]!.retentionDays).toBe(30);
+  });
+
+  it('keeps an open import preview up to date, and its focus, as the stored settings change', async () => {
+    const s = store();
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    const preview = await chooseConfig(TEAM_CONFIG);
+    expect(text(preview)).toContain('Keep audio: 14 days → 30 days');
+    const go = root.querySelector<HTMLButtonElement>('[data-key="import-go"]')!;
+    go.focus();
+    view.load({ ...SETTINGS, retentionDays: 30 });
+    expect(text(preview)).not.toContain('Keep audio');
+    expect(text(preview)).toContain('Settings: no changes');
+    expect(document.activeElement).toBe(go);
+  });
+
   it('downloads an export of the stored settings', () => {
     const s = store();
     const view = createOptionsView(root, s.handlers, FAST);

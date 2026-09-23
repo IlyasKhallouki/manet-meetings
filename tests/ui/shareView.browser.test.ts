@@ -12,7 +12,7 @@ function setup(current: Settings = normalizeSettings({ displayName: 'Ilyas', gem
   let stored = current;
   const handlers = {
     current: () => stored,
-    apply: vi.fn(async (next: Settings) => (stored = next)),
+    apply: vi.fn(async (merge: (current: Settings) => Settings) => (stored = merge(stored))),
     download: vi.fn(),
     imported: vi.fn(),
   };

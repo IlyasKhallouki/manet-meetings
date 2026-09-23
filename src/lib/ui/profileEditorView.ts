@@ -34,7 +34,7 @@ import {
   textInput,
   visuallyHidden,
 } from './controls';
-import { h, mount } from './dom';
+import { h } from './dom';
 import { svg } from './icons';
 import { databaseCheckMessage, parseVocabulary } from './settingsForm';
 
@@ -72,11 +72,12 @@ interface EditableField {
   input: HTMLInputElement | HTMLTextAreaElement;
   shown: () => string;
   commit: () => Promise<void>;
-  /** Updates the input from `shown()`, unless it's focused or a write for it is pending. */
+  /** Updates the input from `shown()`, unless it holds an edit or a write for it is pending. */
   sync: () => void;
 }
 
-/** A profile candidate that passed profileProblems, or the problems that stopped it. */
+/** A profile candidate that passed profileProblems, or the problems that stopped it (none
+ *  when the profile itself is gone). */
 type SaveOutcome = { ok: true; profile: Profile } | { ok: false; problems: string[] };
 
 export function createProfileEditorView(
@@ -89,6 +90,8 @@ export function createProfileEditorView(
   let profile: Profile | null = null;
   let writing = 0;
   let confirmingDelete = false;
+  /** While Use as default is being written, so a reload can't flip the switch back. */
+  let savingDefault = false;
 
   function currentProfile(s: Settings): Profile | null {
     return s.profiles.find((p) => p.id === profileId) ?? null;
@@ -119,7 +122,8 @@ export function createProfileEditorView(
       const next = await handlers.save(candidate);
       settings = next;
       profile = currentProfile(next);
-      return { ok: true, profile: profile! };
+      // Deleted meanwhile (another tab, or this editor's own Delete): nothing left to show.
+      return profile ? { ok: true, profile } : { ok: false, problems: [] };
     });
   }
 
@@ -142,8 +146,6 @@ export function createProfileEditorView(
     }, savedMs);
     timers.set(slot, [fade]);
   }
-
-  const focused = (el: Element) => document.activeElement === el;
 
   // ---- Fields: name, database, prompt, vocabulary, and each section's title/instruction --
   const fields: EditableField[] = [];
@@ -173,8 +175,11 @@ export function createProfileEditorView(
     function commit(): Promise<void> {
       if (!profile) return Promise.resolve();
       const raw = o.input.value;
+      // Enter, then blur: that value is already on its way.
+      if (raw === pendingRaw) return Promise.resolve();
       const shownValue = o.shown();
       if (raw === shownValue) {
+        lastSyncedValue = shownValue;
         setFieldMessage(o.fieldEl, null);
         return Promise.resolve();
       }
@@ -185,6 +190,7 @@ export function createProfileEditorView(
       if (guessDisplay === shownValue) {
         // Only whitespace or order-preserving clean-up changed: show it, write nothing.
         o.input.value = shownValue;
+        lastSyncedValue = shownValue;
         setFieldMessage(o.fieldEl, null);
         return Promise.resolve();
       }
@@ -199,6 +205,7 @@ export function createProfileEditorView(
           pendingRaw = null;
           if (!result.ok) {
             if (result.problems[0]) setFieldMessage(o.fieldEl, result.problems[0], 'caution');
+            else syncAll(); // the profile is gone: show that
             return;
           }
           const value = o.display(result.profile);
@@ -225,12 +232,13 @@ export function createProfileEditorView(
     }
 
     function sync(): void {
-      if (focused(o.input) || pendingRaw !== null) return;
+      if (pendingRaw !== null) return;
       // An uncommitted edit (never blurred, so never even reached commit()) still shows
-      // in the input without matching what we last put there: leave it be.
+      // in the input without matching what we last put there: leave it be. A field that is
+      // merely focused follows storage, or its blur would write the old value back.
       if (lastSyncedValue !== null && o.input.value !== lastSyncedValue) return;
       const value = o.shown();
-      o.input.value = value;
+      if (o.input.value !== value) o.input.value = value;
       lastSyncedValue = value;
     }
 
@@ -352,6 +360,10 @@ export function createProfileEditorView(
     if (!checked || !profile || profile.id === settings?.defaultProfileId) return;
     const id = profile.id;
     setDisabled(defaultInput, true);
+    savingDefault = true;
+    // The default can't be deleted: an open confirm goes now, not once the write lands.
+    confirmingDelete = false;
+    renderDelete();
     try {
       await write(async () => {
         const next = await handlers.makeDefault(id);
@@ -359,10 +371,12 @@ export function createProfileEditorView(
         profile = currentProfile(next);
         return next;
       });
+      savingDefault = false;
       defaultMsg.textContent = '';
       flashSaved(defaultSaved, 'Use as default');
       syncAll();
     } catch (err) {
+      savingDefault = false;
       defaultInput.checked = false;
       defaultMsg.textContent = `Couldn’t save: ${errorText(err)}`;
       setDisabled(defaultInput, false);
@@ -523,7 +537,7 @@ export function createProfileEditorView(
 
   /**
    * Reuses each row whose section id still exists (patching only what changed, and never
-   * touching a focused or mid-write field), creates rows for new ids, drops rows for gone
+   * touching an edited or mid-write field), creates rows for new ids, drops rows for gone
    * ids, then reorders the surviving nodes with the fewest possible moves. A row that had
    * focus keeps it even if reordering it briefly detaches it from the document.
    */
@@ -597,58 +611,76 @@ export function createProfileEditorView(
 
   // ---- Delete ------------------------------------------------------------------------------
   const deleteMsg = h('p', { class: 'field-msg', role: 'status' });
+  const deleteBtn = button('Delete profile…', {
+    kind: 'link',
+    class: 'profile-delete-link',
+    attrs: { 'data-key': 'delete' },
+    onClick: () => {
+      confirmingDelete = true;
+      renderDelete();
+    },
+  });
+  const deleteHint = h('p', { class: 'hint' }, 'Make another profile the default first.');
+  const confirmText = h('p', null);
+  const cancelBtn = button('Cancel', {
+    kind: 'plain',
+    attrs: { 'data-key': 'delete-cancel' },
+    onClick: () => {
+      confirmingDelete = false;
+      renderDelete();
+    },
+  });
+  const confirmBtn = button('Delete', {
+    kind: 'plain',
+    attrs: { 'data-key': 'delete-confirm' },
+    onClick: () => void confirmDelete(),
+  });
+  const confirmActions = h('div', { class: 'profile-delete-actions' }, cancelBtn, confirmBtn);
   const deleteArea = h('div', { class: 'profile-delete' });
 
+  /** Patches the delete row in place; its nodes change only when the confirm opens or closes. */
   function renderDelete(): void {
     if (!profile || !settings) {
+      confirmingDelete = false;
       deleteArea.replaceChildren();
       return;
     }
     const isDefault = profile.id === settings.defaultProfileId;
-    if (confirmingDelete) {
-      const cancel = button('Cancel', {
-        kind: 'plain',
-        attrs: { 'data-key': 'delete-cancel' },
-        onClick: () => {
-          confirmingDelete = false;
-          renderDelete();
-        },
-      });
-      const confirm = button('Delete', {
-        kind: 'plain',
-        attrs: { 'data-key': 'delete-confirm' },
-        onClick: () => void confirmDelete(),
-      });
-      deleteArea.replaceChildren(
-        h('p', null, `Delete ${quoted(profile.name)}? Meetings recorded with it will ask for another profile.`),
-        h('div', { class: 'profile-delete-actions' }, cancel, confirm),
-        deleteMsg,
-      );
-      return;
+    // The default can't be deleted, even from a confirm opened before it became the default.
+    if (isDefault) confirmingDelete = false;
+    setDisabled(deleteBtn, isDefault);
+    confirmText.textContent = `Delete ${quoted(profile.name)}? Meetings recorded with it will ask for another profile.`;
+    const nodes = confirmingDelete
+      ? [confirmText, confirmActions, deleteMsg]
+      : isDefault
+        ? [deleteBtn, deleteHint, deleteMsg]
+        : [deleteBtn, deleteMsg];
+    const children = [...deleteArea.children];
+    if (children.length === nodes.length && children.every((c, i) => c === nodes[i])) return;
+    const hadFocus = deleteArea.contains(document.activeElement);
+    deleteArea.replaceChildren(...nodes);
+    // Opening or closing the confirm removes the focused button: focus its counterpart.
+    if (hadFocus && !deleteArea.contains(document.activeElement)) {
+      (confirmingDelete ? cancelBtn : deleteBtn).focus({ preventScroll: true });
     }
-    const deleteBtn = button('Delete profile…', {
-      kind: 'link',
-      class: 'profile-delete-link',
-      disabled: isDefault,
-      attrs: { 'data-key': 'delete' },
-      onClick: () => {
-        confirmingDelete = true;
-        renderDelete();
-      },
-    });
-    mount(
-      deleteArea,
-      deleteBtn,
-      isDefault ? h('p', { class: 'hint' }, 'Make another profile the default first.') : null,
-      deleteMsg,
-    );
   }
 
   async function confirmDelete(): Promise<void> {
     if (!profile) return;
     const id = profile.id;
     try {
-      await write(() => handlers.remove(id));
+      const next = await write(async () => {
+        // Made the default by a write queued before this one: not deletable any more.
+        if (settings?.defaultProfileId === id) return null;
+        return handlers.remove(id);
+      });
+      if (!next) {
+        confirmingDelete = false;
+        renderDelete();
+        return;
+      }
+      settings = next;
+      profile = currentProfile(next);
       confirmingDelete = false;
       handlers.back();
     } catch (err) {
@@ -680,7 +712,8 @@ export function createProfileEditorView(
   function syncAll(): void {
     if (!profile || !settings) {
       heading.textContent = '';
-      body.replaceChildren(deletedMsg);
+      renderDelete();
+      if (body.firstChild !== deletedMsg) body.replaceChildren(deletedMsg);
       return;
     }
     heading.textContent = profile.name;
@@ -689,13 +722,17 @@ export function createProfileEditorView(
     promptField.sync();
     vocabField.sync();
     const isDefault = profile.id === settings.defaultProfileId;
-    if (document.activeElement !== defaultInput) {
+    if (!savingDefault) {
       defaultInput.checked = isDefault;
       setDisabled(defaultInput, isDefault);
     }
     renderSections();
     renderDelete();
-    body.replaceChildren(profileSection, notesSection, transcriptionSection, deleteArea);
+    // Only when switching from "deleted": re-inserting the same nodes would detach them, and
+    // Chromium would blur whichever field has focus.
+    if (body.firstChild !== profileSection) {
+      body.replaceChildren(profileSection, notesSection, transcriptionSection, deleteArea);
+    }
   }
 
   return {
