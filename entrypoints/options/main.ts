@@ -25,6 +25,16 @@ document.getElementById('open-dashboard')?.addEventListener('click', () => {
   openExtensionPage('/dashboard.html').catch(report);
 });
 
+/** Hands `text` to Chrome as a download named `fileName` (Settings › Share's export). */
+function download(fileName: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 const view = createOptionsView(root, {
   // Each commit writes only its own field, merged into what is stored now.
   update: (patch) => updateSettings(patch),
@@ -35,6 +45,11 @@ const view = createOptionsView(root, {
   },
   openProfile: (profileId, field) => {
     location.hash = `profile/${encodeURIComponent(profileId)}${field ? `/${field}` : ''}`;
+  },
+  share: {
+    // An import is the whole merged settings, stored in one write.
+    apply: (next) => updateSettings(next),
+    download,
   },
 });
 

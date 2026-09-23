@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@lib/ui/styles.css';
+import { buildConfigFile, parseConfigFile, serializeConfig } from '@lib/config';
 import { verifyApiKey } from '@lib/gemini/rest';
 import type { VerifyResult } from '@lib/notion/verify';
 import { verifyDatabase } from '@lib/notion/verify';
@@ -91,6 +92,7 @@ const key = (el: Element, k: string) =>
 function store(initial: Settings = SETTINGS, overrides: Partial<OptionsHandlers> = {}) {
   let current = { ...initial };
   const patches: Partial<Settings>[] = [];
+  const applied: Settings[] = [];
   const calls: string[] = [];
   const handlers: OptionsHandlers = {
     update: async (patch) => {
@@ -102,9 +104,17 @@ function store(initial: Settings = SETTINGS, overrides: Partial<OptionsHandlers>
     verifyNotion: (token, db) => verifyDatabase(token, db),
     openPermissionPage: () => void calls.push('openPermissionPage'),
     openProfile: vi.fn(),
+    share: {
+      apply: async (next) => {
+        applied.push(next);
+        current = next;
+        return current;
+      },
+      download: vi.fn(),
+    },
     ...overrides,
   };
-  return { patches, calls, handlers, current: () => current };
+  return { patches, applied, calls, handlers, current: () => current };
 }
 
 const FAST = { savedMs: 60, fadeMs: 20 };
@@ -119,6 +129,7 @@ describe('settings page layout', () => {
       'Profiles',
       'Transcription',
       'Recording',
+      'Share',
     ]);
     expect(text(root.querySelector('[data-role="lede"]'))).toBe('Changes are saved as you make them.');
     expect(button('Save')).toBeUndefined();
@@ -142,6 +153,8 @@ describe('settings page layout', () => {
     expect(field('includeMic').checked).toBe(true);
 
     for (const el of root.querySelectorAll<HTMLInputElement>('input, textarea')) {
+      // Share's file picker is never shown: its Import button opens it.
+      if (el.closest('[hidden]')) continue;
       expect(text(el.labels?.[0]), el.name).not.toBe('');
     }
   });
@@ -644,6 +657,51 @@ describe('Profiles group', () => {
     const view = createOptionsView(root, store().handlers, FAST);
     view.load(SETTINGS);
     expect(root.querySelector('#notionTeamDbId, #notionPersonalDbId, [data-role="defaultRoute"]')).toBeNull();
+  });
+});
+
+describe('Share group', () => {
+  it('downloads an export of the stored settings', () => {
+    const s = store();
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    root.querySelector<HTMLButtonElement>('[data-key="export"]')!.click();
+    root.querySelector<HTMLInputElement>('[data-key="export-name"]')!.value = 'Acme team';
+    root.querySelector<HTMLButtonElement>('[data-key="export-go"]')!.click();
+    const [fileName, contents] = vi.mocked(s.handlers.share.download).mock.calls[0]!;
+    expect(fileName).toBe('manet-config-acme-team.json');
+    const parsed = parseConfigFile(contents);
+    expect(parsed.ok && parsed.file.profiles.map((p) => p.id)).toEqual(['team', 'personal']);
+  });
+
+  it('applies an import in one write, shows it, then checks every profile’s database', async () => {
+    const verifyNotion = vi.fn<OptionsHandlers['verifyNotion']>(async () => ({ ok: true, title: 'Meetings' }));
+    const s = store(SETTINGS, { verifyNotion });
+    const view = createOptionsView(root, s.handlers, FAST);
+    view.load(SETTINGS);
+    const client = { ...starterProfiles(DB)[0]!, id: 'client', name: 'Client meeting' };
+    const team = { ...SETTINGS, retentionDays: 30, profiles: [...starterProfiles(DB, ''), client] };
+    const input = root.querySelector<HTMLInputElement>('#settings-share input[type="file"]')!;
+    const file = new File([serializeConfig(buildConfigFile(team, { name: 'Acme team', includeKeys: false }))], 'manet-config.json', {
+      type: 'application/json',
+    });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change'));
+    await until(() => root.querySelector('[data-key="import-go"]') !== null);
+    root.querySelector<HTMLButtonElement>('[data-key="import-go"]')!.click();
+
+    await until(() => text(root.querySelector('[data-key="profile-client"]')).includes('is ready'));
+    expect(s.applied).toHaveLength(1);
+    expect(s.patches).toEqual([]);
+    expect(s.applied[0]!.profiles.map((p) => p.id)).toEqual(['team', 'personal', 'client']);
+    // The page follows the import at once, without waiting for storage to call load().
+    expect(field('retentionDays').value).toBe('30');
+    expect(verifyNotion.mock.calls).toEqual([
+      ['ntn_example', DB],
+      ['ntn_example', DB],
+    ]);
+    expect(text(root.querySelector('[data-key="profile-team"]'))).toContain('“Meetings” is ready.');
+    expect(text(root.querySelector('#settings-share'))).toContain('Imported “Acme team”');
   });
 });
 

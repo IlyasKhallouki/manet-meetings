@@ -1,6 +1,6 @@
 /**
- * Settings: grouped sections (You → Notion → Profiles → Transcription → Recording) that
- * apply as you change them. There is no Save button (SPEC §5):
+ * Settings: grouped sections (You → Notion → Profiles → Transcription → Recording →
+ * Share) that apply as you change them. There is no Save button (SPEC §5):
  *   - text fields and secrets commit on blur or Enter, never while typing;
  *   - a value that fails validation is never written: the saved one stays in effect and
  *     the fix shows under the field (settingsForm.parseField);
@@ -9,6 +9,8 @@
  *     one at a time, and shows "✓ Saved" beside the label for 2 s (role=status).
  * Profiles are listed, one row each with its database's last check; a row opens the
  * profile editor (handlers.openProfile, profileEditorView.ts), which edits the profile.
+ * Share (shareView.ts) exports the settings to a file and imports one in a single write,
+ * queued with the field commits, then checks every profile's database.
  * Check results sit under the field or on the row they describe and say when they tested
  * a value that isn't saved. While meetings can't be saved to Notion, a checklist at the
  * top lists what is missing; each item focuses its field, as options.html#<setting> does
@@ -36,6 +38,7 @@ import { h, type Child } from './dom';
 import { svg, type Glyph } from './icons';
 import type { MicPermission } from './mic';
 import type { ProfileField } from './profileEditorView';
+import { createShareView, type ShareHandlers } from './shareView';
 import {
   formValue,
   parseField,
@@ -54,6 +57,8 @@ export interface OptionsHandlers {
   openPermissionPage(): void;
   /** Shows a profile's editor (options.html#profile/<id>), on `field` when given. */
   openProfile(profileId: string, field?: ProfileField): void;
+  /** Settings › Share's storage and download; the view supplies the stored settings and the check after an import. */
+  share: Pick<ShareHandlers, 'apply' | 'download'>;
 }
 
 export interface OptionsView {
@@ -148,9 +153,9 @@ export function createOptionsView(
   // ---- Writes: one at a time, so two quick commits can't overwrite each other ----------
   let queue: Promise<unknown> = Promise.resolve();
   let writing = 0;
-  function write(patch: Partial<Settings>): Promise<Settings> {
+  function enqueue(store: () => Promise<Settings>): Promise<Settings> {
     writing++;
-    const run = queue.then(() => handlers.update(patch));
+    const run = queue.then(store);
     queue = run.then(
       () => undefined,
       () => undefined,
@@ -158,7 +163,6 @@ export function createOptionsView(
     return run.then(
       (next) => {
         writing--;
-        stored = next;
         return next;
       },
       (err: unknown) => {
@@ -166,6 +170,16 @@ export function createOptionsView(
         throw err;
       },
     );
+  }
+  function write(patch: Partial<Settings>): Promise<Settings> {
+    return enqueue(() => handlers.update(patch)).then((next) => (stored = next));
+  }
+  /** An import: the whole settings at once. Every field then follows them, as on load(). */
+  function applyImport(next: Settings): Promise<Settings> {
+    return enqueue(() => handlers.share.apply(next)).then((saved) => {
+      load(saved);
+      return saved;
+    });
   }
   /** Commits in progress (validation, write, then their message), for Check to wait on. */
   const commits = new Set<Promise<void>>();
@@ -782,6 +796,12 @@ export function createOptionsView(
         }),
       ],
     }),
+    createShareView({
+      current: () => stored,
+      apply: applyImport,
+      download: (fileName, text) => handlers.share.download(fileName, text),
+      imported: () => void checkDatabases(),
+    }).element,
   ];
   for (const group of groups) group.querySelector('.group')?.classList.add('roomy');
   days.setAttribute('aria-describedby', `retentionDays-unit ${days.getAttribute('aria-describedby') ?? ''}`.trim());
@@ -796,30 +816,33 @@ export function createOptionsView(
   root.replaceChildren(lede, ...groups, privacy);
   renderCount();
 
+  /** Shows the stored settings: see OptionsView.load. */
+  function load(settings: Settings): void {
+    const previous = stored;
+    stored = settings;
+    for (const f of texts.values()) {
+      const value = formValue(settings, f.name);
+      if (f.input.value === value) continue;
+      // Keep an edit in progress; everything else follows storage.
+      if (previous && f.input.value !== formValue(previous, f.name)) continue;
+      f.input.value = value;
+      clearMessage(f, ['invalid', 'check']);
+      if (f.name === 'languageCodes') {
+        const result = parseField('languageCodes', f.input.value);
+        showNote(f, result.ok ? result.note : undefined);
+      }
+    }
+    for (const [name, input] of switches) {
+      if (input.getAttribute('aria-disabled') !== 'true') input.checked = settings[name];
+    }
+    renderProfiles();
+    renderCount();
+    renderMic();
+    renderSetup();
+  }
+
   return {
-    load(settings) {
-      const previous = stored;
-      stored = settings;
-      for (const f of texts.values()) {
-        const value = formValue(settings, f.name);
-        if (f.input.value === value) continue;
-        // Keep an edit in progress; everything else follows storage.
-        if (previous && f.input.value !== formValue(previous, f.name)) continue;
-        f.input.value = value;
-        clearMessage(f, ['invalid', 'check']);
-        if (f.name === 'languageCodes') {
-          const result = parseField('languageCodes', f.input.value);
-          showNote(f, result.ok ? result.note : undefined);
-        }
-      }
-      for (const [name, input] of switches) {
-        if (input.getAttribute('aria-disabled') !== 'true') input.checked = settings[name];
-      }
-      renderProfiles();
-      renderCount();
-      renderMic();
-      renderSetup();
-    },
+    load,
     setMic(next) {
       permission = next;
       renderMic();

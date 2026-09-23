@@ -61,6 +61,7 @@ function page(settings: Settings, mic: MicPermission, overrides: Partial<Options
       verifyNotion: notion,
       openPermissionPage: () => {},
       openProfile: () => {},
+      share: { apply: async (next) => (current = next), download: () => {} },
       ...overrides,
     },
     { savedMs: 600_000 },
