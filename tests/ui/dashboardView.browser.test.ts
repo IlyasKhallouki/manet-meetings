@@ -106,6 +106,7 @@ function recorder() {
       settle.push({ resolve, reject });
     });
   let settingsOpened = 0;
+  const settingsFields: (string | undefined)[] = [];
   const handlers: DashboardHandlers = {
     stop: (id) => pending({ action: 'stop', id }),
     transcribe: (id, opts) => pending({ action: 'transcribe', id, ...(opts.force ? { force: true } : {}) }),
@@ -113,11 +114,12 @@ function recorder() {
     remove: (id) => pending({ action: 'remove', id }),
     setProfile: (id, profileId) => pending({ action: 'set-profile', id, profileId }),
     setAutoTranscribe: (on) => pending({ action: 'auto', id: '', on }),
-    openSettings: () => {
+    openSettings: (field) => {
       settingsOpened++;
+      settingsFields.push(field);
     },
   };
-  return { calls, settle, handlers, settingsOpened: () => settingsOpened };
+  return { calls, settle, handlers, settingsOpened: () => settingsOpened, settingsFields };
 }
 
 let root: HTMLElement;
@@ -324,6 +326,20 @@ describe('Meetings: status', () => {
     expect(text(cell('failed', 'status'))).toContain('Add a Notion token in Settings, then try again.');
     keyed('failed:settings')!.click();
     expect(r.settingsOpened()).toBe(1);
+    expect(r.settingsFields).toEqual(['notionToken']);
+  });
+
+  it('sends a missing profile database error to the Profiles group in Settings', () => {
+    const r = mountView(
+      recorder(),
+      data({
+        sessions: withSession('failed', {
+          error: 'Add the Team profile’s database in Settings, then try again.',
+        }),
+      }),
+    );
+    keyed('failed:settings')!.click();
+    expect(r.settingsFields).toEqual(['profiles']);
   });
 });
 

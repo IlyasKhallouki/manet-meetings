@@ -559,8 +559,10 @@ export function createDashboardView(
       text.slice(0, at),
       button('Settings', {
         kind: 'link',
-        // A rejected token is fixed in its field; other errors name what to change.
-        onClick: () => handlers.openSettings(/\btoken\b/i.test(text) ? 'notionToken' : undefined),
+        // A rejected token is fixed in its field; a missing profile database opens the
+        // Profiles group; other errors just open Settings.
+        onClick: () =>
+          handlers.openSettings(/\btoken\b/i.test(text) ? 'notionToken' : /profile’s database/.test(text) ? 'profiles' : undefined),
         attrs: { 'data-key': `${id}:settings` },
       }),
       text.slice(at + 'Settings'.length),
