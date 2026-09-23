@@ -214,9 +214,7 @@ export interface SpeakerInfo {
 export type SessionStatus =
   /** Audio + captions are being captured. */
   | 'recording'
-  /** Meeting ended, waiting for the Team | Personal prompt. */
-  | 'awaiting-route'
-  /** Routed; waiting for Transcribe (auto-transcribe off, or queued). */
+  /** Meeting ended; waiting for Transcribe (auto-transcribe off, or about to start). */
   | 'ready'
   /** Pipeline running in the offscreen document. See `stage`. */
   | 'processing'
@@ -252,18 +250,13 @@ export interface SessionMeta {
   durationMs?: number;
   status: SessionStatus;
   stage?: JobStage;
+  /** The Team | Personal destination meetings from before profiles stored. Only read, by sessionStore. */
   route?: Route;
   /**
    * The meeting's profile (a Settings.profiles id), chosen before recording. Meetings from
    * before profiles read their Team | Personal route here (sessionStore normalizes them).
    */
   profileId?: string;
-  /**
-   * When the default destination applies (the route alarm's time), epoch ms. Set only
-   * while that alarm is armed: absent while the routing prompt is paused and once the
-   * meeting has a destination.
-   */
-  routeDeadline?: number;
   /** `${meetCode}-${YYYY-MM-DD}` in local time of `startedAt`. */
   idempotencyKey: string;
   audio: {

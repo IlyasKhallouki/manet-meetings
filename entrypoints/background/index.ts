@@ -39,8 +39,6 @@ export default defineBackground(() => {
   browser.tabs.onUpdated.addListener((tabId, change) => {
     if (change.url) run(manager.onTabUrlChanged(tabId, change.url));
   });
-  // Closing a paused routing prompt re-arms the default route.
-  browser.windows.onRemoved.addListener((windowId) => run(manager.onWindowRemoved(windowId)));
   browser.alarms.onAlarm.addListener((alarm) => run(manager.onAlarm(alarm.name)));
   browser.commands.onCommand.addListener((command, tab) => {
     if (command === 'toggle-recording') run(manager.toggle(tab?.id));

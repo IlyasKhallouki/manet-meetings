@@ -417,5 +417,7 @@ export function setupHarness() {
         message: o.message ?? '',
       })),
     alarmNames: async () => (await fakeBrowser.alarms.getAll()).map((a) => a.name).sort(),
+    /** What each browser.windows.create call asked for. */
+    windowsCreated: () => windowsCreate.mock.calls.map(([info]) => info),
   };
 }

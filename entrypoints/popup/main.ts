@@ -118,6 +118,7 @@ async function refresh(): Promise<void> {
     defaultProfileId: settings.defaultProfileId,
     pickedProfileId: picked,
     geminiKeyMissing: !settings.geminiApiKey,
+    autoTranscribe: settings.autoTranscribe,
     recent: sessions,
     needsYou: sessions.filter(needsYou).length,
     shortcut: keys,

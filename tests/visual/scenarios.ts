@@ -39,7 +39,7 @@ export const SESSIONS: SessionMeta[] = [
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 276, bytes: 5.3 * MB, micIncluded: true },
   }),
   session('route', {
-    status: 'awaiting-route',
+    status: 'ready',
     meetingTitle: 'Point hebdo produit',
     startedAt: NOW - 70 * MIN,
     route: undefined,

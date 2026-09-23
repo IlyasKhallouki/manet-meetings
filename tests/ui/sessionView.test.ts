@@ -17,10 +17,8 @@ import {
   acceptsTranscribe,
   byline,
   canChangeProfile,
-  canChooseRoute,
   compareSessions,
   dayLabel,
-  defaultRouteText,
   errorText,
   failureKind,
   formatLength,
@@ -29,7 +27,6 @@ import {
   namesText,
   profileMissing,
   recordingCautions,
-  routeChoice,
   rowActions,
   runningFor,
   sessionRow,
@@ -67,7 +64,6 @@ function meta(patch: Partial<SessionMeta> = {}): SessionMeta {
 
 const ALL: SessionStatus[] = [
   'recording',
-  'awaiting-route',
   'ready',
   'processing',
   'processed',
@@ -89,7 +85,6 @@ function summary(status: SessionStatus, hasResult = false, patch: Partial<Sessio
 describe('rowActions: one next step and the ⋯ menu', () => {
   it('gives each status the next step and menu from the direction', () => {
     expect(summary('recording')).toEqual({ primary: 'Stop recording', menu: ['Change profile…', 'Delete…'] });
-    expect(summary('awaiting-route')).toEqual({ primary: 'Choose profile', menu: ['Delete…'] });
     expect(summary('ready')).toEqual({ primary: 'Transcribe', menu: ['Change profile…', 'Delete…'] });
     expect(summary('processing')).toEqual({ primary: null, menu: ['Delete…'] });
     expect(summary('saving', true)).toEqual({ primary: null, menu: ['Delete…'] });
@@ -232,14 +227,6 @@ describe('profiles on a row', () => {
     expect(statusView(m)).toEqual({ tone: 'caution', label: 'Choose a profile' });
   });
 
-  it('asks a meeting waiting for a destination to choose a profile, which transcribes it', () => {
-    expect(rowActions(meta({ status: 'awaiting-route' }), { hasResult: false }).primary).toMatchObject({
-      kind: 'choose-profile',
-      label: 'Choose profile',
-      then: 'transcribe',
-    });
-  });
-
   it('knows a deleted profile by the background’s words', () => {
     expect(profileMissing({ status: 'failed', error: problems.profileDeleted })).toBe(true);
     expect(profileMissing({ status: 'failed', error: problems.transcribingStopped })).toBe(false);
@@ -249,35 +236,6 @@ describe('profiles on a row', () => {
   it('allows a profile change only where the background accepts it', () => {
     expect(ALL.filter((status) => canChangeProfile(meta({ status })))).toEqual([
       'recording',
-      'awaiting-route',
-      'ready',
-      'processed',
-      'duplicate',
-      'empty',
-      'failed',
-    ]);
-  });
-});
-
-describe('routeChoice', () => {
-  it('asks for a destination only while the meeting waits for one', () => {
-    expect(ALL.map((status) => [status, routeChoice(meta({ status }))])).toEqual([
-      ['recording', null],
-      ['awaiting-route', 'required'],
-      ['ready', null],
-      ['processing', null],
-      ['processed', null],
-      ['saving', null],
-      ['saved', null],
-      ['duplicate', null],
-      ['empty', null],
-      ['failed', null],
-    ]);
-  });
-
-  it('allows a destination change only where the background accepts it', () => {
-    expect(ALL.filter((status) => canChooseRoute(meta({ status })))).toEqual([
-      'awaiting-route',
       'ready',
       'processed',
       'duplicate',
@@ -295,7 +253,6 @@ describe('statusView', () => {
     };
     expect(ALL.map((s) => view(s))).toEqual([
       'live: Recording',
-      'caution: Choose a profile',
       'neutral: Not transcribed',
       'working: Starting',
       'caution: Transcribed, not saved yet',
@@ -405,7 +362,7 @@ describe('statusView', () => {
         return [v.label, v.detail ?? ''];
       }),
     );
-    words.push(storageSummary([meta()], null, 7).text, defaultRouteText('Team', undefined));
+    words.push(storageSummary([meta()], null, 7).text);
     for (const w of words) expect(w).not.toMatch(/'/);
   });
 });
@@ -433,7 +390,7 @@ describe('dates and times', () => {
     expect(dayLabel(lateYesterday, Date.UTC(2026, 8, 19, 0, 30), { ...FMT, timeZone: 'Europe/Paris' })).toBe('Today');
   });
 
-  it('writes a day in a line as the popup and routing do: "Wed 16 Sep", never "Sept"', () => {
+  it('writes a day in a line as the popup does: "Wed 16 Sep", never "Sept"', () => {
     expect(shortDay(NOW - 3_600_000, NOW, FMT)).toBe('Today');
     expect(shortDay(NOW - 26 * 3_600_000, NOW, FMT)).toBe('Yesterday');
     expect(shortDay(NOW - 3 * 86_400_000, NOW, FMT)).toBe('Wed 16 Sep');
@@ -720,12 +677,5 @@ describe('a recording’s problems (recordingHealth → recordingCautions)', () 
         if (captions.detail) expect(captions.detail).toBe(popupSpeakers.detail);
       }
     }
-  });
-});
-
-describe('defaultRouteText', () => {
-  it('says where a meeting goes if nobody chooses, and when when it is known', () => {
-    expect(defaultRouteText('Team', Date.UTC(2026, 8, 19, 15, 34), FMT)).toBe('If you don’t choose, it goes to Team at 15:34.');
-    expect(defaultRouteText('Client meeting', undefined, FMT)).toBe('If you don’t choose, it goes to Client meeting.');
   });
 });

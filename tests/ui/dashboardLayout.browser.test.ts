@@ -12,7 +12,6 @@ const DATA: DashboardData = {
   missing: ['Notion integration token', 'Your name'],
   geminiKeyMissing: true,
   profiles: PROFILES,
-  defaultProfileId: 'team',
   autoTranscribe: true,
   retentionDays: 7,
   now: NOW,

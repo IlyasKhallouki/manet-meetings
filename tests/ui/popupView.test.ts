@@ -137,7 +137,7 @@ describe('popupState', () => {
   it('ignores a stale pointer whose session is gone or finished', () => {
     const tab = { id: 7, url: CALL };
     expect(popupState({ tab, active, session: null }).kind).toBe('idle');
-    expect(popupState({ tab, active, session: session({ status: 'awaiting-route' }) }).kind).toBe('idle');
+    expect(popupState({ tab, active, session: session({ status: 'ready' }) }).kind).toBe('idle');
   });
 });
 
@@ -365,7 +365,7 @@ describe('times', () => {
     expect(formatElapsed(-5)).toBe('00:00');
   });
 
-  it('writes dates, times and lengths exactly as Meetings and the routing window do (sessionView)', () => {
+  it('writes dates, times and lengths exactly as Meetings does (sessionView)', () => {
     const now = Date.UTC(2026, 8, 19, 15, 0);
     const row = (startedAt: number, opts: { locale: string; timeZone: string } = FMT) =>
       recentRow(session({ status: 'saved', startedAt, durationMs: 32 * 60_000, route: 'team' }), now, opts).details[0];
@@ -431,11 +431,6 @@ describe('recentRow', () => {
   });
 
   it('always has a status word, first on the second line (the glossary words)', () => {
-    expect(done({ status: 'awaiting-route', route: undefined })).toMatchObject({
-      tone: 'caution',
-      status: 'Choose Team or Personal',
-      details: [TODAY, '32 min'],
-    });
     expect(done({ status: 'processed' })).toMatchObject({
       tone: 'caution',
       status: 'Transcribed, not saved yet',

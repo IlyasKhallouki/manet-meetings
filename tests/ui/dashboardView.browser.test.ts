@@ -52,7 +52,16 @@ const SAMPLE: SessionMeta[] = [
     job: { id: 'j', kind: 'process', startedAt: T0 + 3_600_000 },
   }),
   meta('failed', { startedAt: T0 + 30_000, status: 'failed', error: 'Saving to Notion failed: rate limited' }),
-  meta('route', { startedAt: T0 + 120_000, status: 'awaiting-route', durationMs: 600_000, recovered: true, route: undefined }),
+  // Its profile was deleted since: it waits for another.
+  meta('choose', {
+    startedAt: T0 + 120_000,
+    status: 'failed',
+    error: 'This meeting’s profile was deleted. Choose another profile.',
+    profileId: 'gone',
+    durationMs: 600_000,
+    recovered: true,
+    route: undefined,
+  }),
   meta('dup', {
     startedAt: T0 - 172_800_000,
     status: 'duplicate',
@@ -74,7 +83,6 @@ function data(patch: Partial<DashboardData> = {}): DashboardData {
     missing: [],
     geminiKeyMissing: false,
     profiles: PROFILES,
-    defaultProfileId: 'team',
     autoTranscribe: true,
     retentionDays: 7,
     now: T0 + 3_600_000 + 65_000,
@@ -160,15 +168,15 @@ describe('Meetings: grouping and rows', () => {
   it('puts what needs you on top, then one group per day, newest first', () => {
     mountView();
     expect(sectionTitles()).toEqual(['Needs you', 'Today', 'Yesterday', 'Thursday 17 September']);
-    // Waiting for a destination; failed with no retry scheduled.
-    expect(sectionIds('Needs you')).toEqual(['route', 'failed']);
+    // Waiting for a profile; failed with no retry scheduled.
+    expect(sectionIds('Needs you')).toEqual(['choose', 'failed']);
     expect(sectionIds('Today')).toEqual(['rec', 'proc']);
     expect(sectionIds('Yesterday')).toEqual(['saved']);
     expect(sectionIds('Thursday 17 September')).toEqual(['dup']);
   });
 
   it('hides the Needs you group when nothing needs you', () => {
-    mountView(recorder(), data({ sessions: SAMPLE.filter((s) => s.id !== 'route' && s.id !== 'failed') }));
+    mountView(recorder(), data({ sessions: SAMPLE.filter((s) => s.id !== 'choose' && s.id !== 'failed') }));
     expect(sectionTitles()).toEqual(['Today', 'Yesterday', 'Thursday 17 September']);
   });
 
@@ -194,7 +202,7 @@ describe('Meetings: grouping and rows', () => {
     // Stacked, the clock moves beside "Recording" and the byline keeps the start time only.
     expect(text(root.querySelector('li[data-id="rec"] .meeting-clock'))).toBe('1:05');
     expect(text(root.querySelector('li[data-id="rec"] .meeting-when'))).toBe('09:00 ·');
-    expect(text(cell('route', 'meeting'))).toContain('Recovered after a restart');
+    expect(text(cell('choose', 'meeting'))).toContain('Recovered after a restart');
     // The meet code rides along while recording.
     expect(text(cell('rec', 'meeting'))).toContain('xyz-abcd-efg');
   });
@@ -202,11 +210,11 @@ describe('Meetings: grouping and rows', () => {
   it('dates a Needs you row that is not from today', () => {
     const old = meta('old', { startedAt: T0 - 86_400_000 - 3_600_000, status: 'processed', meetingTitle: 'Old one' });
     mountView(recorder(), data({ sessions: [...SAMPLE, old], resultIds: new Set(['old']) }));
-    expect(sectionIds('Needs you')).toEqual(['route', 'failed', 'old']);
+    expect(sectionIds('Needs you')).toEqual(['choose', 'failed', 'old']);
     // Wide: the day under the time; stacked: before it. The same words as the popup.
     expect(text(cell('old', 'time'))).toBe('07:00 Yesterday');
     expect(text(root.querySelector('li[data-id="old"] .meeting-when'))).toMatch(/^Yesterday 07:00 ·/);
-    expect(text(cell('route', 'time'))).toBe('08:02 Today');
+    expect(text(cell('choose', 'time'))).toBe('08:02 Today');
     const older = meta('older', { startedAt: T0 - 3 * 86_400_000, status: 'processed', meetingTitle: 'Older' });
     view!.update(data({ sessions: [...SAMPLE, older], resultIds: new Set(['older']) }));
     expect(text(cell('older', 'time'))).toBe('08:00 Wed 16 Sep');
@@ -267,7 +275,7 @@ describe('Meetings: status', () => {
     expect(status).toContain('Gemini unreachable: HTTP 503.');
     expect(status).not.toContain('11:40');
     expect(text(primary('failed'))).toBe('Try now');
-    expect(sectionIds('Needs you')).toEqual(['route']);
+    expect(sectionIds('Needs you')).toEqual(['choose']);
   });
 
   it('warns on a recording whose captions or audio are not coming through, with ▲', () => {
@@ -308,29 +316,6 @@ describe('Meetings: status', () => {
     expect(text(cell('rec', 'status'))).toBe('Recording 1:05');
   });
 
-  it('says where a meeting waiting for a destination goes if nobody chooses, and when', () => {
-    // The background writes the default's time on the meeting (SessionMeta.routeDeadline).
-    const waiting = (deadline?: number) =>
-      SAMPLE.map((s) => (s.id === 'route' ? { ...s, routeDeadline: deadline } : s));
-    mountView(recorder(), data({ defaultProfileId: 'team', sessions: waiting(T0 + 3_600_000 + 100_000) }));
-    const note = () => row('route').querySelector('[data-role="route-default"]');
-    expect(text(note())).toBe('If you don’t choose, it goes to Team at 09:01.');
-    // Paused in the routing window: no deadline, still the default.
-    view!.update(data({ defaultProfileId: 'personal', sessions: waiting(undefined) }));
-    expect(text(note())).toBe('If you don’t choose, it goes to Personal.');
-    // Resumed: a new countdown.
-    view!.update(data({ defaultProfileId: 'personal', sessions: waiting(T0 + 3_600_000 + 220_000) }));
-    expect(text(note())).toBe('If you don’t choose, it goes to Personal at 09:03.');
-    // The default profile's own name.
-    const profiles = [...PROFILES, { id: 'client', name: 'Client meeting' }];
-    view!.update(data({ profiles, defaultProfileId: 'client', sessions: waiting(undefined) }));
-    expect(text(note())).toBe('If you don’t choose, it goes to Client meeting.');
-    // Only while nothing is chosen.
-    expect(shown(row('saved').querySelector('[data-role="route-default"]'))).toBe(false);
-    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'team' }), defaultProfileId: 'team' }));
-    expect(shown(note())).toBe(false);
-  });
-
   it('turns "Settings" in an error into a way there', () => {
     const r = mountView(
       recorder(),
@@ -351,7 +336,7 @@ describe('Meetings: the next step', () => {
     mountView();
     const label = (id: string) => (shown(primary(id)) ? text(primary(id)) : null);
     expect(label('rec')).toBe('Stop recording');
-    expect(label('route')).toBe('Choose profile');
+    expect(label('choose')).toBe('Choose profile');
     expect(label('proc')).toBeNull();
     expect(label('failed')).toBe('Try again');
     expect(label('saved')).toBeNull();
@@ -424,11 +409,10 @@ describe('Meetings: the next step', () => {
     mountView();
     const button = primary('rec');
     button.focus();
-    // Stopped elsewhere: the row moves to Needs you, and Stop becomes Choose profile.
-    view!.update(data({ sessions: withSession('rec', { status: 'awaiting-route', durationMs: 130_000 }) }));
-    expect(sectionIds('Needs you')).toContain('rec');
+    // Stopped elsewhere, with auto-transcribe off: Stop becomes Transcribe.
+    view!.update(data({ sessions: withSession('rec', { status: 'ready', durationMs: 130_000 }) }));
     expect(primary('rec')).toBe(button);
-    expect(text(button)).toBe('Choose profile');
+    expect(text(button)).toBe('Transcribe');
     expect(document.activeElement).toBe(button);
   });
 });
@@ -555,24 +539,6 @@ describe('Meetings: profiles', () => {
     expect(r.calls[1]).toEqual({ action: 'transcribe', id: 'f' });
   });
 
-  it('ends the wait for a destination: the profile, then the transcription', async () => {
-    const r = mountView();
-    const button = primary('route');
-    button.focus();
-    key(button, 'ArrowDown');
-    expect(menuOpen()).toBe(true);
-    expect(checks()).toEqual([
-      ['Team', 'true'],
-      ['Personal', 'false'],
-    ]);
-    // Its own profile still carries it on.
-    menuEl().querySelector<HTMLElement>('[data-key="route:profile-team"]')!.click();
-    expect(r.calls).toEqual([{ action: 'set-profile', id: 'route', profileId: 'team' }]);
-    r.settle[0]!.resolve();
-    await flush();
-    expect(r.calls[1]).toEqual({ action: 'transcribe', id: 'route' });
-  });
-
   it('closes the profile menu when it goes stale', () => {
     mountView(recorder(), data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles }));
     const button = keyed('r:profile') as HTMLButtonElement;
@@ -604,14 +570,14 @@ describe('Meetings: profiles', () => {
 
   it('leaves no menu state on a next step that stopped being Choose profile', () => {
     mountView();
-    const button = primary('route');
+    const button = primary('choose');
     button.click();
     expect(menuOpen()).toBe(true);
     expect(button.getAttribute('aria-expanded')).toBe('true');
-    // Routed in the window meanwhile: the menu closes, and Transcribe is a plain button.
-    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'team' }) }));
+    // A profile chosen elsewhere meanwhile: the menu closes, and Transcribe is a plain button.
+    view!.update(data({ sessions: withSession('choose', { status: 'ready', profileId: 'team', error: undefined }) }));
     expect(menuOpen()).toBe(false);
-    expect(primary('route')).toBe(button);
+    expect(primary('choose')).toBe(button);
     expect(text(button)).toBe('Transcribe');
     expect(button.hasAttribute('aria-expanded')).toBe(false);
     expect(button.hasAttribute('aria-haspopup')).toBe(false);
@@ -683,11 +649,11 @@ describe('Meetings: ⋯ menu', () => {
 
   it('closes when that row’s actions change, returning focus to ⋯', () => {
     mountView();
-    more('route').click();
+    more('choose').click();
     expect(document.activeElement).toBe(menuItem('delete'));
-    view!.update(data({ sessions: withSession('route', { status: 'processing', route: 'team' }) }));
+    view!.update(data({ sessions: withSession('choose', { status: 'processing', profileId: 'team', error: undefined }) }));
     expect(menuOpen()).toBe(false);
-    expect(document.activeElement).toBe(more('route'));
+    expect(document.activeElement).toBe(more('choose'));
   });
 
   it('says why Delete… is unavailable while a job runs', () => {
@@ -817,12 +783,12 @@ describe('Meetings: inline confirms', () => {
 
   it('drops a confirmation when a job starts meanwhile', () => {
     mountView();
-    more('route').click();
+    more('choose').click();
     menuItem('delete').click();
-    view!.update(data({ sessions: withSession('route', { status: 'processing', route: 'team' }) }));
-    expect(keyed('route:cancel')).toBeNull();
-    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'team' }) }));
-    expect(keyed('route:cancel')).toBeNull();
+    view!.update(data({ sessions: withSession('choose', { status: 'processing', profileId: 'team', error: undefined }) }));
+    expect(keyed('choose:cancel')).toBeNull();
+    view!.update(data({ sessions: withSession('choose', { status: 'ready', profileId: 'team', error: undefined }) }));
+    expect(keyed('choose:cancel')).toBeNull();
   });
 });
 
@@ -866,7 +832,7 @@ describe('Meetings: page', () => {
 
   it('ends with where the audio is and how long it stays', () => {
     mountView();
-    // saved 3 MB (disk) + rec, proc, failed, route, dup 2 MB each.
+    // saved 3 MB (disk) + rec, proc, failed, choose, dup 2 MB each.
     expect(text(root.querySelector('[data-role="storage"]'))).toBe(
       'Audio on this computer: 13.0 MB for 6 meetings. It’s deleted 7 days after a meeting is saved to Notion.',
     );

@@ -243,10 +243,6 @@
   color: var(--label-2);
 }
 
-.meeting-route-note {
-  margin-block-start: var(--s1);
-}
-
 .meeting-step {
   display: block;
 }

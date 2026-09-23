@@ -8,8 +8,8 @@
  *                   edge effect: transparent at rest, material once content is under it)
  *   2. .popup-foot  the popup's bottom toolbar, while the popup actually scrolls
  *   3. .menu        the ⋯ popover (top layer, thicker fill: it is text-heavy)
- * Glass is never faked on rows, cards, callouts, fields, page backgrounds, the routing
- * window or the microphone page — nothing scrolls behind those, so they are opaque.
+ * Glass is never faked on rows, cards, callouts, fields, page backgrounds or the
+ * microphone page — nothing scrolls behind those, so they are opaque.
  *
  * The UX is unchanged: --live red always and only means "recording right now", needs-you
  * is amber with a ▲, saved is green with a ✓, working is the ◐ tint, and blue is
@@ -20,7 +20,6 @@
  *   css/popup.css        body.popup          — owned by the popup
  *   css/meetings.css     body.page-meetings  — owned by the Meetings page
  *   css/settings.css     body.page-settings  — owned by Settings
- *   css/routing.css      body.routing        — owned by the routing window
  *   css/permission.css   body.page-permission — owned by the microphone page
  *   Every page loads every file: scope surface rules under the surface's body class.
  *
@@ -99,7 +98,7 @@
  * there for rules that need them.
  *   .t-large-title 30/36 700  page title at rest              --t-large-title (= --t-title1)
  *   .t-title2      21/26 600  microphone-page headline        --t-title2
- *   .t-title3      17/22 600  popup state headline, routing   --t-title3
+ *   .t-title3      17/22 600  popup state headline            --t-title3
  *   .t-headline    15/20 600  row titles, field labels        --t-headline
  *   .t-body        15/20 400  values, list text (body default) --t-body
  *   .t-callout     14/19 400  bylines (the roll), list detail --t-callout
@@ -185,7 +184,6 @@
  *       unsupported, or under reduced motion, it is a plain sticky material bar.
  *     body.page-permission > main#app.page-body — 560, no bar, opaque
  *     body.popup > #app.popup-root (360 px) … nav.popup-foot (glass while it scrolls)
- *     body.routing > main#app.routing-root (opaque: nothing sits behind the window)
  */
 
 @layer tokens, reset, base, components, shells, surface;
@@ -193,7 +191,6 @@
 @import url('./css/popup.css') layer(surface);
 @import url('./css/meetings.css') layer(surface);
 @import url('./css/settings.css') layer(surface);
-@import url('./css/routing.css') layer(surface);
 @import url('./css/permission.css') layer(surface);
 
 /* Inter — SIL Open Font License 1.1 (fonts/OFL.txt). Variable weight 400–700, one file per
@@ -313,7 +310,7 @@
     --h-plain: 30px; /* borderless text buttons */
     --h-icon: 32px; /* ⋯ */
     --h-hero: 48px; /* popup hero capsule */
-    --h-choice: 56px; /* routing Team | Personal */
+    --h-choice: 56px; /* large segmented control */
     --h-large: var(--h-choice); /* legacy name */
     --h-row: 44px; /* minimum list row */
     --h-seg: 34px; /* segmented control */
@@ -333,7 +330,7 @@
     --t-title1: var(--t-large-title); /* legacy name */
     --t-bar-title: 600 1.0625rem/1.375rem var(--font); /* 17/22 — title inside the glass bar */
     --t-title2: 600 1.3125rem/1.625rem var(--font); /* 21/26 — permission headline */
-    --t-title3: 600 1.0625rem/1.375rem var(--font); /* 17/22 — popup headline, routing title */
+    --t-title3: 600 1.0625rem/1.375rem var(--font); /* 17/22 — popup headline */
     --t-headline: 600 0.9375rem/1.25rem var(--font); /* 15/20 — row titles, field labels */
     --t-body: 400 0.9375rem/1.25rem var(--font); /* 15/20 — values, list text */
     --t-callout: 400 0.875rem/1.1875rem var(--font); /* 14/19 — the roll, list detail */
@@ -711,7 +708,7 @@
     border: 0;
   }
 
-  /* Decoration that only exists as motion (the routing drain bar). */
+  /* Decoration that only exists as motion. */
   @media (prefers-reduced-motion: reduce) {
     .motion-only {
       display: none;
@@ -1319,7 +1316,7 @@
   }
 
   .segmented.large {
-    inline-size: auto; /* fills its container (routing: two equal halves) */
+    inline-size: auto; /* fills its container (two options: equal halves) */
   }
 
   .segmented.large .segment {
@@ -2214,17 +2211,6 @@
     .popup-foot::before {
       display: none;
     }
-  }
-
-  /* ---- Routing window: opaque, nothing sits behind a 380 × 280 window ---------------- */
-  body.routing {
-    background: var(--surface);
-  }
-
-  .routing-root {
-    display: flex;
-    flex-direction: column;
-    padding: 18px var(--s5) var(--s4);
   }
 
   /* Chromium forces box-shadow to none here, so every boundary has to be a real border —

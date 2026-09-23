@@ -76,6 +76,7 @@ function model(patch: Partial<PopupModel> = {}): PopupModel {
     ],
     defaultProfileId: 'team',
     geminiKeyMissing: false,
+    autoTranscribe: true,
     recent: [],
     needsYou: 0,
     shortcut: 'Alt+Shift+R',
@@ -192,7 +193,10 @@ describe('popup: the states', () => {
     expect(text(root.querySelector('.state-sub'))).toBe('Weekly sync · abc-defg-hij');
     expect(hero().classList.contains('live')).toBe(true);
     expect(text(hero())).toBe('Stop recording');
-    expect(text(root.querySelector('.hero-hint'))).toContain('You’ll choose Team or Personal next.');
+    expect(text(root.querySelector('.hero-hint'))).toContain('It’s transcribed when the call ends.');
+    v.update(model({ state: recording(), autoTranscribe: false }), T0 + 65_000);
+    expect(text(root.querySelector('.hero-hint'))).toContain('You’ll find it in Meetings.');
+    v.update(model({ state: recording() }), T0 + 65_000);
 
     // A clock tick touches only the clock: Stop is the same element, the sub line too.
     const stop = hero();
@@ -265,7 +269,7 @@ describe('popup: Record and Stop', () => {
     expect(text(record)).toBe('Stopping…');
   });
 
-  it('after Stop, says where the choice happens and guards the Record that appears', async () => {
+  it('after Stop, guards the Record that appears, and asks nothing more', async () => {
     const h = handlers();
     const v = view(h.handlers);
     v.update(model({ state: recording() }), T0 + 60_000);
@@ -273,14 +277,13 @@ describe('popup: Record and Stop', () => {
     h.settle[0]!.resolve();
     await flush();
     v.update(model({ state: onCall }), T0 + 61_000);
-    expect(text(root.querySelector('[data-role="stopped"]'))).toBe('Stopped. Choose Team or Personal in the window that opened.');
+    expect(root.querySelector('[data-role="stopped"]')).toBeNull();
     expect(text(hero())).toBe('Record this call');
     hero().click();
     expect(h.calls).toEqual(['stop:s1']);
     time += HERO_GUARD_MS;
     hero().click();
     expect(h.calls).toEqual(['stop:s1', 'record:7:team']);
-    expect(root.querySelector('[data-role="stopped"]')).toBeNull();
   });
 
   it('announces the change of state, not every update', () => {

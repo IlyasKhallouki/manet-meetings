@@ -752,7 +752,7 @@ export function createOptionsView(
         switchField(
           'autoTranscribe',
           'Transcribe automatically',
-          'Each meeting is transcribed and saved to Notion after you choose Team or Personal.',
+          'Each meeting is transcribed and saved to Notion when the call ends.',
         ),
         textField('retentionDays', 'Keep audio', days, {
           row: [days, daysUnit],

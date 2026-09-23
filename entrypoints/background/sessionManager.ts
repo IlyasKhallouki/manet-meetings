@@ -1,6 +1,6 @@
 /**
  * Session lifecycle in the background service worker: start → record → finalize →
- * route → process → save, plus recovery after restarts and audio retention.
+ * process → save, plus recovery after restarts and audio retention.
  *
  * Everything that must outlive the worker is in storage (sessions, captions, results,
  * the active-recording pointer, alarms). Jobs run in the offscreen document, which
@@ -44,7 +44,6 @@ import {
   type ExistingMeeting,
   type JobStage,
   type ProcessOutcome,
-  type Route,
   type SaveOutcome,
   type SessionMeta,
   type SessionResult,
@@ -58,8 +57,6 @@ import type { OffscreenDocument } from './offscreenDocument';
 
 /** The recorder's chunk length; recordingHealth calls three missing chunks a stall. */
 const TIMESLICE_MS = AUDIO_CHUNK_MS;
-const ROUTE_DELAY_MS = 2 * 60 * 1000;
-const ROUTE_ALARM_PREFIX = 'route:';
 const RETRY_ALARM_PREFIX = 'retry:';
 const RETENTION_ALARM = 'retention';
 const RETENTION_PERIOD_MINUTES = 6 * 60;
@@ -78,31 +75,18 @@ const ACCEPT_TIMEOUT_MS = 30_000;
 const SCANNED_KEY = 'bootScanned';
 /** storage.session: what the content script last reported for a tab. */
 const TAB_PREFIX = 'meetTab:';
-/** storage.session: the routing prompt's window and whether its countdown is paused, per session. */
-const ROUTING_PREFIX = 'routing:';
 const NOTIFICATION_PREFIX = 'manet:';
 /** `<meetCode>_<YYYYMMDDTHHMMSSZ>`, as built by util/ids sessionId(). */
 const SESSION_DIR = /^([a-z]{3}-[a-z]{4}-[a-z]{3})_(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
 
-/**
- * `meta` with its routeDeadline (the route alarm's time, which pages show as "If you don’t
- * choose, it goes to Team at 15:34") set to `at`, or removed when undefined; `meta` itself
- * if unchanged.
- */
-function withRouteDeadline(meta: SessionMeta, at: number | undefined): SessionMeta {
-  if (meta.routeDeadline === at) return meta;
-  return { ...meta, routeDeadline: at };
-}
-
 /** 'duplicate' and 'empty' can run again: "Transcribe anyway", or audio that holds more. */
-const TRANSCRIBABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
+const TRANSCRIBABLE = new Set<SessionStatus>(['ready', 'failed', 'processed', 'empty', 'duplicate']);
 /** Only with a stored result. */
 const SAVABLE = new Set<SessionStatus>(['processed', 'failed', 'duplicate']);
-const REROUTABLE = new Set<SessionStatus>(['ready', 'failed', 'processed', 'empty', 'duplicate']);
 /** The session's job is in the offscreen document. */
 const RUNNING = new Set<SessionStatus>(['processing', 'saving']);
 /** A meeting's profile can change until it is in Notion or on its way there. */
-const PROFILE_CHANGEABLE = new Set<SessionStatus>(['recording', 'awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
+const PROFILE_CHANGEABLE = new Set<SessionStatus>(['recording', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
 
 export type SendToOffscreen = <K extends keyof OffscreenProtocol & string>(
   type: K,
@@ -140,8 +124,6 @@ export interface SessionManagerDeps {
   setActionState(state: ActionState): Promise<void>;
   /** The toggle-recording shortcut as Chrome shows it ("Alt+Shift+R"), or null when unset. Never throws. */
   shortcut(): Promise<string | null>;
-  /** Opens the Team | Personal prompt. Resolves to its window id, when known. */
-  openRoutingPrompt(sessionId: string): Promise<number | undefined>;
   notify(sessionId: string, title: string, message: string): Promise<void>;
   alarms: {
     create(name: string, info: { when?: number; delayInMinutes?: number; periodInMinutes?: number }): Promise<void>;
@@ -166,13 +148,6 @@ export interface SessionManager {
   stop(sessionId: string): Promise<void>;
   /** Keyboard command: stops the current recording, or starts one on `tabId` / the active tab. */
   toggle(tabId?: number): Promise<void>;
-  route(sessionId: string, route: Route): Promise<void>;
-  /**
-   * The routing prompt paused (`hold`) or resumed its countdown. Paused, the default route
-   * is not applied until the person resumes or closes the prompt, which re-arms the
-   * 2-minute default. `windowId` is the prompt's window, when the message came from one.
-   */
-  routeHold(sessionId: string, hold: boolean, windowId?: number): Promise<void>;
   /** Sets the meeting's profile. The next transcription or save uses it. */
   setProfile(sessionId: string, profileId: string): Promise<void>;
   /**
@@ -199,8 +174,7 @@ export interface SessionManager {
   onJobDone(req: Req<'offscreen/job-done'>): Promise<void>;
   onTabRemoved(tabId: number): Promise<void>;
   onTabUrlChanged(tabId: number, url: string): Promise<void>;
-  /** A closed routing prompt that was paused re-arms the default route. */
-  onWindowRemoved(windowId: number): Promise<void>;
+  /** Alarms it doesn't know (an older version's route alarms) are ignored. */
   onAlarm(name: string): Promise<void>;
   onNotificationClicked(notificationId: string): Promise<void>;
   /**
@@ -222,12 +196,6 @@ type EndCause = { kind: 'ended' } | { kind: 'recorder-stopped'; counts: Counts; 
 interface MeetTab {
   meetCode: string;
   title?: string;
-}
-
-interface RoutingPrompt {
-  windowId?: number;
-  /** The person paused the countdown: no default-route alarm is armed. */
-  held?: boolean;
 }
 
 type Job = NonNullable<SessionMeta['job']>;
@@ -263,10 +231,6 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): P
 function withCounts(audio: SessionMeta['audio'], counts: Counts | null): SessionMeta['audio'] {
   if (!counts || counts.chunkCount < audio.chunkCount) return audio;
   return { ...audio, chunkCount: counts.chunkCount, bytes: counts.bytes };
-}
-
-function routeAlarm(sessionId: string): string {
-  return `${ROUTE_ALARM_PREFIX}${sessionId}`;
 }
 
 function retryAlarm(sessionId: string): string {
@@ -603,96 +567,22 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (m.status !== 'recording') return m;
       ended = true;
       const audio = withCounts(m.audio, counts);
-      const next: SessionMeta = {
+      return {
         ...m,
-        status: 'awaiting-route',
+        status: 'ready',
         endedAt,
         durationMs: Math.max(0, endedAt - m.startedAt),
         audio: recorderError && !audio.error ? { ...audio, error: recorderError } : audio,
       };
-      // With the status, so pages never see the meeting waiting without its deadline.
-      return withRouteDeadline(next, endedAt + ROUTE_DELAY_MS);
     });
-    if (ended) await askForRoute(id, endedAt + ROUTE_DELAY_MS);
+    // Outside the lifecycle chain: the next recording can start while this one transcribes.
+    if (ended) track(autoTranscribe(id));
   }
 
-  /**
-   * The alarm first: it routes the meeting (to the default) even if the prompt never shows.
-   * A new prompt starts a new countdown, so an earlier pause no longer applies.
-   */
-  async function askForRoute(id: string, when: number): Promise<void> {
-    await armRouteAlarm(id, when);
-    await forgetRouting(id);
-    try {
-      const windowId = await deps.openRoutingPrompt(id);
-      if (windowId !== undefined) await setRouting(id, { windowId });
-    } catch (err) {
-      warn('Could not open the routing prompt:', err);
-    }
-  }
-
-  /** Arms the default route for a meeting still waiting for one, and writes its time on the meta. */
-  async function armRouteAlarm(id: string, when: number): Promise<void> {
-    await deps.alarms.create(routeAlarm(id), { when });
-    await updateSession(id, (m) => (m.status === 'awaiting-route' ? withRouteDeadline(m, when) : m));
-  }
-
-  /** No default route any more (paused, routed, transcribed): no alarm, no deadline on the meta. */
-  async function clearRouteAlarm(id: string): Promise<void> {
-    await deps.alarms.clear(routeAlarm(id));
-    await updateSession(id, (m) => withRouteDeadline(m, undefined));
-  }
-
-  // -------------------------------------------------------------------------
-  // Routing prompt: pause and resume the default route
-  // -------------------------------------------------------------------------
-
-  async function routing(id: string): Promise<RoutingPrompt | null> {
-    const key = `${ROUTING_PREFIX}${id}`;
-    return ((await browser.storage.session.get(key))[key] as RoutingPrompt | undefined) ?? null;
-  }
-
-  async function setRouting(id: string, prompt: RoutingPrompt): Promise<void> {
-    await browser.storage.session.set({ [`${ROUTING_PREFIX}${id}`]: prompt });
-  }
-
-  async function forgetRouting(id: string): Promise<void> {
-    await browser.storage.session.remove(`${ROUTING_PREFIX}${id}`);
-  }
-
-  async function isHeld(id: string): Promise<boolean> {
-    return (await routing(id))?.held === true;
-  }
-
-  /** Pause and resume for one session happen one at a time, in arrival order. */
-  const routingOps = new Map<string, Promise<unknown>>();
-  function routingOp<T>(id: string, fn: () => Promise<T>): Promise<T> {
-    const run = (routingOps.get(id) ?? Promise.resolve()).then(fn);
-    const tail = run.catch(() => undefined);
-    routingOps.set(id, tail);
-    void tail.then(() => {
-      if (routingOps.get(id) === tail) routingOps.delete(id);
-    });
-    return run;
-  }
-
-  async function holdRoute(id: string, windowId: number | undefined): Promise<void> {
-    if ((await getSession(id))?.status !== 'awaiting-route') return;
-    await clearRouteAlarm(id);
-    const prompt = await routing(id);
-    await setRouting(id, { windowId: prompt?.windowId ?? windowId, held: true });
-  }
-
-  /** Re-arms the full default-route delay for a paused session still waiting for a route. */
-  async function resumeRoute(id: string, windowOpen: boolean): Promise<void> {
-    const prompt = await routing(id);
-    if (!prompt?.held) {
-      if (!windowOpen) await forgetRouting(id);
-      return;
-    }
-    if ((await getSession(id))?.status === 'awaiting-route') await armRouteAlarm(id, deps.now() + ROUTE_DELAY_MS);
-    if (windowOpen) await setRouting(id, prompt.windowId === undefined ? {} : { windowId: prompt.windowId });
-    else await forgetRouting(id);
+  /** With auto-transcribe on, a meeting that just ended is transcribed and saved. */
+  async function autoTranscribe(id: string): Promise<void> {
+    if (!(await deps.getSettings()).autoTranscribe) return;
+    await transcribeNow(id).catch((err: unknown) => warn('Auto-transcribe failed:', err));
   }
 
   /**
@@ -772,42 +662,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   // -------------------------------------------------------------------------
-  // Routing and jobs
+  // Jobs
   // -------------------------------------------------------------------------
-
-  async function applyRoute(id: string, route: Route, explicit: boolean): Promise<void> {
-    // The route sets the profile too (until the routing window goes).
-    const current = await getSession(id);
-    if (current && (current.status === 'awaiting-route' || (explicit && REROUTABLE.has(current.status)))) {
-      await stampLegacyResult(current, route);
-    }
-    let routed = false;
-    const meta = await updateSession(id, (m) => {
-      if (m.status === 'awaiting-route') {
-        routed = true;
-        return withRouteDeadline({ ...m, route, profileId: route, status: 'ready' }, undefined);
-      }
-      if (!explicit) return m;
-      if (REROUTABLE.has(m.status)) return { ...m, route, profileId: route };
-      throw new MeetingProblem(problems.cannotRoute(m.status));
-    });
-    if (!meta) {
-      if (explicit) throw new MeetingProblem(problems.deleted);
-      return;
-    }
-    if (routed || explicit) {
-      // A choice ends the prompt's business: no alarm, no deadline, no pause, no window to watch.
-      await clearRouteAlarm(id);
-      await forgetRouting(id);
-    }
-    if (routed && (await deps.getSettings()).autoTranscribe) {
-      await transcribeNow(id).catch((err: unknown) => warn('Auto-transcribe failed:', err));
-    }
-  }
-
-  async function applyDefaultRoute(id: string): Promise<void> {
-    await applyRoute(id, (await deps.getSettings()).defaultRoute, false);
-  }
 
   /** Applies `update` only while `jobId` is the session's job. Null when it is not (any more). */
   async function updateJob(id: string, jobId: string, update: (m: SessionMeta) => SessionMeta): Promise<SessionMeta | null> {
@@ -926,7 +782,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!meta) throw new MeetingProblem(problems.deleted);
     if (RUNNING.has(meta.status)) return;
     if (!TRANSCRIBABLE.has(meta.status)) throw new MeetingProblem(problems.cannotTranscribe(meta.status));
-    await clearRouteAlarm(id);
     await deps.alarms.clear(retryAlarm(id));
     const settings = await deps.getSettings();
     const profile = profileForSession(settings, meta.profileId);
@@ -934,7 +789,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await markProfileMissing(id, 'process');
       return;
     }
-    const route = meta.route ?? settings.defaultRoute;
     const missing = missingForSave(settings, profile);
     if (missing.length > 0) {
       await markMissingSettings(id, missing, 'process');
@@ -952,7 +806,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const next: SessionMeta = {
         ...m,
         status: 'processing',
-        route,
         profileId: profile.id,
         stage: undefined,
         error: undefined,
@@ -993,7 +846,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await markProfileMissing(id, 'save');
       return;
     }
-    const route = meta.route ?? settings.defaultRoute;
     const missing = missingForSave(settings, profile);
     if (missing.length > 0) {
       await markMissingSettings(id, missing, 'save');
@@ -1016,7 +868,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         ...m,
         status: 'saving',
         stage: 'saving',
-        route,
         error: undefined,
         job,
         retryAt: undefined,
@@ -1198,9 +1049,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         if (await recorderAlive(id)) throw new MeetingProblem(problems.couldNotStop);
       }
       if (active?.sessionId === id) await releaseActive(active);
-      await deps.alarms.clear(routeAlarm(id));
       await deps.alarms.clear(retryAlarm(id));
-      await forgetRouting(id);
       // Audio goes first: an audio directory without a session would be adopted at next boot.
       await deps.offscreen.ensure();
       await deps.offscreen.send('offscreen/audio-delete', { sessionId: id });
@@ -1252,8 +1101,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /**
-   * Ends recordings that died with the worker or the browser, and asks where each goes:
-   * routing is the user's call even after a crash. Returns the ids it ended.
+   * Ends recordings that died with the worker or the browser: each is ready to transcribe,
+   * as if its call had ended. Returns the ids it ended.
    */
   async function recoverRecordings(docOpen: boolean): Promise<string[]> {
     // Sessions being started or finalized by this worker are not orphans.
@@ -1267,7 +1116,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const recovered: string[] = [];
     let activeMeta: SessionMeta | null = null;
-    const now = deps.now();
     for (const s of recording) {
       if (active?.sessionId === s.id && (await isStillRecording(s, active, running))) {
         activeMeta = s;
@@ -1278,13 +1126,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await updateSession(s.id, (m) => {
         if (m.status !== 'recording') return m;
         changed = true;
-        const durationMs = Math.max(0, endedAt - m.startedAt);
-        const next: SessionMeta = { ...m, status: 'awaiting-route', recovered: true, endedAt, durationMs };
-        return withRouteDeadline(next, now + ROUTE_DELAY_MS);
+        return { ...m, status: 'ready', recovered: true, endedAt, durationMs: Math.max(0, endedAt - m.startedAt) };
       });
-      if (!changed) continue;
-      recovered.push(s.id);
-      await askForRoute(s.id, now + ROUTE_DELAY_MS);
+      if (changed) recovered.push(s.id);
     }
 
     if (active && !busy(active.sessionId)) {
@@ -1347,21 +1191,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /**
-   * Route and retry alarms, and the routing prompt window, can be lost with the browser.
-   * Within a browser session alarms persist, so a missing one has just fired (its event
-   * is on its way): apply what it would.
+   * Retry alarms can be lost with the browser: a missing one is armed again, or, when its
+   * time has passed, the retry runs now.
    */
-  async function restoreAlarms(newBrowserSession: boolean): Promise<void> {
+  async function restoreAlarms(): Promise<void> {
     const now = deps.now();
     for (const s of await listSessions()) {
       if (finalizing.has(s.id)) continue;
-      // A paused prompt has no alarm on purpose (storage.session forgets pauses with the browser).
-      if (s.status === 'awaiting-route' && !(await deps.alarms.exists(routeAlarm(s.id))) && !(await isHeld(s.id))) {
-        const due = (s.endedAt ?? now) + ROUTE_DELAY_MS;
-        if (!newBrowserSession && due <= now) await applyDefaultRoute(s.id);
-        // Lost, or never armed (the worker died while ending it): the prompt may never have shown.
-        else await askForRoute(s.id, now + ROUTE_DELAY_MS);
-      } else if (s.status === 'failed' && s.retryAt !== undefined && !(await deps.alarms.exists(retryAlarm(s.id)))) {
+      if (s.status === 'failed' && s.retryAt !== undefined && !(await deps.alarms.exists(retryAlarm(s.id)))) {
         if (s.retryAt > now) await deps.alarms.create(retryAlarm(s.id), { when: s.retryAt });
         else track(retryTranscription(s.id));
       }
@@ -1397,7 +1234,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         endedAt: parsed.startedAt + durationMs,
         durationMs,
         status: 'ready',
-        route: settings.defaultRoute,
+        profileId: defaultProfile(settings).id,
         recovered: true,
         idempotencyKey: idempotencyKey(parsed.meetCode, parsed.startedAt),
         audio: { mimeType: 'audio/webm', ...counts, micIncluded: false },
@@ -1420,7 +1257,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const recovered = await recoverRecordings(docOpen);
     const interrupted = await resetInterruptedJobs(docOpen);
-    await restoreAlarms(!scanned);
+    await restoreAlarms();
     await ensureRetentionAlarm();
     await sweep();
     if (full) {
@@ -1428,6 +1265,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       fullBootDone = true;
       await browser.storage.session.set({ [SCANNED_KEY]: true });
     }
+    // After the scan, which may have found more of their audio.
+    for (const id of recovered) track(autoTranscribe(id));
     if (settings.autoTranscribe) {
       for (const job of interrupted) {
         track(job.kind === 'process' ? transcribeNow(job.id, { attempt: job.attempt }) : saveNow(job.id));
@@ -1486,18 +1325,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (target === null) return;
       const res = await start(target);
       if (!res.ok) await notify('start', notes.couldNotStart(res.error));
-    },
-
-    route(sessionId, route) {
-      return request(`save the meeting to ${route}`, async () => {
-        await ready();
-        await applyRoute(sessionId, route, true);
-      });
-    },
-
-    async routeHold(sessionId, hold, windowId) {
-      await ready();
-      await routingOp(sessionId, () => (hold ? holdRoute(sessionId, windowId) : resumeRoute(sessionId, true)));
     },
 
     setProfile(sessionId, profileId) {
@@ -1660,16 +1487,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       await finalize(active.sessionId, { kind: 'ended' });
     },
 
-    async onWindowRemoved(windowId) {
-      await ready();
-      const stored = await browser.storage.session.get(null);
-      for (const [key, value] of Object.entries(stored)) {
-        if (!key.startsWith(ROUTING_PREFIX) || (value as RoutingPrompt).windowId !== windowId) continue;
-        const id = key.slice(ROUTING_PREFIX.length);
-        await routingOp(id, () => resumeRoute(id, false));
-      }
-    },
-
     async onAlarm(name) {
       await ready();
       if (name === RETENTION_ALARM) await sweep();
@@ -1677,10 +1494,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         await checkRecorder(false);
         // Problems that only time reveals: no captions yet, captions gone quiet, audio stalled.
         await refreshAction();
-      } else if (name.startsWith(ROUTE_ALARM_PREFIX)) {
-        const id = name.slice(ROUTE_ALARM_PREFIX.length);
-        // Fired just as the prompt was paused: the pause wins.
-        if (!(await isHeld(id))) await applyDefaultRoute(id);
       } else if (name.startsWith(RETRY_ALARM_PREFIX)) await retryTranscription(name.slice(RETRY_ALARM_PREFIX.length));
     },
 
@@ -1710,8 +1523,6 @@ export function backgroundHandlers(manager: SessionManager): Handlers<Background
     'captions/batch': (req) => manager.onCaptions(req),
     'session/start': (req) => manager.start(req.tabId, req.profileId),
     'session/stop': (req) => manager.stop(req.sessionId),
-    'session/route': (req) => manager.route(req.sessionId, req.route),
-    'session/route-hold': (req, sender) => manager.routeHold(req.sessionId, req.hold, sender.tab?.windowId),
     'session/set-profile': (req) => manager.setProfile(req.sessionId, req.profileId),
     'session/transcribe': (req) => manager.transcribe(req.sessionId, { force: req.force === true }),
     'session/save': (req) => manager.save(req.sessionId, { force: req.force === true }),

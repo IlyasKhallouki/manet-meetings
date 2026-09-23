@@ -96,6 +96,7 @@ function model(state: PopupState, patch: Partial<PopupModel> = {}): PopupModel {
     ],
     defaultProfileId: 'team',
     geminiKeyMissing: false,
+    autoTranscribe: true,
     recent: [],
     needsYou: 0,
     shortcut: 'Alt+Shift+R',

@@ -136,7 +136,6 @@ describe('notifications', () => {
 describe('problems', () => {
   const STATUSES: SessionStatus[] = [
     'recording',
-    'awaiting-route',
     'ready',
     'processing',
     'saving',
@@ -172,7 +171,6 @@ describe('problems', () => {
       problems.couldNotStop,
       problems.noResponse,
       ...STATUSES.flatMap((s) => [
-        problems.cannotRoute(s),
         problems.cannotTranscribe(s),
         problems.cannotSave(s),
         problems.cannotChangeProfile(s),
@@ -267,8 +265,8 @@ describe('problems', () => {
   });
 
   it('say why a request can’t be done in the state the meeting is in', () => {
-    expect(problems.cannotRoute('recording')).toBe('Stop recording first, then choose Team or Personal.');
-    expect(problems.cannotRoute('saved')).toBe('This meeting is already in Notion.');
+    expect(problems.cannotChangeProfile('saved')).toBe('This meeting is already in Notion.');
+    expect(problems.cannotTranscribe('recording')).toBe('Stop recording first, then transcribe it.');
     expect(problems.cannotTranscribe('processing')).toBe('This meeting is being transcribed. Try again when it’s done.');
     expect(problems.cannotSave('saving')).toBe('This meeting is being saved to Notion. Try again when it’s done.');
     expect(problems.cannotSave('ready')).toBe('Transcribe this meeting first, then save it.');

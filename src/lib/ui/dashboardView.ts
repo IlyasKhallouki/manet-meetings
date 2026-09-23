@@ -27,8 +27,6 @@ import {
   compareSessions,
   dayLabel,
   dayNumber,
-  defaultRouteText,
-  routeChoice,
   rowActions,
   sessionRow,
   settingsList,
@@ -58,8 +56,6 @@ export interface DashboardData {
   geminiKeyMissing: boolean;
   /** Every profile, in Settings order: the choices for a meeting's profile. */
   profiles: readonly Pick<Profile, 'id' | 'name'>[];
-  /** The default profile: where a meeting waiting for a destination goes if nobody chooses (when: the meta's routeDeadline). */
-  defaultProfileId: string;
   /** The auto-transcribe setting. */
   autoTranscribe: boolean;
   /** Days audio is kept after a meeting is saved (the storage footnote). */
@@ -110,7 +106,6 @@ interface RowEntry {
   route: HTMLElement;
   profile: HTMLButtonElement;
   profileName: HTMLElement;
-  routeNote: HTMLElement;
   progress: HTMLElement;
   progressBar?: HTMLProgressElement;
   progressText: HTMLElement;
@@ -196,7 +191,7 @@ export function createDashboardView(
   const autoRow = switchRow({
     id: 'auto-transcribe',
     label: 'Transcribe automatically',
-    hint: 'Each meeting is transcribed and saved to Notion after you choose Team or Personal.',
+    hint: 'Each meeting is transcribed and saved to Notion when the call ends.',
     checked: true,
     onChange: (on) => setAuto(on),
     attrs: { 'data-key': 'auto-transcribe' },
@@ -442,11 +437,6 @@ export function createDashboardView(
     // The lines under the status word (.meeting-line): grid items of the row.
     const detail = h('p', { class: 'meeting-line status-detail meeting-detail', hidden: true });
     const route = h('div', { class: 'meeting-line meeting-route', hidden: true });
-    const routeNote = h('p', {
-      class: 'meeting-line status-detail meeting-route-note',
-      'data-role': 'route-default',
-      hidden: true,
-    });
     const progressText = h('span', { class: 'meeting-step num' });
     const progress = h('div', { class: 'meeting-line status-detail meeting-progress', hidden: true }, progressText);
     // A recording's problems, apart from `extra`: they change with the clock, and a
@@ -520,7 +510,7 @@ export function createDashboardView(
       time,
       h('div', { class: 'meeting-title', 'data-cell': 'meeting' }, name, bylineEl),
       length,
-      h('div', { class: 'meeting-status', 'data-cell': 'status' }, head, detail, route, routeNote, progress, health, extra),
+      h('div', { class: 'meeting-status', 'data-cell': 'status' }, head, detail, route, progress, health, extra),
       h('div', { class: 'meeting-actions', 'data-cell': 'actions' }, open, primary, more),
     );
     const confirm = h('div', { class: 'meeting-confirm', hidden: true });
@@ -539,7 +529,6 @@ export function createDashboardView(
       route,
       profile,
       profileName,
-      routeNote,
       progress,
       progressText,
       health,
@@ -643,9 +632,8 @@ export function createDashboardView(
     );
 
     // The profile (as text once it is on its way; a ready meeting's is a button) + what is happening.
-    const choice = routeChoice(meta);
     const isReady = meta.status === 'ready';
-    const showsProfile = !choice && !isReady && meta.status !== 'recording' && meta.status !== 'empty';
+    const showsProfile = !isReady && meta.status !== 'recording' && meta.status !== 'empty';
     const detailParts = [showsProfile ? view.profileName : undefined, view.status.detail].filter(
       (x): x is string => Boolean(x),
     );
@@ -666,15 +654,6 @@ export function createDashboardView(
     }
     setDisabled(entry.profile, isPending);
     entry.route.hidden = !isReady;
-
-    // Waiting for a destination: what happens if nobody chooses, and when (no time while paused).
-    const defaultName = d.profiles.find((p) => p.id === d.defaultProfileId)?.name;
-    const routeNote =
-      choice === 'required' && defaultName ? defaultRouteText(defaultName, meta.routeDeadline, format) : '';
-    patch(entry, 'route-note', routeNote, () => {
-      entry.routeNote.textContent = routeNote;
-      entry.routeNote.hidden = routeNote === '';
-    });
 
     // Step n of 8 · running for 3 min, over a determinate bar.
     const prog = view.progress;
@@ -726,7 +705,7 @@ export function createDashboardView(
     // Wide layout: the status lines may run on under the action column, which is empty
     // below its first line. Not the first line under a button: it would touch it.
     const health = entry.health.hidden ? [] : [...entry.health.children];
-    const lines = [entry.detail, entry.route, entry.routeNote, entry.progress, ...health, entry.extra];
+    const lines = [entry.detail, entry.route, entry.progress, ...health, entry.extra];
     const firstLine = lines.find((el) => !(el as HTMLElement).hidden);
     for (const el of lines) el.classList.toggle('is-under-button', primary !== null && el === firstLine);
     if (hasButton && entry.primary.textContent !== primary.label) entry.primary.textContent = primary.label;

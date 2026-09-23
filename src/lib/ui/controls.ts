@@ -191,22 +191,22 @@ export interface SegmentedOptions<V extends string> {
   label?: string;
   labelledBy?: string;
   options: SegmentOption<V>[];
-  /** The pressed segment; null when nothing is chosen yet (awaiting a destination). */
+  /** The pressed segment; null when nothing is chosen yet. */
   value: V | null;
   /** Activation (click, Enter, Space) commits. Arrow keys only move focus. */
   onSelect: (value: V, event: Event) => void;
   disabled?: boolean;
   /** Every segment busy while the choice is being saved (see setBusy()). */
   busy?: boolean;
-  /** 56 px segments with a subtitle (routing). */
+  /** 56 px segments with a subtitle. */
   large?: boolean;
   attrs?: Attrs;
 }
 
 /**
  * Two or more aria-pressed buttons in a role=group track. Not radios: arrow keys on a
- * radio group change the selection, which here would route a meeting and can start a
- * Gemini job for the wrong database. The builder never flips aria-pressed itself;
+ * radio group change the selection, which here would commit a choice on every key
+ * press. The builder never flips aria-pressed itself;
  * the owner calls setSegmented() once the choice is committed.
  */
 export function segmented<V extends string>(o: SegmentedOptions<V>): HTMLDivElement {

@@ -12,14 +12,6 @@ import { NOW } from './scenarios';
 
 let current: DashboardView | null = null;
 
-/**
- * The meeting waiting on a destination carries the routing prompt's countdown, as the
- * background writes it (SessionMeta.routeDeadline).
- */
-const WITH_DEADLINE: SessionMeta[] = MEETINGS.map((s) =>
-  s.id === 'route' ? { ...s, routeDeadline: NOW + 94_000 } : s,
-);
-
 interface Options {
   data?: Partial<DashboardData>;
   /** Root font size, to stand in for Chrome's text size setting. */
@@ -45,13 +37,12 @@ function dashboard(name: string, width: number, o: Options = {}): Shot {
         FMT,
       );
       current.update({
-        sessions: WITH_DEADLINE,
+        sessions: MEETINGS,
         resultIds: MEETING_RESULTS,
         audioOnDisk: new Map(MEETINGS.map((s) => [s.id, s.audio.bytes])),
         missing: [],
         geminiKeyMissing: false,
         profiles: PROFILES,
-        defaultProfileId: 'team',
         autoTranscribe: true,
         retentionDays: 7,
         now: NOW,
@@ -73,7 +64,7 @@ function dashboard(name: string, width: number, o: Options = {}): Shot {
 const MIN = 60_000;
 /** The first five meetings, the recording changed by `patch`. */
 const recordingWith = (patch: (s: SessionMeta) => Partial<SessionMeta>) =>
-  WITH_DEADLINE.map((s) => (s.id === 'rec' ? { ...s, ...patch(s) } : s)).slice(0, 5);
+  MEETINGS.map((s) => (s.id === 'rec' ? { ...s, ...patch(s) } : s)).slice(0, 5);
 /** Call audio lost, and captions blocked in the tab. */
 const LOST = recordingWith((s) => ({
   audio: { ...s.audio, error: 'Tab audio capture failed' },
@@ -160,7 +151,7 @@ gallery('dashboard', [
       missing: ['Notion integration token', 'Notion team database id', 'Your name'],
       geminiKeyMissing: true,
       autoTranscribe: false,
-      sessions: WITH_DEADLINE.slice(0, 4),
+      sessions: MEETINGS.slice(0, 4),
     },
   }),
   dashboard('setup-needed-narrow', 390, {
@@ -168,11 +159,11 @@ gallery('dashboard', [
       missing: ['Notion integration token', 'Your name'],
       geminiKeyMissing: true,
       autoTranscribe: false,
-      sessions: WITH_DEADLINE.slice(0, 3),
+      sessions: MEETINGS.slice(0, 3),
     },
   }),
   // Saving works, no Gemini key: the ⓘ note alone (the popup's rule: one notice at a time).
-  dashboard('setup-gemini', 1280, { data: { geminiKeyMissing: true, sessions: WITH_DEADLINE.slice(0, 3) } }),
+  dashboard('setup-gemini', 1280, { data: { geminiKeyMissing: true, sessions: MEETINGS.slice(0, 3) } }),
   dashboard('large-text', 1280, { fontSize: '24px' }),
   dashboard('large-text-narrow', 390, { fontSize: '24px' }),
 ]);

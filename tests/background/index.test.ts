@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { sendToBackground, type Envelope } from '@lib/messages';
-import { getActiveRecording, getSession, putSession } from '@lib/storage/sessionStore';
+import { getActiveRecording, getSession, putSession, updateSession } from '@lib/storage/sessionStore';
 import { idempotencyKey } from '@lib/util/ids';
 import background from '@/entrypoints/background/index';
 import { configure, MEET_CODE, MEET_URL, resultFor, seg, setupHarness, type Harness } from './harness';
@@ -60,13 +60,15 @@ describe('background entrypoint', () => {
     await sendToBackground('offscreen/recorder-chunk', { sessionId: id, index: 0, bytes: 1000 });
     expect(await getSession(id)).toMatchObject({ captionCount: 1, audio: { chunkCount: 1, bytes: 1000 } });
 
+    // Transcribed and saved as soon as the call ends.
     await fakeBrowser.tabs.onRemoved.trigger(tabId, { isWindowClosing: false, windowId: 0 });
-    await vi.waitFor(async () => expect(await statusOf(id)).toBe('awaiting-route'));
-    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
-
-    await fakeBrowser.alarms.onAlarm.trigger({ name: `route:${id}`, scheduledTime: Date.now(), persistAcrossSessions: false });
     await vi.waitFor(async () => expect(await statusOf(id)).toBe('saved'));
-    expect((await getSession(id))?.route).toBe('team');
+    expect((await getSession(id))?.profileId).toBe('team');
+    expect(h.windowsCreated()).toEqual([]);
+
+    await updateSession(id, { purgeAudioAt: Date.now() - 1 });
+    await fakeBrowser.alarms.onAlarm.trigger({ name: 'retention', scheduledTime: Date.now(), persistAcrossSessions: false });
+    await vi.waitFor(async () => expect((await getSession(id))?.audio.deletedAt).toBeDefined());
 
     const create = vi.spyOn(fakeBrowser.tabs, 'create');
     await fakeBrowser.notifications.onClicked.trigger(`manet:${id}`);
@@ -86,7 +88,6 @@ describe('background entrypoint', () => {
     const res = await sendToBackground('session/start', { tabId });
     if (!res.ok) throw new Error(res.error);
     await sendToBackground('session/stop', { sessionId: res.sessionId });
-    await sendToBackground('session/route', { sessionId: res.sessionId, route: 'team' });
     await vi.waitFor(async () => expect(await statusOf(res.sessionId)).toBe('duplicate'));
 
     await sendToBackground('session/transcribe', { sessionId: res.sessionId, force: true });
@@ -95,6 +96,7 @@ describe('background entrypoint', () => {
   });
 
   it('toggles recording from the keyboard command and stops when the tab leaves the call', async () => {
+    await configure({ autoTranscribe: false });
     await startWorker();
     const tabId = await h.openMeetTab();
 
@@ -102,14 +104,14 @@ describe('background entrypoint', () => {
     await vi.waitFor(async () => expect(await getActiveRecording()).toMatchObject({ tabId }));
     const { sessionId: id } = (await getActiveRecording())!;
     for (const l of commands) l('toggle-recording', { id: tabId });
-    await vi.waitFor(async () => expect(await statusOf(id)).toBe('awaiting-route'));
+    await vi.waitFor(async () => expect(await statusOf(id)).toBe('ready'));
 
     for (const l of commands) l('toggle-recording', { id: tabId });
     await vi.waitFor(async () => expect((await getActiveRecording())?.sessionId).toBeDefined());
     const second = (await getActiveRecording())!.sessionId;
     expect(second).not.toBe(id);
     await fakeBrowser.tabs.update(tabId, { url: 'https://meet.google.com/landing' });
-    await vi.waitFor(async () => expect(await statusOf(second)).toBe('awaiting-route'));
+    await vi.waitFor(async () => expect(await statusOf(second)).toBe('ready'));
   });
 
   it('stays quiet about work the browser cuts off while shutting down', async () => {
@@ -129,7 +131,7 @@ describe('background entrypoint', () => {
 
   it('sends handler errors back to the caller', async () => {
     await startWorker();
-    await expect(sendToBackground('session/route', { sessionId: 'nope', route: 'team' })).rejects.toThrow(
+    await expect(sendToBackground('session/transcribe', { sessionId: 'nope' })).rejects.toThrow(
       'This meeting was deleted.',
     );
     expect(await sendToBackground('session/start', { tabId: 12345 })).toMatchObject({ ok: false });
@@ -153,9 +155,9 @@ describe('background entrypoint', () => {
 
     await fakeBrowser.runtime.onStartup.trigger();
     await vi.waitFor(async () =>
-      expect(await getSession(id)).toMatchObject({ status: 'awaiting-route', recovered: true, durationMs: 20_000 }),
+      expect(await getSession(id)).toMatchObject({ status: 'ready', recovered: true, durationMs: 20_000 }),
     );
-    expect(h.windowsCreate).toHaveBeenCalledTimes(1);
+    expect(h.windowsCreated()).toEqual([]);
   });
 
   it('restricts storage.local to trusted contexts before anything else', async () => {
@@ -181,25 +183,6 @@ describe('background entrypoint', () => {
 
     await fakeBrowser.runtime.onInstalled.trigger({ reason: 'install' } as never);
     await vi.waitFor(() => expect(h.openOptionsPage).toHaveBeenCalledTimes(1));
-  });
-
-  it('pauses the default route from the prompt, and re-arms it when the paused prompt closes', async () => {
-    await configure({ autoTranscribe: false });
-    await startWorker();
-    const tabId = await h.openMeetTab();
-    const res = await sendToBackground('session/start', { tabId });
-    if (!res.ok) throw new Error(res.error);
-    await sendToBackground('session/stop', { sessionId: res.sessionId });
-    const prompt = (await h.windowsCreate.mock.results[0]?.value) as { id: number };
-    const alarm = () => fakeBrowser.alarms.get(`route:${res.sessionId}`);
-    expect(await alarm()).toBeDefined();
-
-    await sendToBackground('session/route-hold', { sessionId: res.sessionId, hold: true });
-    expect(await alarm()).toBeUndefined();
-
-    await fakeBrowser.windows.remove(prompt.id);
-    await vi.waitFor(async () => expect(await alarm()).toBeDefined());
-    expect(await statusOf(res.sessionId)).toBe('awaiting-route');
   });
 
   it('says why the keyboard shortcut could not start a recording', async () => {

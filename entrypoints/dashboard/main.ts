@@ -26,7 +26,6 @@ let audioOnDisk: Map<string, number> | null = null;
 let missing: string[] = [];
 let geminiKeyMissing = false;
 let profiles: Pick<Profile, 'id' | 'name'>[] = [];
-let defaultProfileId = '';
 let autoTranscribe = true;
 let retentionDays = 7;
 let pinHint = false;
@@ -70,7 +69,6 @@ function render(): void {
     missing,
     geminiKeyMissing,
     profiles,
-    defaultProfileId,
     autoTranscribe,
     retentionDays,
     pinHint,
@@ -115,7 +113,6 @@ async function refreshSettings(): Promise<void> {
   missing = problems.blocking;
   geminiKeyMissing = problems.geminiKeyMissing;
   profiles = settings.profiles.map(({ id, name }) => ({ id, name }));
-  defaultProfileId = profile.id;
   autoTranscribe = settings.autoTranscribe;
   retentionDays = settings.retentionDays;
   render();
@@ -141,8 +138,6 @@ async function load(): Promise<void> {
 }
 
 // Listeners first, so no change between the initial read and the first render is missed.
-// A meeting's default-destination time (routeDeadline) is on its meta: a pause or a resume
-// in the routing window arrives here as a session write.
 watchSessions((id, meta) => {
   if (!loaded) touchedSessions.add(id);
   const before = sessions.get(id);

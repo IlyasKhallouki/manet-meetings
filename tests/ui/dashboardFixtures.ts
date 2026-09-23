@@ -51,9 +51,11 @@ export const MEETINGS: SessionMeta[] = [
     speakers: roll('Marie Curie', 'Tom Martin', 'you').map((s, i) => ({ ...s, lastAt: 23 * MIN - (3 - i) * 20_000 })),
     audio: audio(5.3, { lastChunkAt: NOW - 3000 }),
   }),
-  session('route', {
-    profileId: 'team',
-    status: 'awaiting-route',
+  session('choose', {
+    // Its profile was deleted since: it waits for another.
+    profileId: 'gone',
+    status: 'failed',
+    error: 'This meeting’s profile was deleted. Choose another profile.',
     meetCode: 'ghi-jklm-nop',
     meetingTitle: 'Point hebdo produit',
     startedAt: NOW - 70 * MIN,

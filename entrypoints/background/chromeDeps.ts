@@ -91,16 +91,6 @@ export function createChromeDeps(): SessionManagerDeps {
         return null;
       }
     },
-    async openRoutingPrompt(sessionId) {
-      const win = await browser.windows.create({
-        url: browser.runtime.getURL(`/routing.html?session=${encodeURIComponent(sessionId)}`),
-        type: 'popup',
-        width: 380,
-        height: 280,
-        focused: true,
-      });
-      return win?.id;
-    },
     async notify(sessionId, title, message) {
       await browser.notifications.create(`manet:${sessionId}`, {
         type: 'basic',

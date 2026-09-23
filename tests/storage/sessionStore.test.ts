@@ -77,8 +77,8 @@ describe('sessionStore', () => {
 
   it('applies a patch or an updater function and returns the new value', async () => {
     await putSession(meta('a', 1000));
-    const patched = await updateSession('a', { status: 'awaiting-route', endedAt: 5000 });
-    expect(patched).toMatchObject({ status: 'awaiting-route', endedAt: 5000, startedAt: 1000 });
+    const patched = await updateSession('a', { status: 'ready', endedAt: 5000 });
+    expect(patched).toMatchObject({ status: 'ready', endedAt: 5000, startedAt: 1000 });
 
     const updated = await updateSession('a', (m) => ({ ...m, captionCount: m.captionCount + 3 }));
     expect(updated?.captionCount).toBe(3);
@@ -152,6 +152,14 @@ describe('sessionStore', () => {
     expect(seen).toEqual(['personal']);
   });
 
+  it('reads a meeting left waiting for Team or Personal as ready', async () => {
+    const waiting = { ...meta('s', 1000), status: 'awaiting-route', route: 'team', routeDeadline: 5 };
+    await fakeBrowser.storage.local.set({ [sessionKey('s')]: waiting });
+    expect(await getSession('s')).toMatchObject({ status: 'ready', profileId: 'team' });
+    expect(await getSession('s')).not.toHaveProperty('routeDeadline');
+    expect((await listSessions())[0]?.status).toBe('ready');
+  });
+
   it('notifies watchers of puts and deletes until unsubscribed', async () => {
     const seen: [string, string | null][] = [];
     const stop = watchSessions((id, m) => seen.push([id, m?.status ?? null]));
@@ -184,8 +192,7 @@ describe('sessionStore', () => {
 });
 
 describe('needsYou', () => {
-  it('is true for a meeting waiting for a destination, a transcript not saved, or a failure with no retry scheduled', () => {
-    expect(needsYou(meta('a', 0, { status: 'awaiting-route' }))).toBe(true);
+  it('is true for a transcript not saved, or a failure with no retry scheduled', () => {
     expect(needsYou(meta('a', 0, { status: 'processed' }))).toBe(true);
     expect(needsYou(meta('a', 0, { status: 'failed' }))).toBe(true);
   });

@@ -338,7 +338,7 @@ function toggles(): HTMLElement {
         switchRow({
           id: 'k-auto',
           label: 'Transcribe automatically',
-          hint: 'Each meeting is transcribed and saved to Notion after you choose Team or Personal.',
+          hint: 'Each meeting is transcribed and saved to Notion when the call ends.',
           checked: true,
           onChange: noop,
         }),
@@ -433,7 +433,7 @@ function blocks(): HTMLElement {
       state('step 1 of 8', stepProgress(1)),
       state('step 4 of 8', stepProgress(4)),
       state('step 8 of 8', stepProgress(8)),
-      state('kbd', h('span', { class: 't-callout l2' }, 'You’ll choose Team or Personal next. ', kbd('Alt+Shift+R'))),
+      state('kbd', h('span', { class: 't-callout l2' }, 'It’s transcribed when the call ends. ', kbd('Alt+Shift+R'))),
     ),
   );
 }

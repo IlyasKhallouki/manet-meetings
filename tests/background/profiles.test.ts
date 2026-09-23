@@ -94,7 +94,6 @@ describe('profiles', () => {
     const tabId = await h.openMeetTab();
     await m.start(tabId, 'client');
     await m.stop(ID);
-    await m.route(ID, 'team'); // routing window, until Task 10 removes it
     await m.setProfile(ID, 'client');
     await m.transcribe(ID);
     await m.idle();
@@ -107,7 +106,6 @@ describe('profiles', () => {
     const tabId = await h.openMeetTab();
     await m.start(tabId, 'team');
     await m.stop(ID);
-    await m.route(ID, 'team');
     await m.transcribe(ID);
     await m.idle(); // processed with Team, save failed
     expect((await getResult(ID))?.profile?.id).toBe('team');
@@ -134,7 +132,6 @@ describe('profiles', () => {
     const tabId = await h.openMeetTab();
     await m.start(tabId, 'team');
     await m.stop(ID);
-    await m.route(ID, 'team');
     await m.transcribe(ID);
     await m.idle();
     expect((await getSession(ID))?.status).toBe('duplicate');
@@ -199,24 +196,11 @@ describe('profiles', () => {
     expect(h.offscreen.callsOf('offscreen/save').at(-1)?.profile.databaseId).toBe('personal-db');
   });
 
-  it('summarizes a result from before profiles again when the routing window changes its destination', async () => {
-    await putSession(stored({ route: 'team', profileId: 'team' }));
-    await putResult(ID, LEGACY);
-    await m.route(ID, 'personal');
-    await m.save(ID);
-    await m.idle();
-    const processes = h.offscreen.callsOf('offscreen/process');
-    expect(processes).toHaveLength(1);
-    expect(processes[0]?.reuse?.profile?.id).toBe('team');
-    expect(processes[0]?.profile.id).toBe('personal');
-  });
-
   it('does not save for a profile that changed while the save was starting', async () => {
     h.offscreen.save = () => ({ status: 'error', error: 'Notion is busy right now. Try again in a minute.' });
     const tabId = await h.openMeetTab();
     await m.start(tabId, 'team');
     await m.stop(ID);
-    await m.route(ID, 'team');
     await m.transcribe(ID);
     await m.idle(); // processed with Team, save failed
     h.offscreen.save = () => CREATED;
@@ -261,7 +245,6 @@ describe('profiles', () => {
     const tabId = await h.openMeetTab();
     await m.start(tabId, 'client');
     await m.stop(ID);
-    await m.route(ID, 'personal');
     await m.setProfile(ID, 'client');
     await configure({ profiles: starterProfiles('team-db', 'personal-db') });
     await m.transcribe(ID);
@@ -273,7 +256,6 @@ describe('profiles', () => {
     await m.start(tabId);
     await expect(m.setProfile(ID, 'gone')).rejects.toThrow('That profile no longer exists. Reload the page and choose another.');
     await m.stop(ID);
-    await m.route(ID, 'team');
     await m.transcribe(ID);
     await m.idle();
     expect((await getSession(ID))?.status).toBe('saved');

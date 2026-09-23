@@ -126,7 +126,7 @@ describe('recordingProblem', () => {
 
 describe('actionStateFor', () => {
   const sessions = [
-    meta({ id: 'a', status: 'awaiting-route' }),
+    meta({ id: 'a', status: 'processed' }),
     meta({ id: 'b', status: 'processed' }),
     meta({ id: 'c', status: 'failed' }),
     meta({ id: 'd', status: 'failed', retryAt: START + MINUTE }),

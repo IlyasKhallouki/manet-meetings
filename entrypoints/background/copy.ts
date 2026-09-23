@@ -70,7 +70,7 @@ function sentence(reason: string, fallback: string): string {
   return /[.!?…]$/.test(capitalised) ? capitalised : `${capitalised}.`;
 }
 
-type Meeting = Pick<SessionMeta, 'startedAt' | 'durationMs' | 'route'>;
+type Meeting = Pick<SessionMeta, 'startedAt' | 'durationMs'>;
 
 export const notes = {
   /** `where`: the profile the meeting was saved for ("Team"), or "Notion" when it is gone. */
@@ -260,10 +260,6 @@ export const problems = {
 
   cannotChangeProfile(status: SessionStatus): string {
     return occupied(status, 'change its profile') ?? 'The profile can’t be changed now. Reload Meetings.';
-  },
-
-  cannotRoute(status: SessionStatus): string {
-    return occupied(status, 'choose Team or Personal') ?? 'Team or Personal can’t be changed now. Reload Meetings.';
   },
 
   cannotTranscribe(status: SessionStatus): string {

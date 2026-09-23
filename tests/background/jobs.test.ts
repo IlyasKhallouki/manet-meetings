@@ -32,13 +32,12 @@ beforeEach(async () => {
   await m.boot();
 });
 
-/** Records a meeting with one caption and ends it; with `route`, also routes it to Team. */
-async function recordMeeting(opts: { route?: boolean } = {}): Promise<void> {
+/** Records a meeting with one caption for the default profile (Team) and ends it. */
+async function recordMeeting(): Promise<void> {
   const tabId = await h.openMeetTab();
   await m.start(tabId);
   await m.onCaptions({ sessionId: ID, segments: [seg('c1', 'Alice', 0, 'Salut')] });
   await m.onMeetLeft(tabId, { meetCode: MEET_CODE });
-  if (opts.route !== false) await m.route(ID, 'team');
   await m.idle();
 }
 

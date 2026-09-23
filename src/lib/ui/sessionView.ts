@@ -5,14 +5,14 @@
  * "meeting", never session/job/route/duplicate/force.
  *
  * The action rules mirror what the background accepts (sessionManager.ts): Transcribe
- * from awaiting-route, ready, failed, processed, empty or duplicate; Save from processed,
- * failed or duplicate with a stored result; a profile change from recording,
- * awaiting-route, ready, failed, processed, empty or duplicate. On a duplicate, "Save a
+ * from ready, failed, processed, empty or duplicate; Save from processed, failed or
+ * duplicate with a stored result; a profile change from recording, ready, failed,
+ * processed, empty or duplicate. On a duplicate, "Save a
  * second copy…" skips the Notion check (force), which files a second page. A failed
  * meeting's Try again repeats what failed (failureKind).
  */
 import { minutesText, recordingHealth, silenceText } from '../recordingHealth';
-import type { JobStage, Route, SessionMeta, SessionStatus } from '../types';
+import type { JobStage, SessionMeta, SessionStatus } from '../types';
 import { formatBytes } from '../util/time';
 import type { Tone } from './controls';
 
@@ -28,17 +28,8 @@ export interface StatusView {
   detail?: string;
 }
 
-const TRANSCRIBABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
-const ROUTABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
-const PROFILE_CHANGEABLE = new Set<SessionStatus>([
-  'recording',
-  'awaiting-route',
-  'ready',
-  'failed',
-  'processed',
-  'empty',
-  'duplicate',
-]);
+const TRANSCRIBABLE = new Set<SessionStatus>(['ready', 'failed', 'processed', 'empty', 'duplicate']);
+const PROFILE_CHANGEABLE = new Set<SessionStatus>(['recording', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
 const BUSY = new Set<SessionStatus>(['processing', 'saving']);
 
 /** Pipeline stages in order; the step number is the index + 1 (of 8). */
@@ -147,8 +138,6 @@ export function statusView(meta: SessionMeta, ctx: { hasResult?: boolean } = {})
   switch (meta.status) {
     case 'recording':
       return { tone: 'live', label: 'Recording' };
-    case 'awaiting-route':
-      return { tone: 'caution', label: 'Choose a profile' };
     case 'ready':
       return { tone: 'neutral', label: 'Not transcribed' };
     case 'processing': {
@@ -182,28 +171,9 @@ export function statusView(meta: SessionMeta, ctx: { hasResult?: boolean } = {})
   }
 }
 
-/** A destination can be chosen or changed (what the background accepts). */
-export function canChooseRoute(meta: SessionMeta): boolean {
-  return ROUTABLE.has(meta.status);
-}
-
 /** The meeting's profile can be changed (what the background accepts for session/set-profile). */
 export function canChangeProfile(meta: Pick<SessionMeta, 'status'>): boolean {
   return PROFILE_CHANGEABLE.has(meta.status);
-}
-
-/**
- * `required` while the meeting waits for a destination (the routing window is open, and
- * the row says what happens if nobody chooses); null otherwise.
- */
-export function routeChoice(meta: SessionMeta): 'required' | null {
-  return meta.status === 'awaiting-route' ? 'required' : null;
-}
-
-export function routeLabel(route: Route | undefined): string {
-  if (route === 'team') return 'Team';
-  if (route === 'personal') return 'Personal';
-  return 'Not chosen';
 }
 
 // ---------------------------------------------------------------------------------------
@@ -272,10 +242,6 @@ export function rowActions(meta: SessionMeta, ctx: { hasResult: boolean; pending
       primary = act('stop', 'Stop recording');
       menu.push(changeProfile());
       break;
-    case 'awaiting-route':
-      // Choosing a profile ends the wait: it is transcribed right away.
-      primary = act('choose-profile', 'Choose profile', { then: 'transcribe' });
-      break;
     case 'ready':
       primary = act('transcribe', 'Transcribe');
       menu.push(changeProfile());
@@ -341,8 +307,7 @@ export function acceptsTranscribe(meta: SessionMeta): boolean {
 // ---------------------------------------------------------------------------------------
 // Dates and times: English words, the browser's clock convention
 //
-// One vocabulary for every surface (the popup's Recent and the routing prompt should
-// write the same): headers "Today" / "Yesterday" / "Wednesday 16 September"; inline "Today 14:02",
+// One vocabulary for every surface (the popup's Recent and Meetings write the same): headers "Today" / "Yesterday" / "Wednesday 16 September"; inline "Today 14:02",
 // "Yesterday 14:02", "Wed 16 Sep 14:02". Day before month whatever the locale (the words
 // are English); the clock is 24 h unless the locale uses 12 h. The year only when it
 // isn't this one.
@@ -543,7 +508,7 @@ const SETTING_NAMES: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^your name$/i, () => 'your name'],
   [/notion (integration )?token/i, () => 'a Notion token'],
   [/profile’s database$/i, (m) => m.input ?? m[0]],
-  [/(team|personal) database/i, (m) => `the ${routeLabel(m[1]!.toLowerCase() as Route)} database`],
+  [/(team|personal) database/i, (m) => `the ${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()} database`],
   [/gemini/i, () => 'a Gemini key'],
 ];
 
@@ -618,12 +583,6 @@ export function recordingCautions(meta: SessionMeta, now: number): Caution[] {
     });
   }
   return out;
-}
-
-/** Under a meeting waiting for a destination: where it goes if nobody chooses (a profile's name), and when. */
-export function defaultRouteText(name: string, at: number | undefined, opts: FormatOptions = {}): string {
-  const when = at === undefined ? '' : ` at ${formatTime(at, opts)}`;
-  return `If you don’t choose, it goes to ${name}${when}.`;
 }
 
 // ---------------------------------------------------------------------------------------

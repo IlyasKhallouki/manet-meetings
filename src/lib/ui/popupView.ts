@@ -16,7 +16,7 @@
  * into words and are tested without a DOM. What counts as a recording problem is not decided
  * here: speakersFact and audioFact word what recordingHealth finds, the rules the Meetings
  * row and the toolbar's "!" follow too. Dates, times and lengths are sessionView's, so the
- * popup, Meetings and the routing window write them alike. createPopupView keeps four things
+ * popup and Meetings write them alike. createPopupView keeps four things
  * persistent so they are patched, not rebuilt: the hero button (Record → Stop cross-fades
  * in place, and a click on it is never lost to a re-render), the Profile row (its button
  * keeps focus and anchors the profile menu), the roll (only new names fade in) and the clock.
@@ -372,7 +372,7 @@ export interface RecentRowView {
 
 /**
  * One Recent row: glyph + title (+ Open in Notion) / status · when · how long · where.
- * "Today 14:02", "Wed 16 Sep 14:02" and "32 min" as Meetings and the routing window write them.
+ * "Today 14:02", "Wed 16 Sep 14:02" and "32 min" as Meetings writes them.
  * Where is the meeting's profile, named from `profileNames` (every profile's name by id);
  * nothing when that profile was deleted since.
  */
@@ -395,8 +395,6 @@ export function recentRow(
   switch (meta.status) {
     case 'recording':
       return { ...row, tone: 'live', status: 'Recording', details: [when] };
-    case 'awaiting-route':
-      return { ...row, tone: 'caution', status: 'Choose Team or Personal', details: list(when, length) };
     case 'ready':
       return { ...row, tone: 'neutral', status: 'Not transcribed', details: list(when, length, where) };
     case 'processing':
@@ -446,6 +444,8 @@ export interface PopupModel {
   pickedProfileId?: string;
   /** No Gemini key: meetings are still saved, with a captions-only transcript. */
   geminiKeyMissing: boolean;
+  /** Settings › auto-transcribe: a meeting is transcribed when its call ends. */
+  autoTranscribe: boolean;
   /** Latest meetings, newest first; the popup shows 3 when not on a call. */
   recent: readonly SessionMeta[];
   /** Meetings that wait on the person (sessionStore.needsYou). */
@@ -516,8 +516,6 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   /** Picked in this popup; until then the model's remembered pick (else the default) applies. */
   let pickedProfileId: string | null = null;
   let error: string | undefined;
-  /** This popup stopped the recording: say where the choice happens next. */
-  let stopped = false;
   let heroAction: HeroAction | null = null;
   let heroArmedAt = Number.NEGATIVE_INFINITY;
   let shownKind: PopupState['kind'] | null = null;
@@ -528,7 +526,6 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
   const factsSlot = h('div', { class: 'state-facts', hidden: true });
   // An inset grouped card (styles.css › .popup-card): the state is the popup's content layer.
   const stateEl = h('section', { class: 'state popup-card', 'data-role': 'state' }, headSlot, factsSlot);
-  const stoppedSlot = slot('div');
   const setupSlot = slot('div');
   const recentSlot = slot('div');
   const announcer = h('p', { class: 'visually-hidden', role: 'status', 'data-role': 'announce' });
@@ -565,7 +562,7 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
     button('Settings', { kind: 'plain', attrs: { 'data-key': 'settings' }, onClick: () => handlers.openSettings() }),
   );
 
-  mount(root, stateEl, stoppedSlot, heroBlock, setupSlot, recentSlot, announcer, footer);
+  mount(root, stateEl, heroBlock, setupSlot, recentSlot, announcer, footer);
   // The one menu (the profiles), outside every patched block.
   const menu = createMenu(root);
 
@@ -618,12 +615,8 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
 
   /** The hero's requests and profile changes; a failure shows in the hero's error line. */
   function run(action: Request, request: () => Promise<void>): void {
-    if (action === 'profile') {
-      profileBusy = true;
-    } else {
-      busy = action;
-      stopped = false;
-    }
+    if (action === 'profile') profileBusy = true;
+    else busy = action;
     error = undefined;
     let promise: Promise<void>;
     try {
@@ -632,15 +625,10 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       promise = Promise.reject(err);
     }
     render();
-    promise.then(
-      () => {
-        if (action === 'stop') stopped = true;
-      },
-      (err: unknown) => {
-        const reason = err instanceof Error ? err.message : String(err);
-        error = `${FAILED[action]}: ${reason}`;
-      },
-    ).finally(() => {
+    promise.catch((err: unknown) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      error = `${FAILED[action]}: ${reason}`;
+    }).finally(() => {
       if (action === 'profile') profileBusy = false;
       else busy = null;
       render();
@@ -919,7 +907,12 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
       error ? [svg('caution', { class: 'tone-caution' }), h('span', null, error)] : null,
     );
     heroError.hidden = false; // keep the alert region in the tree; :empty hides it
-    const hint = action === 'record' ? 'Let everyone know you’re recording.' : 'You’ll choose Team or Personal next.';
+    const hint =
+      action === 'record'
+        ? 'Let everyone know you’re recording.'
+        : m.autoTranscribe
+          ? 'It’s transcribed when the call ends.'
+          : 'You’ll find it in Meetings.';
     patch('hint', heroHint, JSON.stringify([hint, m.shortcut]), () => [
       h('span', null, hint),
       m.shortcut ? h('span', { class: 'hero-shortcut' }, visuallyHidden('Shortcut: '), kbd(m.shortcut)) : null,
@@ -1008,13 +1001,6 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
     );
   }
 
-  function renderStopped(s: PopupState): void {
-    const show = stopped && s.kind !== 'recording';
-    patch('stopped', stoppedSlot, String(show), () =>
-      show ? note({ body: 'Stopped. Choose Team or Personal in the window that opened.', attrs: { 'data-role': 'stopped' } }) : null,
-    );
-  }
-
   // ---- Render ------------------------------------------------------------------------
 
   function announce(s: PopupState): void {
@@ -1037,8 +1023,6 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
     const m = model;
     if (!m) return;
     const s = m.state;
-    // A new recording (from here or the shortcut) ends the "Stopped" note's business.
-    if (s.kind === 'recording' && shownKind !== null && shownKind !== 'recording') stopped = false;
     keepFocus(root, () => {
       if (patch('head', headSlot, headSig(s), () => headContent(s))) headSlot.hidden = false;
       const clockEl = headSlot.querySelector('[data-role="clock"]');
@@ -1047,7 +1031,6 @@ export function createPopupView(root: HTMLElement, handlers: PopupHandlers, opti
         if (clockEl.textContent !== text) clockEl.textContent = text;
       }
       renderFacts(m, s);
-      renderStopped(s);
       renderProfile(m, s);
       renderHero(m, s);
       renderSetup(m, s);

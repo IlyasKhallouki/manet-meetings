@@ -66,7 +66,7 @@ describe('toolbar button while idle', () => {
   });
 
   it('counts meetings that need you in amber, and clears the count when they are resolved', async () => {
-    await putSession(stored('aaa-bbbb-ccc_20260919T060000Z', { status: 'awaiting-route' }));
+    await putSession(stored('aaa-bbbb-ccc_20260919T060000Z', { status: 'failed', error: 'Transcribing didn’t start. Try again.' }));
     await putSession(stored('aaa-bbbb-ccc_20260919T070000Z', { status: 'failed', error: 'Notion returned 502' }));
     // A scheduled retry is not waiting on you yet; neither is a saved meeting.
     await putSession(stored('aaa-bbbb-ccc_20260919T080000Z', { status: 'failed', retryAt: T0 + MINUTE }));
@@ -76,9 +76,9 @@ describe('toolbar button while idle', () => {
     expect(await h.badgeColors()).toEqual(AMBER);
     expect(await h.badgeTitle()).toBe('Manet Meetings: record this call (Alt+Shift+R) · 2 meetings need you');
 
-    await m.route('aaa-bbbb-ccc_20260919T060000Z', 'team');
+    await m.transcribe('aaa-bbbb-ccc_20260919T060000Z');
     await m.idle();
-    // Routed and auto-transcribed: saved, so only the failure is left.
+    // Transcribed and saved, so only the other failure is left.
     expect(await h.badge()).toBe('1');
     expect(await h.badgeTitle()).toMatch(/· 1 meeting needs you$/);
 
@@ -98,7 +98,7 @@ describe('toolbar button while idle', () => {
   it('keeps the badge and tooltip when the icon files cannot be loaded', async () => {
     h.setIcon.mockRejectedValue(new Error('Failed to fetch'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await putSession(stored('aaa-bbbb-ccc_20260919T060000Z', { status: 'awaiting-route' }));
+    await putSession(stored('aaa-bbbb-ccc_20260919T060000Z', { status: 'processed' }));
     await m.idle();
     expect(await h.badge()).toBe('1');
 
@@ -112,7 +112,7 @@ describe('toolbar button while idle', () => {
 
 describe('toolbar button while recording', () => {
   it('shows the red-dot icon and the start time, over any count of meetings that need you', async () => {
-    await putSession(stored('aaa-bbbb-ccc_20260919T060000Z', { status: 'awaiting-route' }));
+    await putSession(stored('aaa-bbbb-ccc_20260919T060000Z', { status: 'processed' }));
     await record();
     expect(h.icon()).toBe('recording');
     expect(h.setIcon).toHaveBeenLastCalledWith({ path: { 16: '/icon/rec-16.png', 32: '/icon/rec-32.png' } });
@@ -122,7 +122,8 @@ describe('toolbar button while recording', () => {
     await m.stop(ID);
     await m.idle();
     expect(h.setIcon).toHaveBeenLastCalledWith({ path: { 16: '/icon/16.png', 32: '/icon/32.png' } });
-    expect(await h.badge()).toBe('2');
+    // The meeting that just ended was transcribed and saved: the other one still needs you.
+    expect(await h.badge()).toBe('1');
   });
 
   it('adds "!" when nobody is named 20 s in, and drops it when captions arrive', async () => {
@@ -179,7 +180,8 @@ describe('toolbar button while recording', () => {
     await m.onMeetLeft(tabId, { meetCode: MEET_CODE });
     await m.idle();
     expect(h.icon()).toBe('idle');
-    expect(await h.badge()).toBe('1');
+    // Transcribed and saved when the call ended: nothing is left to flag.
+    expect(await h.badge()).toBe('');
   });
 
   it('flags a tab that cannot deliver captions at once', async () => {

@@ -36,10 +36,29 @@ function serialized<T>(id: string, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** A meta as any version stored it: a meeting from before profiles takes its Team | Personal destination as its profile. */
-export function normalizeMeta(meta: SessionMeta): SessionMeta {
-  if (meta.profileId !== undefined || meta.route === undefined) return meta;
-  return { ...meta, profileId: meta.route };
+/** What versions before profiles stored on a meta. */
+type LegacyMeta = Omit<SessionMeta, 'status'> & { status: SessionStatus | 'awaiting-route'; routeDeadline?: number };
+
+/**
+ * A meta as any version stored it: a meeting from before profiles takes its Team |
+ * Personal destination as its profile, and one left waiting for that choice reads as
+ * ready (its leftover route alarm fires once and is ignored).
+ */
+export function normalizeMeta(stored: SessionMeta): SessionMeta {
+  const meta = stored as LegacyMeta;
+  if (
+    meta.status !== 'awaiting-route' &&
+    meta.routeDeadline === undefined &&
+    (meta.profileId !== undefined || meta.route === undefined)
+  ) {
+    return stored;
+  }
+  const { routeDeadline: _deadline, ...rest } = meta;
+  return {
+    ...rest,
+    status: meta.status === 'awaiting-route' ? 'ready' : meta.status,
+    ...(meta.profileId === undefined && meta.route !== undefined ? { profileId: meta.route } : {}),
+  };
 }
 
 async function read(id: string): Promise<SessionMeta | null> {
@@ -103,11 +122,11 @@ export function deleteSession(id: string): Promise<void> {
 }
 
 /** Statuses that wait on the person, whatever else the session says. */
-const WAITING_ON_YOU = new Set<SessionStatus>(['awaiting-route', 'processed']);
+const WAITING_ON_YOU = new Set<SessionStatus>(['processed']);
 
 /**
- * The meeting needs a decision or a fix from the person: it waits for Team or Personal,
- * it was transcribed but not saved, or it failed with no automatic retry scheduled.
+ * The meeting needs a decision or a fix from the person: it was transcribed but not
+ * saved, or it failed with no automatic retry scheduled.
  * Drives the "Needs you" group, the popup footer and the idle toolbar badge.
  */
 export function needsYou(meta: Pick<SessionMeta, 'status' | 'retryAt'>): boolean {

@@ -16,7 +16,6 @@ import type {
   JobStage,
   ProcessJob,
   ProcessOutcome,
-  Route,
   SaveJob,
   SaveOutcome,
 } from './types';
@@ -41,12 +40,6 @@ export interface BackgroundProtocol {
   /** Popup / keyboard command: start recording this tab (needs a user invocation). No profile: the default. */
   'session/start': { req: { tabId: number; profileId?: string }; res: StartResult };
   'session/stop': { req: { sessionId: string }; res: void };
-  'session/route': { req: { sessionId: string; route: Route }; res: void };
-  /**
-   * Routing window: `hold: true` pauses the default-route countdown (the person asked for
-   * more time); `hold: false` re-arms it, e.g. when the paused window is closed.
-   */
-  'session/route-hold': { req: { sessionId: string; hold: boolean }; res: void };
   /** Popup / Meetings: the meeting's profile, before, during or after recording. */
   'session/set-profile': { req: { sessionId: string; profileId: string }; res: void };
   /** `force` skips the Notion duplicate check ("Transcribe anyway"). */
