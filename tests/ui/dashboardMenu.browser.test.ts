@@ -28,7 +28,7 @@ afterEach(() => {
 function items(selected: string[] = []): MenuItem[] {
   return [
     { label: 'Transcribe again', onSelect: () => selected.push('transcribe') },
-    { label: 'Save to Personal instead', onSelect: () => selected.push('reroute') },
+    { label: 'Change profile…', onSelect: () => selected.push('change-profile') },
     { label: 'Delete…', separatorBefore: true, onSelect: () => selected.push('delete') },
   ];
 }
@@ -48,7 +48,7 @@ describe('the ⋯ menu', () => {
     expect(open()).toBe(true);
     expect(anchor.getAttribute('aria-expanded')).toBe('true');
     expect(menu.element.getAttribute('aria-label')).toBe('More actions for Weekly sync');
-    expect(labels()).toEqual(['Transcribe again', 'Save to Personal instead', 'Delete…']);
+    expect(labels()).toEqual(['Transcribe again', 'Change profile…', 'Delete…']);
     expect(menu.element.querySelectorAll('[role="separator"]').length).toBe(1);
     menu.close();
     expect(open()).toBe(false);
@@ -68,7 +68,7 @@ describe('the ⋯ menu', () => {
     menu.open(anchor, items(), { focus: 'first' });
     const active = () => document.activeElement?.firstChild?.textContent;
     key(document.activeElement!, 'ArrowDown');
-    expect(active()).toBe('Save to Personal instead');
+    expect(active()).toBe('Change profile…');
     key(document.activeElement!, 'ArrowDown');
     key(document.activeElement!, 'ArrowDown');
     expect(active()).toBe('Transcribe again');
@@ -78,8 +78,8 @@ describe('the ⋯ menu', () => {
     expect(active()).toBe('Transcribe again');
     key(document.activeElement!, 'End');
     expect(active()).toBe('Delete…');
-    key(document.activeElement!, 's');
-    expect(active()).toBe('Save to Personal instead');
+    key(document.activeElement!, 'c');
+    expect(active()).toBe('Change profile…');
   });
 
   it('arrow keys on the menu itself (opened by pointer) reach the first and last items', () => {
@@ -97,11 +97,11 @@ describe('the ⋯ menu', () => {
     const list = items(selected);
     list[1]!.onSelect = () => {
       focusedDuring = document.activeElement;
-      selected.push('reroute');
+      selected.push('change-profile');
     };
     menu.open(anchor, list, { focus: 'first' });
     (menu.element.querySelectorAll('[role="menuitem"]')[1] as HTMLElement).click();
-    expect(selected).toEqual(['reroute']);
+    expect(selected).toEqual(['change-profile']);
     expect(open()).toBe(false);
     expect(focusedDuring).toBe(anchor);
   });

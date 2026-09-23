@@ -18,6 +18,7 @@ export function session(id: string, patch: Partial<SessionMeta> = {}): SessionMe
     durationMs: 32 * MIN,
     status: 'ready',
     route: 'team',
+    profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 384, bytes: 7.4 * MB, micIncluded: true },
     captionCount: 214,
@@ -50,6 +51,7 @@ export const SESSIONS: SessionMeta[] = [
     startedAt: NOW - 3 * 60 * MIN,
     durationMs: 47 * MIN,
     route: 'personal',
+    profileId: 'personal',
   }),
   session('saved', {
     status: 'saved',

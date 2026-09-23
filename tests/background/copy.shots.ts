@@ -211,7 +211,7 @@ function meetings(name: string, width: number): Shot {
         transcribe: (id) => (id === 'ready' ? refuse(problems.deleted)() : ok()),
         save: ok,
         remove: ok,
-        route: ok,
+        setProfile: ok,
         setAutoTranscribe: ok,
         openSettings: () => {},
       };
@@ -222,6 +222,11 @@ function meetings(name: string, width: number): Shot {
         audioOnDisk: new Map(PROBLEM_MEETINGS.map((s) => [s.id, s.audio.bytes])),
         missing: [],
         geminiKeyMissing: false,
+        profiles: [
+          { id: 'team', name: 'Team' },
+          { id: 'personal', name: 'Personal' },
+        ],
+        defaultProfileId: 'team',
         autoTranscribe: true,
         retentionDays: 7,
         now: NOW,

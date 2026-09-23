@@ -1,12 +1,12 @@
 /**
  * The Meetings page in every state of the direction's wireframes: Needs you + day groups,
- * each status, inline confirms, the ⋯ menu (and its flip at the viewport bottom), empty,
- * setup blocked, large text, keyboard focus. Light and dark, 390 → 1280 px.
+ * each status, inline confirms, the ⋯ menu (and its flip at the viewport bottom), the
+ * profile menu, empty, setup blocked, large text, keyboard focus. Light and dark, 390 → 1280 px.
  */
 import type { SessionMeta } from '@lib/types';
 import { createDashboardView, type DashboardData, type DashboardView } from '@lib/ui/dashboardView';
 import dashboardHtml from '../../entrypoints/dashboard/index.html?raw';
-import { MEETINGS, MEETING_RESULTS } from '../ui/dashboardFixtures';
+import { MEETINGS, MEETING_RESULTS, PROFILES } from '../ui/dashboardFixtures';
 import { FMT, gallery, ok, shell, type Shot } from './harness';
 import { NOW } from './scenarios';
 
@@ -41,7 +41,7 @@ function dashboard(name: string, width: number, o: Options = {}): Shot {
       const root = shell(dashboardHtml);
       current = createDashboardView(
         root,
-        { stop: ok, transcribe: ok, save: ok, remove: ok, route: ok, setAutoTranscribe: ok, openSettings: () => {} },
+        { stop: ok, transcribe: ok, save: ok, remove: ok, setProfile: ok, setAutoTranscribe: ok, openSettings: () => {} },
         FMT,
       );
       current.update({
@@ -50,7 +50,8 @@ function dashboard(name: string, width: number, o: Options = {}): Shot {
         audioOnDisk: new Map(MEETINGS.map((s) => [s.id, s.audio.bytes])),
         missing: [],
         geminiKeyMissing: false,
-        defaultRoute: 'team',
+        profiles: PROFILES,
+        defaultProfileId: 'team',
         autoTranscribe: true,
         retentionDays: 7,
         now: NOW,
@@ -140,7 +141,17 @@ gallery('dashboard', [
   dashboard('problems-no-captions-narrow', 390, { data: { sessions: NO_CAPTIONS } }),
   dashboard('focus', 1280, {
     full: false,
-    after: (root) => root.querySelector<HTMLElement>('[data-key="route:route-team"]')!.focus(),
+    after: (root) => root.querySelector<HTMLElement>('[data-key="ready:profile"]')!.focus(),
+  }),
+  // A meeting not transcribed yet: its profile button opens the profile list (✓ its own).
+  dashboard('profile-menu', 1280, { after: (root) => click(root, 'ready:profile') }),
+  dashboard('profile-menu-narrow', 390, {
+    full: false,
+    height: 700,
+    after: (root) => {
+      root.querySelector('[data-key="ready:profile"]')!.scrollIntoView({ block: 'center' });
+      click(root, 'ready:profile');
+    },
   }),
   dashboard('empty', 1280, { data: { sessions: [], pinHint: true } }),
   dashboard('empty-narrow', 390, { data: { sessions: [], pinHint: true } }),

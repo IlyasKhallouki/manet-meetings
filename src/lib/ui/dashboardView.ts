@@ -1,33 +1,26 @@
 /**
  * The Meetings page: a "Needs you" group (only when something does), then one grouped
  * list per day, newest first. Each row: time · title + byline (the roll) · length ·
- * status (glyph + word, destination, detail) · one bordered next step + ⋯ menu.
+ * status (glyph + word, profile, detail) · one bordered next step + ⋯ menu.
  *
  * Data comes in through update(); requests go out through the handlers, so this module
  * needs no extension APIs and renders in any DOM.
  *
  * Rows are built once and patched in place: a recording row updates every second, and a
  * rebuilt button would lose a click between mousedown and mouseup, or keyboard focus.
- * The next-step button, the Team | Personal control and ⋯ are the same elements for the
- * life of a row. Pending controls are aria-disabled (never `disabled`), so focus stays on
- * them (review C4). When focus is lost anyway (a control hid, a row moved or went away),
- * it moves to the row, or after a delete to the next row's first control.
+ * The next-step button, a ready meeting's profile button and ⋯ are the same elements for
+ * the life of a row. Pending controls are aria-disabled (never `disabled`), so focus stays
+ * on them (review C4). When focus is lost anyway (a control hid, a row moved or went
+ * away), it moves to the row, or after a delete to the next row's first control.
+ *
+ * The page's one menu lists a row's actions (⋯) or the profiles, checked at the meeting's
+ * own (the profile button, Choose profile, ⋯ › Change profile…). Whichever button it is
+ * open on, it closes when what it was built from goes stale.
  */
-import type { Route, SessionMeta } from '../types';
+import type { Profile, SessionMeta } from '../types';
 import { needsYou } from '../storage/sessionStore';
 import { h, mount, type Child } from './dom';
-import {
-  button,
-  callout,
-  iconButton,
-  note,
-  segmented,
-  setDisabled,
-  setSegmented,
-  statusLine,
-  stepProgress,
-  switchRow,
-} from './controls';
+import { button, callout, iconButton, isInert, note, setDisabled, statusLine, stepProgress, switchRow } from './controls';
 import { svg } from './icons';
 import { createMenu, menuButtonAttrs, menuButtonKeys, type MenuItem } from './menu';
 import {
@@ -63,8 +56,10 @@ export interface DashboardData {
   missing: readonly string[];
   /** No Gemini key: meetings are still saved, with a captions-only transcript. */
   geminiKeyMissing: boolean;
-  /** Settings › Default destination: where a meeting goes if nobody chooses (when: the meta's routeDeadline). */
-  defaultRoute?: Route;
+  /** Every profile, in Settings order: the choices for a meeting's profile. */
+  profiles: readonly Pick<Profile, 'id' | 'name'>[];
+  /** The default profile: where a meeting waiting for a destination goes if nobody chooses (when: the meta's routeDeadline). */
+  defaultProfileId: string;
   /** The auto-transcribe setting. */
   autoTranscribe: boolean;
   /** Days audio is kept after a meeting is saved (the storage footnote). */
@@ -81,7 +76,7 @@ export interface DashboardHandlers {
   /** `force` saves despite an existing page (Save a second copy…). */
   save(sessionId: string, opts: { force?: boolean }): Promise<void>;
   remove(sessionId: string): Promise<void>;
-  route(sessionId: string, route: Route): Promise<void>;
+  setProfile(sessionId: string, profileId: string): Promise<void>;
   setAutoTranscribe(on: boolean): Promise<void>;
   /** Opens Settings, on `field` when a specific setting needs fixing. */
   openSettings(field?: FieldName): void;
@@ -111,8 +106,10 @@ interface RowEntry {
   length: HTMLElement;
   head: HTMLElement;
   detail: HTMLElement;
+  /** The line with a ready meeting's profile button. */
   route: HTMLElement;
-  segmented?: HTMLDivElement;
+  profile: HTMLButtonElement;
+  profileName: HTMLElement;
   routeNote: HTMLElement;
   progress: HTMLElement;
   progressBar?: HTMLProgressElement;
@@ -148,7 +145,7 @@ function errorMessage(err: unknown): string {
   return typeof err === 'string' ? err : 'Something went wrong.';
 }
 
-/** Lower-cases the first letter of a detail that follows "Team · ". */
+/** Lower-cases the first letter of a detail that follows "Client meeting · ". */
 function lowerFirst(text: string): string {
   return text.charAt(0).toLowerCase() + text.slice(1);
 }
@@ -177,8 +174,6 @@ export function createDashboardView(
   const pending = new Set<string>();
   const confirming = new Map<string, Confirmation>();
   const failures = new Map<string, string>();
-  /** The destination picked while its request is in flight, so the control doesn't snap back. */
-  const choices = new Map<string, Route>();
   const rows = new Map<string, RowEntry>();
   const sections = new Map<string, SectionEntry>();
   /** Last status seen per meeting, to announce what finished while the page is open. */
@@ -289,12 +284,12 @@ export function createDashboardView(
       )
       .finally(() => {
         pending.delete(id);
-        choices.delete(id);
         render();
       });
   }
 
-  function perform(entry: RowEntry, action: RowAction): void {
+  /** `focus`: where a menu it opens puts focus (the first item from the keyboard). */
+  function perform(entry: RowEntry, action: RowAction, focus: 'first' | 'menu' = 'first'): void {
     const id = entry.id;
     switch (action.kind) {
       case 'stop':
@@ -306,11 +301,11 @@ export function createDashboardView(
       case 'save':
         run(id, () => handlers.save(id, {}));
         return;
-      case 'reroute':
-        run(id, async () => {
-          await handlers.route(id, action.route!);
-          await (action.then === 'save' ? handlers.save(id, {}) : handlers.transcribe(id, {}));
-        });
+      case 'change-profile':
+      case 'choose-profile':
+        // From ⋯, this runs once the menu has closed and focus is back on ⋯: the same
+        // menu opens again there, with the profiles.
+        openProfiles(entry, action.kind === 'choose-profile' ? entry.primary : entry.more, action, focus);
         return;
       case 'delete':
       case 'second-copy':
@@ -351,18 +346,68 @@ export function createDashboardView(
     });
   }
 
-  function chooseRoute(entry: RowEntry, route: Route): void {
+  /**
+   * Sets the meeting's profile, then carries it on (`then`). Choose profile always goes on;
+   * Change profile… with the meeting's own profile changes nothing.
+   */
+  function chooseProfile(entry: RowEntry, profileId: string, action: RowAction): void {
     const id = entry.id;
-    const current = choices.get(id) ?? (routeChoice(entry.meta) === 'optional' ? entry.meta.route : undefined);
-    if (current === route) return;
-    choices.set(id, route);
-    run(id, () => handlers.route(id, route));
+    if (pending.has(id)) return;
+    if (action.kind === 'change-profile' && profileId === entry.meta.profileId) return;
+    const then = action.then;
+    run(id, async () => {
+      await handlers.setProfile(id, profileId);
+      if (then === 'save') await handlers.save(id, {});
+      else if (then === 'transcribe') await handlers.transcribe(id, {});
+    });
   }
 
   // ---- Menu -------------------------------------------------------------------------
 
   function menuSignature(actions: RowActions): string {
-    return JSON.stringify(actions.menu.map((a) => [a.kind, a.label, a.enabled, a.note ?? '']));
+    return JSON.stringify(actions.menu.map((a) => [a.kind, a.label, a.enabled, a.note ?? '', a.then ?? '']));
+  }
+
+  /** The row's profile change: Choose profile (its next step), else Change profile… (⋯, the profile button). */
+  function profileAction(entry: RowEntry, kind: 'change-profile' | 'choose-profile'): RowAction | undefined {
+    if (kind === 'choose-profile') return entry.actions.primary?.kind === kind ? entry.actions.primary : undefined;
+    return entry.actions.menu.find((a) => a.kind === kind);
+  }
+
+  /** What a profile menu was built from: the profiles, the meeting's, and what follows a choice. */
+  function profileSignature(entry: RowEntry, action: RowAction): string {
+    const profiles = data?.profiles.map((p) => [p.id, p.name]) ?? [];
+    return `profiles:${JSON.stringify([profiles, entry.meta.profileId ?? '', action.kind, action.then ?? '', action.enabled])}`;
+  }
+
+  /** The profiles as checked menu items; picking one sets it, then carries the meeting on (`action.then`). */
+  function profileItems(entry: RowEntry, action: RowAction): MenuItem[] {
+    return (data?.profiles ?? []).map((p) => ({
+      label: p.name,
+      checked: p.id === entry.meta.profileId,
+      attrs: { 'data-key': `${entry.id}:profile-${p.id}` },
+      onSelect: () => chooseProfile(entry, p.id, action),
+    }));
+  }
+
+  function openProfiles(entry: RowEntry, anchor: HTMLElement, action: RowAction, focus: 'first' | 'last' | 'menu'): void {
+    if (!action.enabled) return;
+    menu.open(anchor, profileItems(entry, action), {
+      focus,
+      signature: profileSignature(entry, action),
+      label: `Profile for ${entry.view.title}`,
+    });
+  }
+
+  /**
+   * The signature the row's menu open on `anchor` would have now; undefined when that
+   * menu no longer applies (the button hid, the action went away).
+   */
+  function currentSignature(entry: RowEntry, anchor: HTMLElement): string | undefined {
+    if (anchor === entry.more && !menu.signature?.startsWith('profiles:')) return menuSignature(entry.actions);
+    if (anchor === entry.profile && entry.route.hidden) return undefined;
+    const action = profileAction(entry, anchor === entry.primary ? 'choose-profile' : 'change-profile');
+    return action ? profileSignature(entry, action) : undefined;
   }
 
   function menuItems(entry: RowEntry): MenuItem[] {
@@ -424,13 +469,40 @@ export function createDashboardView(
     // Created before the entry exists; the handlers read the entry when they run.
     let entry!: RowEntry;
     const primary = button('', {
-      onClick: () => {
+      onClick: (event) => {
         const action = entry.actions.primary;
-        if (action && action.kind !== 'open' && action.enabled) perform(entry, action);
+        if (!action || action.kind === 'open' || !action.enabled) return;
+        // Choose profile opens the profile menu: a second click closes it, as on ⋯.
+        if (action.kind === 'choose-profile' && menu.anchor === primary) menu.close({ restoreFocus: true });
+        else perform(entry, action, event.detail === 0 ? 'first' : 'menu');
       },
       class: 'meeting-primary',
       attrs: { 'data-key': `${id}:primary`, 'aria-describedby': titleId, hidden: true },
     });
+    primary.addEventListener('keydown', (event) => {
+      const action = entry.actions.primary;
+      if (action?.kind !== 'choose-profile' || !action.enabled) return;
+      menuButtonKeys((focus) => openProfiles(entry, primary, action, focus))(event);
+    });
+    // A ready meeting's profile, as a button that opens the profile menu.
+    const profileName = h('span', { class: 'meeting-profile-name' });
+    const profile = button([profileName, svg('chevron')], {
+      class: 'meeting-profile',
+      onClick: (event) => {
+        const action = profileAction(entry, 'change-profile');
+        if (menu.anchor === profile) menu.close({ restoreFocus: true });
+        else if (action) openProfiles(entry, profile, action, event.detail === 0 ? 'first' : 'menu');
+      },
+      attrs: { ...menuButtonAttrs(menu), 'data-key': `${id}:profile`, 'aria-describedby': titleId },
+    });
+    profile.addEventListener(
+      'keydown',
+      menuButtonKeys((focus) => {
+        const action = profileAction(entry, 'change-profile');
+        if (action && !isInert(profile)) openProfiles(entry, profile, action, focus);
+      }),
+    );
+    route.append(profile);
     const more = iconButton('more', 'More actions', {
       tooltip: 'More actions',
       class: 'meeting-more',
@@ -465,6 +537,8 @@ export function createDashboardView(
       head,
       detail,
       route,
+      profile,
+      profileName,
       routeNote,
       progress,
       progressText,
@@ -534,7 +608,6 @@ export function createDashboardView(
       // A Meet code standing in for the title is set in mono, as everywhere else.
       entry.name.classList.toggle('mono', view.isCode);
       entry.more.setAttribute('aria-label', `More actions for ${view.title}`);
-      entry.segmented?.setAttribute('aria-label', `Save “${view.title}” to`);
     });
     const when = [dated ? whenText(meta.startedAt, d.now, format) : view.time];
     // A recording's clock sits by its status word instead ("● Recording 23:12"): two
@@ -569,10 +642,11 @@ export function createDashboardView(
       ),
     );
 
-    // Destination (as text once it is on its way) + what is happening.
+    // The profile (as text once it is on its way; a ready meeting's is a button) + what is happening.
     const choice = routeChoice(meta);
-    const showsRoute = !choice && meta.status !== 'recording' && meta.status !== 'empty';
-    const detailParts = [showsRoute ? view.routeName : undefined, view.status.detail].filter(
+    const isReady = meta.status === 'ready';
+    const showsProfile = !choice && !isReady && meta.status !== 'recording' && meta.status !== 'empty';
+    const detailParts = [showsProfile ? view.profileName : undefined, view.status.detail].filter(
       (x): x is string => Boolean(x),
     );
     const detailText = detailParts.map((p, i) => (i > 0 ? lowerFirst(p) : p)).join(' · ');
@@ -581,31 +655,22 @@ export function createDashboardView(
       entry.detail.hidden = detailText === '';
     });
 
-    // Team | Personal: built once, patched in place so focus stays on the segment.
-    if (choice && !entry.segmented) {
-      entry.segmented = segmented<Route>({
-        label: `Save “${view.title}” to`,
-        options: [
-          { value: 'team', label: 'Team', attrs: { 'data-key': `${id}:route-team`, title: 'Shared with the team' } },
-          { value: 'personal', label: 'Personal', attrs: { 'data-key': `${id}:route-personal`, title: 'Only you' } },
-        ],
-        value: null,
-        onSelect: (route) => chooseRoute(entry, route),
+    // Not transcribed yet: the profile button, patched in place so focus stays on it. A
+    // profile deleted since reads as a choice to make.
+    if (isReady) {
+      const name = view.profileName;
+      patch(entry, 'profile', name ?? null, () => {
+        entry.profileName.textContent = name ?? 'Choose profile';
+        entry.profile.setAttribute('aria-label', name ? `Profile: ${name}` : 'Choose profile');
       });
-      entry.route.append(entry.segmented);
     }
-    if (entry.segmented) {
-      const pressed = choices.get(id) ?? (choice === 'optional' ? (meta.route ?? null) : null);
-      setSegmented(entry.segmented, choice ? pressed : null);
-      for (const segment of entry.segmented.querySelectorAll('.segment')) setDisabled(segment, isPending);
-    }
-    entry.route.hidden = !choice;
+    setDisabled(entry.profile, isPending);
+    entry.route.hidden = !isReady;
 
     // Waiting for a destination: what happens if nobody chooses, and when (no time while paused).
+    const defaultName = d.profiles.find((p) => p.id === d.defaultProfileId)?.name;
     const routeNote =
-      choice === 'required' && d.defaultRoute
-        ? defaultRouteText(d.defaultRoute, meta.routeDeadline, format)
-        : '';
+      choice === 'required' && defaultName ? defaultRouteText(defaultName, meta.routeDeadline, format) : '';
     patch(entry, 'route-note', routeNote, () => {
       entry.routeNote.textContent = routeNote;
       entry.routeNote.hidden = routeNote === '';
@@ -666,9 +731,18 @@ export function createDashboardView(
     for (const el of lines) el.classList.toggle('is-under-button', primary !== null && el === firstLine);
     if (hasButton && entry.primary.textContent !== primary.label) entry.primary.textContent = primary.label;
     setDisabled(entry.primary, hasButton && !primary.enabled);
+    // Choose profile is a menu button.
+    const opensMenu = primary?.kind === 'choose-profile';
+    patch(entry, 'primary-menu', opensMenu, () => {
+      for (const [name, value] of Object.entries(menuButtonAttrs(menu))) {
+        if (opensMenu) entry.primary.setAttribute(name, String(value));
+        else entry.primary.removeAttribute(name);
+      }
+    });
 
-    // An open menu whose items went stale closes (focus goes back to ⋯).
-    if (menu.anchor === entry.more && menu.signature !== menuSignature(actions)) menu.close();
+    // An open menu whose items went stale closes (focus goes back to its button).
+    const anchor = menu.anchor;
+    if (anchor && entry.main.contains(anchor) && menu.signature !== currentSignature(entry, anchor)) menu.close();
 
     // Inline confirm: replaces the row's content.
     const c = confirming.get(id);
@@ -858,6 +932,7 @@ export function createDashboardView(
       return Number(b.slice(4)) - Number(a.slice(4));
     });
 
+    const profileNames = new Map(d.profiles.map((p) => [p.id, p.name]));
     const seen = new Set<string>();
     const messages: string[] = [];
     const nextOrder: string[] = [];
@@ -878,6 +953,7 @@ export function createDashboardView(
           hasResult,
           audioBytes: d.audioOnDisk?.get(id),
           attendees: d.attendees?.get(id),
+          profileNames,
         });
         const actions = rowActions(meta, { hasResult, pending: pending.has(id) });
         // A job that started meanwhile cancels the question rather than leaving it for later.
@@ -901,7 +977,7 @@ export function createDashboardView(
 
     for (const [id, entry] of rows) {
       if (seen.has(id)) continue;
-      if (menu.anchor === entry.more) menu.close();
+      if (menu.anchor && entry.main.contains(menu.anchor)) menu.close();
       entry.li.remove();
       rows.delete(id);
       confirming.delete(id);

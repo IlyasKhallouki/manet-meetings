@@ -6,10 +6,10 @@
  *
  * The action rules mirror what the background accepts (sessionManager.ts): Transcribe
  * from awaiting-route, ready, failed, processed, empty or duplicate; Save from processed,
- * failed or duplicate with a stored result; a destination change from awaiting-route,
- * ready, failed, processed, empty or duplicate. On a duplicate, "Save a second copy…"
- * skips the Notion check (force), which files a second page. A failed meeting's Try
- * again repeats what failed (failureKind).
+ * failed or duplicate with a stored result; a profile change from recording,
+ * awaiting-route, ready, failed, processed, empty or duplicate. On a duplicate, "Save a
+ * second copy…" skips the Notion check (force), which files a second page. A failed
+ * meeting's Try again repeats what failed (failureKind).
  */
 import { minutesText, recordingHealth, silenceText } from '../recordingHealth';
 import type { JobStage, Route, SessionMeta, SessionStatus } from '../types';
@@ -30,6 +30,15 @@ export interface StatusView {
 
 const TRANSCRIBABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
 const ROUTABLE = new Set<SessionStatus>(['awaiting-route', 'ready', 'failed', 'processed', 'empty', 'duplicate']);
+const PROFILE_CHANGEABLE = new Set<SessionStatus>([
+  'recording',
+  'awaiting-route',
+  'ready',
+  'failed',
+  'processed',
+  'empty',
+  'duplicate',
+]);
 const BUSY = new Set<SessionStatus>(['processing', 'saving']);
 
 /** Pipeline stages in order; the step number is the index + 1 (of 8). */
@@ -99,6 +108,17 @@ const MISSING_SETTINGS = /^Missing settings: (.+?)\. Add them in Settings, then 
 /** The same, stored as the sentence itself (copy.ts problems.missingSettings). */
 const ADD_SAVE_SETTINGS = /^Add .*\b(your name|Notion token|database)\b.* in Settings, then try again\.$/i;
 
+/**
+ * The error a meeting whose profile was deleted fails with: copy.ts problems.profileDeleted,
+ * word for word (the pages can't import background code).
+ */
+const PROFILE_DELETED = 'This meeting’s profile was deleted. Choose another profile.';
+
+/** The meeting failed because its profile was deleted: choosing another is the next step. */
+export function profileMissing(meta: Pick<SessionMeta, 'status' | 'error'>): boolean {
+  return meta.status === 'failed' && meta.error === PROFILE_DELETED;
+}
+
 /** The words a transcription problem leaves on the meeting when it already says the transcript was kept. */
 const SAYS_KEPT = /earlier transcript/i;
 
@@ -128,7 +148,7 @@ export function statusView(meta: SessionMeta, ctx: { hasResult?: boolean } = {})
     case 'recording':
       return { tone: 'live', label: 'Recording' };
     case 'awaiting-route':
-      return { tone: 'caution', label: 'Choose Team or Personal' };
+      return { tone: 'caution', label: 'Choose a profile' };
     case 'ready':
       return { tone: 'neutral', label: 'Not transcribed' };
     case 'processing': {
@@ -147,6 +167,7 @@ export function statusView(meta: SessionMeta, ctx: { hasResult?: boolean } = {})
     case 'empty':
       return { tone: 'none', label: 'Nothing to save', detail: 'No speech or captions were captured.' };
     case 'failed':
+      if (profileMissing(meta)) return { tone: 'caution', label: 'Choose a profile' };
       switch (failureKind(meta, ctx.hasResult === true)) {
         case 'save':
           return { tone: 'caution', label: 'Couldn’t save to Notion' };
@@ -166,16 +187,17 @@ export function canChooseRoute(meta: SessionMeta): boolean {
   return ROUTABLE.has(meta.status);
 }
 
+/** The meeting's profile can be changed (what the background accepts for session/set-profile). */
+export function canChangeProfile(meta: Pick<SessionMeta, 'status'>): boolean {
+  return PROFILE_CHANGEABLE.has(meta.status);
+}
+
 /**
- * Where the row shows the Team | Personal control: `required` while the meeting waits
- * for a destination (nothing pressed), `optional` before it is transcribed (the chosen
- * one pressed), null once it is on its way (the destination is then plain text, and the
- * ⋯ menu offers "Save to … instead").
+ * `required` while the meeting waits for a destination (the routing window is open, and
+ * the row says what happens if nobody chooses); null otherwise.
  */
-export function routeChoice(meta: SessionMeta): 'required' | 'optional' | null {
-  if (meta.status === 'awaiting-route') return 'required';
-  if (meta.status === 'ready') return 'optional';
-  return null;
+export function routeChoice(meta: SessionMeta): 'required' | null {
+  return meta.status === 'awaiting-route' ? 'required' : null;
 }
 
 export function routeLabel(route: Route | undefined): string {
@@ -187,7 +209,15 @@ export function routeLabel(route: Route | undefined): string {
 // ---------------------------------------------------------------------------------------
 // Actions: one next step + the ⋯ menu
 
-export type RowActionKind = 'stop' | 'transcribe' | 'save' | 'open' | 'second-copy' | 'reroute' | 'delete';
+export type RowActionKind =
+  | 'stop'
+  | 'transcribe'
+  | 'save'
+  | 'open'
+  | 'second-copy'
+  | 'change-profile'
+  | 'choose-profile'
+  | 'delete';
 
 export interface RowAction {
   kind: RowActionKind;
@@ -200,9 +230,10 @@ export interface RowAction {
   force?: boolean;
   /** Ask inline first (Delete…, Save a second copy…). */
   confirm?: boolean;
-  /** reroute: the other destination; the save (or transcription) follows. */
-  route?: Route;
-  /** reroute / second-copy: which request carries the meeting on. */
+  /**
+   * change-profile / choose-profile / second-copy: which request carries the meeting on
+   * afterwards. Absent when a profile change is all there is to do.
+   */
   then?: 'save' | 'transcribe';
   /** open: the Notion page. */
   url?: string;
@@ -228,9 +259,9 @@ export function rowActions(meta: SessionMeta, ctx: { hasResult: boolean; pending
     enabled: !pending,
     ...extra,
   });
-  const other: Route = meta.route === 'personal' ? 'team' : 'personal';
   const next = ctx.hasResult ? 'save' : 'transcribe';
-  const reroute = () => act('reroute', `Save to ${routeLabel(other)} instead`, { route: other, then: next });
+  // The page lists the profiles; picking one sets it, then `then` carries the meeting on.
+  const changeProfile = (then?: 'save' | 'transcribe') => act('change-profile', 'Change profile…', then ? { then } : {});
   const transcribeAgain = () => act('transcribe', 'Transcribe again');
 
   let primary: RowAction | null = null;
@@ -239,12 +270,15 @@ export function rowActions(meta: SessionMeta, ctx: { hasResult: boolean; pending
   switch (status) {
     case 'recording':
       primary = act('stop', 'Stop recording');
+      menu.push(changeProfile());
       break;
     case 'awaiting-route':
-      // The Team | Personal control in the status is the next step.
+      // Choosing a profile ends the wait: it is transcribed right away.
+      primary = act('choose-profile', 'Choose profile', { then: 'transcribe' });
       break;
     case 'ready':
       primary = act('transcribe', 'Transcribe');
+      menu.push(changeProfile());
       break;
     case 'processing':
     case 'saving':
@@ -252,7 +286,7 @@ export function rowActions(meta: SessionMeta, ctx: { hasResult: boolean; pending
     case 'processed':
       if (ctx.hasResult) {
         primary = act('save', 'Save to Notion');
-        menu.push(transcribeAgain(), reroute());
+        menu.push(transcribeAgain(), changeProfile(next));
       } else {
         primary = transcribeAgain();
       }
@@ -262,24 +296,29 @@ export function rowActions(meta: SessionMeta, ctx: { hasResult: boolean; pending
       break;
     case 'duplicate':
       if (meta.notion?.url) primary = act('open', 'Open in Notion', { url: meta.notion.url });
-      menu.push(act('second-copy', 'Save a second copy…', { force: true, confirm: true, then: next }), reroute());
+      menu.push(act('second-copy', 'Save a second copy…', { force: true, confirm: true, then: next }), changeProfile(next));
       break;
     case 'empty':
       menu.push(transcribeAgain());
       break;
     case 'failed': {
+      if (profileMissing(meta)) {
+        // Nothing can go on without a profile: choosing one retries (as Try again would).
+        primary = act('choose-profile', 'Choose profile', { then: next });
+        break;
+      }
       // Try again repeats what failed; a transcript kept from before can still be saved.
       const retry = () => act('transcribe', meta.retryAt === undefined ? 'Try again' : 'Try now');
       const kind = failureKind(meta, ctx.hasResult);
       if (ctx.hasResult && kind === 'save') {
         primary = act('save', 'Try again');
-        menu.push(transcribeAgain(), reroute());
+        menu.push(transcribeAgain(), changeProfile(next));
       } else if (ctx.hasResult) {
         primary = retry();
-        menu.push(act('save', 'Save to Notion'), reroute());
+        menu.push(act('save', 'Save to Notion'), changeProfile(next));
       } else {
         primary = retry();
-        menu.push(reroute());
+        menu.push(changeProfile(next));
       }
       break;
     }
@@ -581,10 +620,10 @@ export function recordingCautions(meta: SessionMeta, now: number): Caution[] {
   return out;
 }
 
-/** Under the Team | Personal control: what happens if nobody chooses, and when. */
-export function defaultRouteText(route: Route, at: number | undefined, opts: FormatOptions = {}): string {
+/** Under a meeting waiting for a destination: where it goes if nobody chooses (a profile's name), and when. */
+export function defaultRouteText(name: string, at: number | undefined, opts: FormatOptions = {}): string {
   const when = at === undefined ? '' : ` at ${formatTime(at, opts)}`;
-  return `If you don’t choose, it goes to ${routeLabel(route)}${when}.`;
+  return `If you don’t choose, it goes to ${name}${when}.`;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -601,8 +640,8 @@ export interface SessionRowView {
   /** "32 min", the live clock while recording, or "—". */
   length: string;
   status: StatusView;
-  /** "Team" / "Personal", once chosen. */
-  routeName?: string;
+  /** The meeting's profile ("Client meeting"); absent when it was deleted. */
+  profileName?: string;
   byline: Byline;
   /** Why the last attempt failed, in the page's words. */
   error?: string;
@@ -621,9 +660,16 @@ function lengthOf(meta: SessionMeta, now: number): number | undefined {
   return undefined;
 }
 
+/** `profileNames`: every profile's name by id (Settings.profiles). */
 export function sessionRow(
   meta: SessionMeta,
-  opts: FormatOptions & { now: number; audioBytes?: number; hasResult?: boolean; attendees?: readonly string[] },
+  opts: FormatOptions & {
+    now: number;
+    audioBytes?: number;
+    hasResult?: boolean;
+    attendees?: readonly string[];
+    profileNames?: ReadonlyMap<string, string>;
+  },
 ): SessionRowView {
   const ms = lengthOf(meta, opts.now);
   const title = meta.meetingTitle?.trim();
@@ -638,7 +684,7 @@ export function sessionRow(
     byline: byline(meta, { audioBytes: opts.audioBytes, attendees: opts.attendees }),
     cautions: recordingCautions(meta, opts.now),
   };
-  if (meta.route) row.routeName = routeLabel(meta.route);
+  if (meta.profileId && opts.profileNames?.has(meta.profileId)) row.profileName = opts.profileNames.get(meta.profileId);
   // An error from an earlier attempt is history once the meeting is in Notion or on its way.
   const settled = meta.status === 'saved' || meta.status === 'duplicate' || BUSY.has(meta.status);
   if (meta.error && !settled) row.error = errorText(meta.error);

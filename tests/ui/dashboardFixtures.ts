@@ -2,7 +2,7 @@
  * A Meetings page with one meeting per state, real-length titles and names. Shared by the
  * screenshot gallery (tests/visual/dashboard.shots.ts) and the layout test.
  */
-import type { SessionMeta, SpeakerInfo } from '@lib/types';
+import type { Profile, SessionMeta, SpeakerInfo } from '@lib/types';
 import { NOW, session } from '../visual/scenarios';
 
 export { NOW };
@@ -29,9 +29,17 @@ const audio = (mb: number, patch: Partial<SessionMeta['audio']> = {}): SessionMe
   ...patch,
 });
 
+/** Settings' profiles: the starter two and one of the user's own. */
+export const PROFILES: Pick<Profile, 'id' | 'name'>[] = [
+  { id: 'team', name: 'Team' },
+  { id: 'personal', name: 'Personal' },
+  { id: 'client', name: 'Client meeting' },
+];
+
 /** One meeting per state, newest first within each group once sorted. */
 export const MEETINGS: SessionMeta[] = [
   session('rec', {
+    profileId: 'client',
     status: 'recording',
     meetCode: 'qrs-tuvw-xyz',
     meetingTitle: 'Client call — Halstead audit pilot',
@@ -44,6 +52,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(5.3, { lastChunkAt: NOW - 3000 }),
   }),
   session('route', {
+    profileId: 'team',
     status: 'awaiting-route',
     meetCode: 'ghi-jklm-nop',
     meetingTitle: 'Point hebdo produit',
@@ -54,6 +63,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(7.4),
   }),
   session('proc', {
+    profileId: 'personal',
     status: 'processing',
     stage: 'transcribing-text',
     meetingTitle: 'Design review — onboarding',
@@ -65,6 +75,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(38.2),
   }),
   session('saving', {
+    profileId: 'personal',
     status: 'saving',
     stage: 'saving',
     meetingTitle: '1:1 Ilyas / Yasser',
@@ -76,6 +87,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(6.6),
   }),
   session('saved', {
+    profileId: 'team',
     status: 'saved',
     meetingTitle: 'Weekly product sync',
     startedAt: NOW - 6 * HOUR,
@@ -86,6 +98,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(12),
   }),
   session('failed-save', {
+    profileId: 'client',
     status: 'failed',
     meetCode: 'vwx-yzab-cde',
     meetingTitle: 'Quarterly planning with Lumind, Nova and the Halstead audit team — follow-up on pricing',
@@ -96,6 +109,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(16.1),
   }),
   session('dup', {
+    profileId: 'team',
     status: 'duplicate',
     meetCode: 'xyz-abcd-efg',
     meetingTitle: 'Standup',
@@ -106,6 +120,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(0, { deletedAt: NOW - HOUR }),
   }),
   session('failed', {
+    profileId: 'team',
     status: 'failed',
     meetCode: 'mno-pqrs-tuv',
     startedAt: NOW - 28 * HOUR,
@@ -117,6 +132,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(8),
   }),
   session('processed', {
+    profileId: 'team',
     status: 'processed',
     meetingTitle: 'Sales pipeline review',
     startedAt: NOW - 50 * HOUR,
@@ -126,6 +142,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(9.8),
   }),
   session('empty', {
+    profileId: 'team',
     status: 'empty',
     meetCode: 'efg-hijk-lmn',
     startedAt: NOW - 51 * HOUR,
@@ -134,6 +151,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(0.4),
   }),
   session('ready', {
+    profileId: 'client',
     status: 'ready',
     meetingTitle: 'All-hands — September',
     startedAt: NOW - 74 * HOUR,
@@ -143,6 +161,7 @@ export const MEETINGS: SessionMeta[] = [
     audio: audio(41.5),
   }),
   session('recovered', {
+    profileId: 'team',
     status: 'ready',
     recovered: true,
     meetCode: 'rst-uvwx-yza',

@@ -16,6 +16,7 @@ import { audioFact, popupState, speakersFact } from '@lib/ui/popupView';
 import {
   acceptsTranscribe,
   byline,
+  canChangeProfile,
   canChooseRoute,
   compareSessions,
   dayLabel,
@@ -26,6 +27,7 @@ import {
   formatTime,
   liveClock,
   namesText,
+  profileMissing,
   recordingCautions,
   routeChoice,
   rowActions,
@@ -55,6 +57,7 @@ function meta(patch: Partial<SessionMeta> = {}): SessionMeta {
     startedAt: STARTED,
     status: 'ready',
     route: 'team',
+    profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 12, bytes: 3 * MB, micIncluded: true },
     captionCount: 40,
@@ -85,41 +88,40 @@ function summary(status: SessionStatus, hasResult = false, patch: Partial<Sessio
 
 describe('rowActions: one next step and the ⋯ menu', () => {
   it('gives each status the next step and menu from the direction', () => {
-    expect(summary('recording')).toEqual({ primary: 'Stop recording', menu: ['Delete…'] });
-    // The Team | Personal control is the next step.
-    expect(summary('awaiting-route')).toEqual({ primary: null, menu: ['Delete…'] });
-    expect(summary('ready')).toEqual({ primary: 'Transcribe', menu: ['Delete…'] });
+    expect(summary('recording')).toEqual({ primary: 'Stop recording', menu: ['Change profile…', 'Delete…'] });
+    expect(summary('awaiting-route')).toEqual({ primary: 'Choose profile', menu: ['Delete…'] });
+    expect(summary('ready')).toEqual({ primary: 'Transcribe', menu: ['Change profile…', 'Delete…'] });
     expect(summary('processing')).toEqual({ primary: null, menu: ['Delete…'] });
     expect(summary('saving', true)).toEqual({ primary: null, menu: ['Delete…'] });
     expect(summary('processed', true)).toEqual({
       primary: 'Save to Notion',
-      menu: ['Transcribe again', 'Save to Personal instead', 'Delete…'],
+      menu: ['Transcribe again', 'Change profile…', 'Delete…'],
     });
     expect(summary('saved', true)).toEqual({ primary: 'Open in Notion', menu: ['Delete…'] });
     expect(summary('duplicate')).toEqual({
       primary: 'Open in Notion',
-      menu: ['Save a second copy…', 'Save to Personal instead', 'Delete…'],
+      menu: ['Save a second copy…', 'Change profile…', 'Delete…'],
     });
     expect(summary('empty')).toEqual({ primary: null, menu: ['Transcribe again', 'Delete…'] });
-    expect(summary('failed')).toEqual({ primary: 'Try again', menu: ['Save to Personal instead', 'Delete…'] });
+    expect(summary('failed')).toEqual({ primary: 'Try again', menu: ['Change profile…', 'Delete…'] });
     expect(summary('failed', false, { retryAt: STARTED + 600_000 })).toEqual({
       primary: 'Try now',
-      menu: ['Save to Personal instead', 'Delete…'],
+      menu: ['Change profile…', 'Delete…'],
     });
     // Saving failed: Try again saves the stored transcript.
     const rejected = { error: 'Notion rejected the token. Copy it again in Settings.' };
     expect(summary('failed', true, rejected)).toEqual({
       primary: 'Try again',
-      menu: ['Transcribe again', 'Save to Personal instead', 'Delete…'],
+      menu: ['Transcribe again', 'Change profile…', 'Delete…'],
     });
     // Transcribing again failed: Try again transcribes; the kept transcript can still be saved.
     expect(summary('failed', true, { error: STOPPED.process })).toEqual({
       primary: 'Try again',
-      menu: ['Save to Notion', 'Save to Personal instead', 'Delete…'],
+      menu: ['Save to Notion', 'Change profile…', 'Delete…'],
     });
     expect(summary('failed', true, { error: 'x', retryAt: STARTED + 600_000 })).toEqual({
       primary: 'Try now',
-      menu: ['Save to Notion', 'Save to Personal instead', 'Delete…'],
+      menu: ['Save to Notion', 'Change profile…', 'Delete…'],
     });
   });
 
@@ -128,10 +130,12 @@ describe('rowActions: one next step and the ⋯ menu', () => {
       const a = rowActions(meta({ status: 'failed', ...patch }), { hasResult });
       return [a.primary?.kind, ...a.menu.map((m) => m.kind)];
     };
-    expect(kinds({ error: SAVE_STOPPED }, true)).toEqual(['save', 'transcribe', 'reroute', 'delete']);
-    expect(kinds({ error: problems.didNotStart('save') }, true)).toEqual(['save', 'transcribe', 'reroute', 'delete']);
-    expect(kinds({ error: problems.earlierTranscriptKept }, true)).toEqual(['transcribe', 'save', 'reroute', 'delete']);
-    expect(kinds({ error: problems.transcribingStopped }, false)).toEqual(['transcribe', 'reroute', 'delete']);
+    expect(kinds({ error: SAVE_STOPPED }, true)).toEqual(['save', 'transcribe', 'change-profile', 'delete']);
+    expect(kinds({ error: problems.didNotStart('save') }, true)).toEqual(['save', 'transcribe', 'change-profile', 'delete']);
+    expect(kinds({ error: problems.earlierTranscriptKept }, true)).toEqual(['transcribe', 'save', 'change-profile', 'delete']);
+    expect(kinds({ error: problems.transcribingStopped }, false)).toEqual(['transcribe', 'change-profile', 'delete']);
+    // The meeting's profile was deleted: choosing another is the next step.
+    expect(kinds({ error: problems.profileDeleted }, true)).toEqual(['choose-profile', 'delete']);
   });
 
   it('only asks for what the background accepts', () => {
@@ -140,13 +144,16 @@ describe('rowActions: one next step and the ⋯ menu', () => {
         const m = meta({ status, notion: NOTION });
         const a = rowActions(m, { hasResult });
         for (const action of [a.primary, ...a.menu].filter((x): x is RowAction => x !== null && x.enabled)) {
-          const request = action.kind === 'reroute' || action.kind === 'second-copy' ? action.then : action.kind;
+          const carries = ['change-profile', 'choose-profile', 'second-copy'].includes(action.kind);
+          const request = carries ? action.then : action.kind;
           if (request === 'transcribe') expect(acceptsTranscribe(m), `${status}/${action.label}`).toBe(true);
           if (request === 'save') {
             expect(hasResult, `${status}/${action.label}`).toBe(true);
             expect(['processed', 'failed', 'duplicate']).toContain(status);
           }
-          if (action.kind === 'reroute') expect(canChooseRoute(m)).toBe(true);
+          if (action.kind === 'change-profile' || action.kind === 'choose-profile') {
+            expect(canChangeProfile(m), `${status}/${action.label}`).toBe(true);
+          }
           if (action.kind === 'stop') expect(status).toBe('recording');
         }
       }
@@ -170,17 +177,6 @@ describe('rowActions: one next step and the ⋯ menu', () => {
         }
       }
     }
-  });
-
-  it('offers the other destination, followed by what carries the meeting on', () => {
-    const personal = rowActions(meta({ status: 'processed', route: 'personal' }), { hasResult: true });
-    expect(personal.menu.find((m) => m.kind === 'reroute')).toMatchObject({
-      label: 'Save to Team instead',
-      route: 'team',
-      then: 'save',
-    });
-    const failed = rowActions(meta({ status: 'failed' }), { hasResult: false });
-    expect(failed.menu.find((m) => m.kind === 'reroute')).toMatchObject({ route: 'personal', then: 'transcribe' });
   });
 
   it('keeps Delete… last and asks first; while a job runs it says why it is unavailable', () => {
@@ -211,12 +207,64 @@ describe('rowActions: one next step and the ⋯ menu', () => {
   });
 });
 
+describe('profiles on a row', () => {
+  const names = new Map([['team', 'Team'], ['client', 'Client meeting']]);
+
+  it('shows the profile name', () => {
+    expect(sessionRow(meta({ status: 'saved', profileId: 'client' }), { now: STARTED, profileNames: names }).profileName).toBe('Client meeting');
+    expect(sessionRow(meta({ status: 'saved', profileId: 'gone' }), { now: STARTED, profileNames: names }).profileName).toBeUndefined();
+  });
+
+  it('offers Change profile… where the background accepts it, then the next step', () => {
+    const processed = rowActions(meta({ status: 'processed', profileId: 'team' }), { hasResult: true });
+    expect(processed.menu.find((a) => a.kind === 'change-profile')).toMatchObject({ label: 'Change profile…', then: 'save' });
+    const failed = rowActions(meta({ status: 'failed', profileId: 'team', error: 'Transcribing stopped before it finished. Try again.' }), { hasResult: false });
+    expect(failed.menu.find((a) => a.kind === 'change-profile')?.then).toBe('transcribe');
+    const ready = rowActions(meta({ status: 'ready' }), { hasResult: false });
+    expect(ready.menu.find((a) => a.kind === 'change-profile')?.then).toBeUndefined();
+    const saved = rowActions(meta({ status: 'saved', notion: { pageId: 'p', url: 'u' } }), { hasResult: true });
+    expect(saved.menu.some((a) => a.kind === 'change-profile')).toBe(false);
+  });
+
+  it('makes Choose profile the next step when the profile was deleted', () => {
+    const m = meta({ status: 'failed', profileId: 'gone', error: 'This meeting’s profile was deleted. Choose another profile.' });
+    expect(rowActions(m, { hasResult: true }).primary).toMatchObject({ kind: 'choose-profile', label: 'Choose profile', then: 'save' });
+    expect(statusView(m)).toEqual({ tone: 'caution', label: 'Choose a profile' });
+  });
+
+  it('asks a meeting waiting for a destination to choose a profile, which transcribes it', () => {
+    expect(rowActions(meta({ status: 'awaiting-route' }), { hasResult: false }).primary).toMatchObject({
+      kind: 'choose-profile',
+      label: 'Choose profile',
+      then: 'transcribe',
+    });
+  });
+
+  it('knows a deleted profile by the background’s words', () => {
+    expect(profileMissing({ status: 'failed', error: problems.profileDeleted })).toBe(true);
+    expect(profileMissing({ status: 'failed', error: problems.transcribingStopped })).toBe(false);
+    expect(profileMissing({ status: 'processed', error: problems.profileDeleted })).toBe(false);
+  });
+
+  it('allows a profile change only where the background accepts it', () => {
+    expect(ALL.filter((status) => canChangeProfile(meta({ status })))).toEqual([
+      'recording',
+      'awaiting-route',
+      'ready',
+      'processed',
+      'duplicate',
+      'empty',
+      'failed',
+    ]);
+  });
+});
+
 describe('routeChoice', () => {
-  it('asks for a destination while the meeting waits, and lets it change until it is transcribed', () => {
+  it('asks for a destination only while the meeting waits for one', () => {
     expect(ALL.map((status) => [status, routeChoice(meta({ status }))])).toEqual([
       ['recording', null],
       ['awaiting-route', 'required'],
-      ['ready', 'optional'],
+      ['ready', null],
       ['processing', null],
       ['processed', null],
       ['saving', null],
@@ -247,7 +295,7 @@ describe('statusView', () => {
     };
     expect(ALL.map((s) => view(s))).toEqual([
       'live: Recording',
-      'caution: Choose Team or Personal',
+      'caution: Choose a profile',
       'neutral: Not transcribed',
       'working: Starting',
       'caution: Transcribed, not saved yet',
@@ -357,7 +405,7 @@ describe('statusView', () => {
         return [v.label, v.detail ?? ''];
       }),
     );
-    words.push(storageSummary([meta()], null, 7).text, defaultRouteText('team', undefined));
+    words.push(storageSummary([meta()], null, 7).text, defaultRouteText('Team', undefined));
     for (const w of words) expect(w).not.toMatch(/'/);
   });
 });
@@ -454,6 +502,7 @@ describe('sessionRow', () => {
   it('formats a saved meeting', () => {
     const row = sessionRow(meta({ status: 'saved', meetingTitle: 'Weekly sync', durationMs: 3_723_000, notion: NOTION }), {
       now: STARTED + 4_000_000,
+      profileNames: new Map([['team', 'Team']]),
       ...FMT,
     });
     expect(row).toMatchObject({
@@ -461,7 +510,7 @@ describe('sessionRow', () => {
       meetCode: 'abc-defg-hij',
       time: '08:15',
       length: '1 h 2 min',
-      routeName: 'Team',
+      profileName: 'Team',
       status: { tone: 'done', label: 'Saved to Notion' },
       byline: { names: 'No speakers', audio: '3.0 MB audio' },
     });
@@ -676,7 +725,7 @@ describe('a recording’s problems (recordingHealth → recordingCautions)', () 
 
 describe('defaultRouteText', () => {
   it('says where a meeting goes if nobody chooses, and when when it is known', () => {
-    expect(defaultRouteText('team', Date.UTC(2026, 8, 19, 15, 34), FMT)).toBe('If you don’t choose, it goes to Team at 15:34.');
-    expect(defaultRouteText('personal', undefined, FMT)).toBe('If you don’t choose, it goes to Personal.');
+    expect(defaultRouteText('Team', Date.UTC(2026, 8, 19, 15, 34), FMT)).toBe('If you don’t choose, it goes to Team at 15:34.');
+    expect(defaultRouteText('Client meeting', undefined, FMT)).toBe('If you don’t choose, it goes to Client meeting.');
   });
 });

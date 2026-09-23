@@ -1,10 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import '@lib/ui/styles.css';
-import { createDashboardView, type DashboardView } from '@lib/ui/dashboardView';
-import { MEETINGS, MEETING_RESULTS, NOW } from './dashboardFixtures';
+import { createDashboardView, type DashboardData, type DashboardView } from '@lib/ui/dashboardView';
+import { MEETINGS, MEETING_RESULTS, NOW, PROFILES } from './dashboardFixtures';
 
 const noop = () => Promise.resolve();
+const DATA: DashboardData = {
+  sessions: MEETINGS,
+  resultIds: MEETING_RESULTS,
+  audioOnDisk: null,
+  missing: ['Notion integration token', 'Your name'],
+  geminiKeyMissing: true,
+  profiles: PROFILES,
+  defaultProfileId: 'team',
+  autoTranscribe: true,
+  retentionDays: 7,
+  now: NOW,
+};
 let root: HTMLElement;
 let view: DashboardView;
 
@@ -16,19 +28,10 @@ beforeEach(() => {
   document.body.append(root);
   view = createDashboardView(
     root,
-    { stop: noop, transcribe: noop, save: noop, remove: noop, route: noop, setAutoTranscribe: noop, openSettings: () => {} },
+    { stop: noop, transcribe: noop, save: noop, remove: noop, setProfile: noop, setAutoTranscribe: noop, openSettings: () => {} },
     { locale: 'en-GB', timeZone: 'UTC' },
   );
-  view.update({
-    sessions: MEETINGS,
-    resultIds: MEETING_RESULTS,
-    audioOnDisk: null,
-    missing: ['Notion integration token', 'Your name'],
-    geminiKeyMissing: true,
-    autoTranscribe: true,
-    retentionDays: 7,
-    now: NOW,
-  });
+  view.update(DATA);
 });
 
 afterEach(() => {
@@ -99,6 +102,20 @@ describe('Meetings layout (real CSS)', () => {
     const menu = rect(root.querySelector('[role="menu"]')!);
     expect(menu.left).toBeGreaterThanOrEqual(8);
     expect(menu.right).toBeLessThanOrEqual(390 - 8);
+    expectNoSidewaysScroll();
+    expectRowsContained();
+  });
+
+  it('ends a long profile name in an ellipsis, inside its row', async () => {
+    await page.viewport(390, 800);
+    const long = 'Quarterly business review with the Halstead audit committee';
+    view.update({ ...DATA, profiles: PROFILES.map((p) => (p.id === 'client' ? { ...p, name: long } : p)) });
+    const name = root.querySelector<HTMLElement>('li[data-id="ready"] .meeting-profile-name')!;
+    expect(name.textContent).toBe(long);
+    expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
+    // The ⌄ stays in view, after the name.
+    const chevron = rect(root.querySelector('li[data-id="ready"] .meeting-profile .glyph-chevron')!);
+    expect(chevron.left).toBeGreaterThanOrEqual(rect(name).right);
     expectNoSidewaysScroll();
     expectRowsContained();
   });

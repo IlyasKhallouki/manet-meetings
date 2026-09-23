@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Route, SessionMeta } from '@lib/types';
+import type { SessionMeta } from '@lib/types';
 import { createDashboardView, type DashboardData, type DashboardHandlers, type DashboardView } from '@lib/ui/dashboardView';
 
 const FMT = { locale: 'en-GB', timeZone: 'UTC' } as const;
@@ -13,6 +13,7 @@ function meta(id: string, patch: Partial<SessionMeta> = {}): SessionMeta {
     startedAt: T0,
     status: 'ready',
     route: 'team',
+    profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 10, bytes: 2 * MB, micIncluded: true },
     captionCount: 12,
@@ -46,6 +47,7 @@ const SAMPLE: SessionMeta[] = [
     status: 'processing',
     stage: 'summarizing',
     route: 'personal',
+    profileId: 'personal',
     meetingTitle: 'Design review',
     job: { id: 'j', kind: 'process', startedAt: T0 + 3_600_000 },
   }),
@@ -59,6 +61,11 @@ const SAMPLE: SessionMeta[] = [
   }),
 ];
 
+const PROFILES = [
+  { id: 'team', name: 'Team' },
+  { id: 'personal', name: 'Personal' },
+];
+
 function data(patch: Partial<DashboardData> = {}): DashboardData {
   return {
     sessions: SAMPLE,
@@ -66,6 +73,8 @@ function data(patch: Partial<DashboardData> = {}): DashboardData {
     audioOnDisk: new Map([['saved', 3 * MB]]),
     missing: [],
     geminiKeyMissing: false,
+    profiles: PROFILES,
+    defaultProfileId: 'team',
     autoTranscribe: true,
     retentionDays: 7,
     now: T0 + 3_600_000 + 65_000,
@@ -78,7 +87,7 @@ const withSession = (id: string, patch: Partial<SessionMeta>) => SAMPLE.map((s) 
 interface Call {
   action: string;
   id: string;
-  route?: Route;
+  profileId?: string;
   force?: boolean;
   on?: boolean;
 }
@@ -98,7 +107,7 @@ function recorder() {
     transcribe: (id, opts) => pending({ action: 'transcribe', id, ...(opts.force ? { force: true } : {}) }),
     save: (id, opts) => pending({ action: 'save', id, ...(opts.force ? { force: true } : {}) }),
     remove: (id) => pending({ action: 'remove', id }),
-    route: (id, route) => pending({ action: 'route', id, route }),
+    setProfile: (id, profileId) => pending({ action: 'set-profile', id, profileId }),
     setAutoTranscribe: (on) => pending({ action: 'auto', id: '', on }),
     openSettings: () => {
       settingsOpened++;
@@ -303,18 +312,22 @@ describe('Meetings: status', () => {
     // The background writes the default's time on the meeting (SessionMeta.routeDeadline).
     const waiting = (deadline?: number) =>
       SAMPLE.map((s) => (s.id === 'route' ? { ...s, routeDeadline: deadline } : s));
-    mountView(recorder(), data({ defaultRoute: 'team', sessions: waiting(T0 + 3_600_000 + 100_000) }));
+    mountView(recorder(), data({ defaultProfileId: 'team', sessions: waiting(T0 + 3_600_000 + 100_000) }));
     const note = () => row('route').querySelector('[data-role="route-default"]');
     expect(text(note())).toBe('If you don’t choose, it goes to Team at 09:01.');
     // Paused in the routing window: no deadline, still the default.
-    view!.update(data({ defaultRoute: 'personal', sessions: waiting(undefined) }));
+    view!.update(data({ defaultProfileId: 'personal', sessions: waiting(undefined) }));
     expect(text(note())).toBe('If you don’t choose, it goes to Personal.');
     // Resumed: a new countdown.
-    view!.update(data({ defaultRoute: 'personal', sessions: waiting(T0 + 3_600_000 + 220_000) }));
+    view!.update(data({ defaultProfileId: 'personal', sessions: waiting(T0 + 3_600_000 + 220_000) }));
     expect(text(note())).toBe('If you don’t choose, it goes to Personal at 09:03.');
+    // The default profile's own name.
+    const profiles = [...PROFILES, { id: 'client', name: 'Client meeting' }];
+    view!.update(data({ profiles, defaultProfileId: 'client', sessions: waiting(undefined) }));
+    expect(text(note())).toBe('If you don’t choose, it goes to Client meeting.');
     // Only while nothing is chosen.
     expect(shown(row('saved').querySelector('[data-role="route-default"]'))).toBe(false);
-    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'team' }), defaultRoute: 'team' }));
+    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'team' }), defaultProfileId: 'team' }));
     expect(shown(note())).toBe(false);
   });
 
@@ -338,7 +351,7 @@ describe('Meetings: the next step', () => {
     mountView();
     const label = (id: string) => (shown(primary(id)) ? text(primary(id)) : null);
     expect(label('rec')).toBe('Stop recording');
-    expect(label('route')).toBeNull();
+    expect(label('route')).toBe('Choose profile');
     expect(label('proc')).toBeNull();
     expect(label('failed')).toBe('Try again');
     expect(label('saved')).toBeNull();
@@ -401,60 +414,192 @@ describe('Meetings: the next step', () => {
   it('moves focus to the row when its focused control goes away', () => {
     mountView();
     primary('rec').focus();
-    // Stopped elsewhere: Stop disappears and the row moves to Needs you.
-    view!.update(data({ sessions: withSession('rec', { status: 'awaiting-route', durationMs: 130_000 }) }));
+    // Stopped and transcribing, from elsewhere: Stop disappears, and nothing takes its place.
+    view!.update(data({ sessions: withSession('rec', { status: 'processing', durationMs: 130_000 }) }));
     expect(shown(primary('rec'))).toBe(false);
-    expect(sectionIds('Needs you')).toContain('rec');
     expect(document.activeElement).toBe(row('rec'));
+  });
+
+  it('keeps focus on the next step when it changes in place', () => {
+    mountView();
+    const button = primary('rec');
+    button.focus();
+    // Stopped elsewhere: the row moves to Needs you, and Stop becomes Choose profile.
+    view!.update(data({ sessions: withSession('rec', { status: 'awaiting-route', durationMs: 130_000 }) }));
+    expect(sectionIds('Needs you')).toContain('rec');
+    expect(primary('rec')).toBe(button);
+    expect(text(button)).toBe('Choose profile');
+    expect(document.activeElement).toBe(button);
   });
 });
 
-describe('Meetings: Team | Personal', () => {
-  it('asks for a destination with two buttons, not a select', () => {
-    mountView();
-    const group = cell('route', 'status').querySelector<HTMLElement>('[role="group"].segmented')!;
-    expect(group.getAttribute('aria-label')).toBe('Save “abc-defg-hij” to');
-    const segments = [...group.querySelectorAll<HTMLButtonElement>('button.segment')];
-    expect(segments.map((s) => [text(s), s.getAttribute('aria-pressed')])).toEqual([
-      ['Team', 'false'],
-      ['Personal', 'false'],
+describe('Meetings: profiles', () => {
+  const profiles = [
+    { id: 'team', name: 'Team' },
+    { id: 'client', name: 'Client meeting' },
+  ];
+  const profileItems = () => [...menuEl().querySelectorAll<HTMLElement>('.menu-item')];
+  const checks = () => profileItems().map((i) => [text(i), i.getAttribute('aria-checked')]);
+
+  it('shows a ready meeting’s profile as a button that opens the profile list', async () => {
+    const r = mountView(recorder(), data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles }));
+    const button = keyed('r:profile') as HTMLButtonElement;
+    expect(button.textContent).toBe('Team');
+    expect(button.getAttribute('aria-label')).toBe('Profile: Team');
+    expect(button.getAttribute('aria-haspopup')).toBe('menu');
+    expect(button.querySelector('svg.glyph-chevron')).not.toBeNull();
+    // The name is on the button, not repeated in the detail line.
+    expect(shown(row('r').querySelector('.meeting-detail'))).toBe(false);
+    button.click();
+    expect(menuOpen()).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(menuEl().getAttribute('aria-label')).toBe('Profile for abc-defg-hij');
+    expect(profileItems().map((i) => i.getAttribute('role'))).toEqual(['menuitemradio', 'menuitemradio']);
+    expect(checks()).toEqual([
+      ['Team', 'true'],
+      ['Client meeting', 'false'],
     ]);
-    expect(root.querySelector('select')).toBeNull();
-    // Only rows waiting for a destination or not transcribed yet show it.
-    expect(cell('proc', 'status').querySelector('.segmented')).toBeNull();
-  });
-
-  it('arrow keys move focus only; activation commits, and focus stays through the move', async () => {
-    const r = mountView();
-    const team = keyed('route:route-team')!;
-    const personal = keyed('route:route-personal')!;
-    team.focus();
-    key(team, 'ArrowRight');
-    expect(document.activeElement).toBe(personal);
-    expect(r.calls).toEqual([]);
-
-    personal.click();
-    expect(r.calls).toEqual([{ action: 'route', id: 'route', route: 'personal' }]);
-    expect(personal.getAttribute('aria-pressed')).toBe('true');
-    expect(personal.getAttribute('aria-disabled')).toBe('true');
-    expect(document.activeElement).toBe(personal);
+    profileItems()[1]!.click();
+    expect(r.calls).toEqual([{ action: 'set-profile', id: 'r', profileId: 'client' }]);
     r.settle[0]!.resolve();
     await flush();
-
-    // Routed (auto-transcribe off): the row leaves Needs you, the control stays pressed.
-    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'personal' }) }));
-    expect(sectionIds('Needs you')).toEqual(['failed']);
-    expect(personal.getAttribute('aria-pressed')).toBe('true');
-    expect(document.activeElement).toBe(personal);
-    expect(text(primary('route'))).toBe('Transcribe');
+    // Not transcribed yet: only the profile changes.
+    expect(r.calls.length).toBe(1);
   });
 
-  it('does nothing when the chosen destination is pressed again', () => {
-    const r = mountView(recorder(), data({ sessions: withSession('route', { status: 'ready', route: 'team' }) }));
-    keyed('route:route-team')!.click();
+  it('opens from the keyboard like ⋯, and hands focus back to the button after a choice', async () => {
+    const r = mountView(recorder(), data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles }));
+    const button = keyed('r:profile') as HTMLButtonElement;
+    button.focus();
+    key(button, 'ArrowDown');
+    expect(menuOpen()).toBe(true);
+    expect(document.activeElement).toBe(menuEl().querySelector('[data-key="r:profile-team"]'));
+    key(document.activeElement!, 'Escape');
+    expect(menuOpen()).toBe(false);
+    expect(document.activeElement).toBe(button);
+    key(button, 'ArrowUp');
+    const last = menuEl().querySelector<HTMLElement>('[data-key="r:profile-client"]')!;
+    expect(document.activeElement).toBe(last);
+    last.click();
+    expect(menuOpen()).toBe(false);
+    // Pending: the button stays focused, aria-disabled, and opens nothing.
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.disabled).toBe(false);
+    button.click();
+    key(button, 'ArrowDown');
+    expect(menuOpen()).toBe(false);
+    r.settle[0]!.resolve();
+    await flush();
+    view!.update(data({ sessions: [meta('r', { status: 'ready', profileId: 'client' })], profiles }));
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    expect(text(button)).toBe('Client meeting');
+    expect(document.activeElement).toBe(button);
+    // A second click on the open button closes the menu.
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(menuOpen()).toBe(true);
+    expect(document.activeElement).toBe(menuEl());
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(menuOpen()).toBe(false);
+  });
+
+  it('changes nothing when a meeting’s own profile is picked', () => {
+    const r = mountView(recorder(), data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles }));
+    keyed('r:profile')!.click();
+    menuEl().querySelector<HTMLElement>('[data-key="r:profile-team"]')!.click();
     expect(r.calls).toEqual([]);
-    keyed('route:route-personal')!.click();
-    expect(r.calls).toEqual([{ action: 'route', id: 'route', route: 'personal' }]);
+  });
+
+  it('changes a transcribed meeting’s profile from ⋯, then saves', async () => {
+    const sessions = [meta('p', { status: 'processed', profileId: 'team' })];
+    const r = mountView(recorder(), data({ sessions, resultIds: new Set(['p']), profiles }));
+    expect(text(cell('p', 'status').querySelector('.meeting-detail'))).toBe('Team');
+    more('p').click();
+    expect(menuLabels()).toEqual(['Transcribe again', 'Change profile…', 'Delete…']);
+    menuItem('change-profile').click();
+    // The same menu, open again on ⋯, with the profiles.
+    expect(menuOpen()).toBe(true);
+    expect(more('p').getAttribute('aria-expanded')).toBe('true');
+    expect(checks()).toEqual([
+      ['Team', 'true'],
+      ['Client meeting', 'false'],
+    ]);
+    menuEl().querySelector<HTMLElement>('[data-key="p:profile-client"]')!.click();
+    expect(r.calls).toEqual([{ action: 'set-profile', id: 'p', profileId: 'client' }]);
+    expect(document.activeElement).toBe(more('p'));
+    r.settle[0]!.resolve();
+    await flush();
+    expect(r.calls[1]).toEqual({ action: 'save', id: 'p' });
+  });
+
+  it('asks for a profile when the meeting’s was deleted, then tries again', async () => {
+    const m = meta('f', { status: 'failed', profileId: 'gone', error: 'This meeting’s profile was deleted. Choose another profile.' });
+    const r = mountView(recorder(), data({ sessions: [m], profiles }));
+    expect(text(primary('f'))).toBe('Choose profile');
+    expect(text(cell('f', 'status'))).toContain('Choose a profile');
+    expect(primary('f').getAttribute('aria-haspopup')).toBe('menu');
+    // No name for a profile that is gone.
+    expect(shown(row('f').querySelector('.meeting-detail'))).toBe(false);
+    primary('f').click();
+    expect(checks()).toEqual([
+      ['Team', 'false'],
+      ['Client meeting', 'false'],
+    ]);
+    expect(document.activeElement).toBe(menuEl().querySelector('[data-key="f:profile-team"]'));
+    menuEl().querySelector<HTMLElement>('[data-key="f:profile-client"]')!.click();
+    expect(document.activeElement).toBe(primary('f'));
+    expect(r.calls).toEqual([{ action: 'set-profile', id: 'f', profileId: 'client' }]);
+    r.settle[0]!.resolve();
+    await flush();
+    // No stored transcript: it is transcribed again.
+    expect(r.calls[1]).toEqual({ action: 'transcribe', id: 'f' });
+  });
+
+  it('ends the wait for a destination: the profile, then the transcription', async () => {
+    const r = mountView();
+    const button = primary('route');
+    button.focus();
+    key(button, 'ArrowDown');
+    expect(menuOpen()).toBe(true);
+    expect(checks()).toEqual([
+      ['Team', 'true'],
+      ['Personal', 'false'],
+    ]);
+    // Its own profile still carries it on.
+    menuEl().querySelector<HTMLElement>('[data-key="route:profile-team"]')!.click();
+    expect(r.calls).toEqual([{ action: 'set-profile', id: 'route', profileId: 'team' }]);
+    r.settle[0]!.resolve();
+    await flush();
+    expect(r.calls[1]).toEqual({ action: 'transcribe', id: 'route' });
+  });
+
+  it('closes the profile menu when it goes stale', () => {
+    mountView(recorder(), data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles }));
+    const button = keyed('r:profile') as HTMLButtonElement;
+    button.click();
+    // A clock tick changes nothing.
+    view!.update(data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles, now: data().now + 1000 }));
+    expect(menuOpen()).toBe(true);
+    // Renamed in Settings.
+    const renamed = [profiles[0]!, { id: 'client', name: 'Clients' }];
+    view!.update(data({ sessions: [meta('r', { status: 'ready', profileId: 'team' })], profiles: renamed }));
+    expect(menuOpen()).toBe(false);
+    expect(document.activeElement).toBe(button);
+    // Transcribing started elsewhere: the button goes, and the menu with it.
+    button.click();
+    expect(menuOpen()).toBe(true);
+    view!.update(data({ sessions: [meta('r', { status: 'processing', profileId: 'team' })], profiles: renamed }));
+    expect(menuOpen()).toBe(false);
+    expect(shown(button)).toBe(false);
+    // Opened from ⋯ on a failed meeting: a result arriving changes what follows a choice.
+    const failed = meta('f', { status: 'failed', profileId: 'team', error: 'Transcribing stopped before it finished. Try again.' });
+    view!.update(data({ sessions: [failed], profiles }));
+    more('f').click();
+    menuItem('change-profile').click();
+    expect(menuOpen()).toBe(true);
+    view!.update(data({ sessions: [failed], profiles, resultIds: new Set(['f']) }));
+    expect(menuOpen()).toBe(false);
+    expect(document.activeElement).toBe(more('f'));
   });
 });
 
@@ -466,7 +611,7 @@ describe('Meetings: ⋯ menu', () => {
     button.click(); // keyboard activation (detail 0): focus on the first item
     expect(menuOpen()).toBe(true);
     expect(button.getAttribute('aria-expanded')).toBe('true');
-    expect(menuLabels()).toEqual(['Transcribe again', 'Save to Personal instead', 'Delete…']);
+    expect(menuLabels()).toEqual(['Transcribe again', 'Change profile…', 'Delete…']);
     expect(document.activeElement).toBe(menuItem('transcribe'));
     key(document.activeElement!, 'Escape');
     expect(menuOpen()).toBe(false);
@@ -502,11 +647,12 @@ describe('Meetings: ⋯ menu', () => {
     expect(menuOpen()).toBe(true);
   });
 
-  it('saves to the other destination instead: the destination, then the save', async () => {
+  it('changes the profile from ⋯, then saves again: the profile, then the save', async () => {
     const r = mountView();
     more('failed').click();
-    menuItem('reroute').click();
-    expect(r.calls).toEqual([{ action: 'route', id: 'failed', route: 'personal' }]);
+    menuItem('change-profile').click();
+    menuEl().querySelector<HTMLElement>('[data-key="failed:profile-personal"]')!.click();
+    expect(r.calls).toEqual([{ action: 'set-profile', id: 'failed', profileId: 'personal' }]);
     r.settle[0]!.resolve();
     await flush();
     expect(r.calls[1]).toEqual({ action: 'save', id: 'failed' });
@@ -591,7 +737,7 @@ describe('Meetings: inline confirms', () => {
     const r = mountView();
     expect(text(root)).not.toMatch(/anyway/i);
     more('dup').click();
-    expect(menuLabels()).toEqual(['Save a second copy…', 'Save to Personal instead', 'Delete…']);
+    expect(menuLabels()).toEqual(['Save a second copy…', 'Change profile…', 'Delete…']);
     menuItem('second-copy').click();
     expect(text(row('dup').querySelector('.meeting-question'))).toBe(
       'Marie already saved “Standup”. Saving yours adds a second page in Notion.',

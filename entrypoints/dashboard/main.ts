@@ -5,7 +5,7 @@ import { defaultProfile } from '@lib/profiles';
 import { getSettings, settingsItem, updateSettings } from '@lib/settings';
 import { getResult } from '@lib/storage/resultStore';
 import { listSessions, watchSessions } from '@lib/storage/sessionStore';
-import type { Route, SessionMeta } from '@lib/types';
+import type { Profile, SessionMeta } from '@lib/types';
 import { createDashboardView } from '@lib/ui/dashboardView';
 import { listResultIds, openSettings as openSettingsPage, watchResultIds } from '@lib/ui/extension';
 import { setupProblems, type FieldName } from '@lib/ui/settingsForm';
@@ -25,7 +25,8 @@ const attendeesAsked = new Set<string>();
 let audioOnDisk: Map<string, number> | null = null;
 let missing: string[] = [];
 let geminiKeyMissing = false;
-let defaultRoute: Route = 'team';
+let profiles: Pick<Profile, 'id' | 'name'>[] = [];
+let defaultProfileId = '';
 let autoTranscribe = true;
 let retentionDays = 7;
 let pinHint = false;
@@ -45,7 +46,7 @@ const view = createDashboardView(root, {
     await sendToBackground('session/delete', { sessionId });
     refreshDiskSoon();
   },
-  route: (sessionId, route) => sendToBackground('session/route', { sessionId, route }),
+  setProfile: (sessionId, profileId) => sendToBackground('session/set-profile', { sessionId, profileId }),
   setAutoTranscribe: async (on) => {
     await updateSettings({ autoTranscribe: on });
     // Before the storage event, so a clock tick in between does not flip the switch back.
@@ -68,7 +69,8 @@ function render(): void {
     attendees,
     missing,
     geminiKeyMissing,
-    defaultRoute,
+    profiles,
+    defaultProfileId,
     autoTranscribe,
     retentionDays,
     pinHint,
@@ -108,10 +110,12 @@ function refreshDiskSoon(): void {
 
 async function refreshSettings(): Promise<void> {
   const settings = await getSettings();
-  const problems = setupProblems(settings, defaultProfile(settings));
+  const profile = defaultProfile(settings);
+  const problems = setupProblems(settings, profile);
   missing = problems.blocking;
   geminiKeyMissing = problems.geminiKeyMissing;
-  defaultRoute = settings.defaultRoute;
+  profiles = settings.profiles.map(({ id, name }) => ({ id, name }));
+  defaultProfileId = profile.id;
   autoTranscribe = settings.autoTranscribe;
   retentionDays = settings.retentionDays;
   render();

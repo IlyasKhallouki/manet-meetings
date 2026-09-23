@@ -7,7 +7,7 @@
  *
  * THE SKIN. The page is the iOS inset grouped list: a grouped background, one r18 --surface
  * card per day, rows clipped to its corners and separated by hairlines inset to the text,
- * capsule next-step buttons, a capsule segmented destination. Nothing here is glass — the
+ * capsule next-step buttons, a capsule profile button. Nothing here is glass — the
  * only glass on this page is the shell's floating bar, which this file never touches.
  * Section rhythm: groups 28 px apart (= .section + .section), the storage line 8 px under
  * the last card and inset 16 px, like a .section-footer.
@@ -219,6 +219,28 @@
 .meeting-route {
   margin-block-start: 6px; /* a control under a status word breathes a little more */
   padding-inline-start: var(--status-indent);
+}
+
+/* A ready meeting's profile: a compact bordered capsule (the height of a segmented
+ * control) with a ⌄, which opens the profile menu. A long name ends in an ellipsis. */
+.meeting-profile {
+  min-block-size: var(--h-seg);
+  max-inline-size: 100%;
+  padding-inline: var(--s3) 10px;
+  gap: var(--s1);
+}
+
+.meeting-profile-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meeting-profile > .glyph-chevron {
+  flex: none;
+  inline-size: 0.8em;
+  block-size: 0.8em;
+  color: var(--label-2);
 }
 
 .meeting-route-note {
