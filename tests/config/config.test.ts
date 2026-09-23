@@ -121,6 +121,25 @@ describe('parseConfigFile', () => {
     expect(error({ ...good, defaultProfileId: 'gone' })).toBe('The file’s default profile isn’t one of its profiles.');
   });
 
+  it('rejects ids that could break a DOM id or aria attribute', () => {
+    const badProfileId = [{ ...client, id: 'has a space' }];
+    expect(error({ ...good, profiles: badProfileId, defaultProfileId: client.id })).toBe('Profile 1 in the file is incomplete.');
+    const tooLongId = [{ ...client, id: 'x'.repeat(65) }];
+    expect(error({ ...good, profiles: tooLongId, defaultProfileId: client.id })).toBe('Profile 1 in the file is incomplete.');
+    const badSectionId = [{ ...client, sections: [{ ...client.sections[0], id: 'bad id' }] }];
+    expect(error({ ...good, profiles: badSectionId, defaultProfileId: client.id })).toBe('Profile 1 in the file is incomplete.');
+  });
+
+  it('rejects two sections in the same profile that share an id', () => {
+    const dupSections = [{ ...client, sections: [client.sections[0], { ...client.sections[0]!, title: 'Other' }] }];
+    expect(error({ ...good, profiles: dupSections, defaultProfileId: client.id })).toBe('Profile 1 in the file is incomplete.');
+  });
+
+  it('caps the number of profiles', () => {
+    const many = Array.from({ length: 51 }, (_, i) => ({ ...client, id: `p${i}` }));
+    expect(error({ ...good, profiles: many, defaultProfileId: 'p0' })).toBe('The file has more than 50 profiles.');
+  });
+
   it('checks the shared settings and the keys', () => {
     expect(error({ ...good, settings: { ...good.settings, retentionDays: -1 } })).toBe(
       'The file’s Keep audio setting must be a number of days from 0 to 365.',
@@ -170,6 +189,18 @@ describe('mergeConfig', () => {
     const salesFile = buildConfigFile(settings({ profiles: [x] }), { name: 'Acme', includeKeys: false, now: NOW });
     const merged = mergeConfig(local, salesFile);
     expect(merged.profiles.map((p) => p.name)).toEqual(['Sales (local 2)', 'Sales (local)', 'Sales']);
+  });
+
+  it('truncates a long name so its "(local)" rename still fits PROFILE_LIMITS.name', () => {
+    const longName = 'S'.repeat(60);
+    const a: Profile = { id: 'a', name: longName, databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const local = settings({ profiles: [a] });
+    const x: Profile = { id: 'x', name: longName, databaseId: '', prompt: '', sections: [], vocabulary: [] };
+    const clashFile = buildConfigFile(settings({ profiles: [x] }), { name: 'Acme', includeKeys: false, now: NOW });
+    const merged = mergeConfig(local, clashFile);
+    const renamed = merged.profiles.find((p) => p.id === 'a')!;
+    expect(renamed.name).toBe(`${'S'.repeat(52)} (local)`);
+    expect(renamed.name.length).toBe(60);
   });
 
   it('gives distinct renames to two local-only profiles that each clash with a different file profile', () => {

@@ -3,7 +3,7 @@
  * only when the exporter asks. Never your name or your meetings. Pure, so the Settings
  * page and the tests use the same rules.
  */
-import { profileProblems } from './profiles';
+import { PROFILE_LIMITS, profileProblems } from './profiles';
 import { MAX_VOCABULARY } from './transcribe/requests';
 import type { NoteSection, Profile, Settings } from './types';
 import { MAX_RETENTION_DAYS, parseLanguageCodes } from './ui/settingsForm';
@@ -11,6 +11,9 @@ import { MAX_RETENTION_DAYS, parseLanguageCodes } from './ui/settingsForm';
 export const CONFIG_FORMAT = 'manet-config';
 export const CONFIG_VERSION = 1;
 export const MAX_CONFIG_BYTES = 1_000_000;
+/** Files are shared between teammates, so an id ends up in DOM ids and aria attributes. */
+export const CONFIG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export const MAX_CONFIG_PROFILES = 50;
 
 export const SHARED_SETTINGS = ['customVocabulary', 'languageCodes', 'autoTranscribe', 'retentionDays', 'includeMic'] as const;
 export type SharedSettings = Pick<Settings, (typeof SHARED_SETTINGS)[number]>;
@@ -92,7 +95,7 @@ const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.every(
 function readSection(v: unknown): NoteSection | null {
   if (!isObject(v)) return null;
   const { id, title, instruction, format } = v;
-  if (!isString(id) || !id || !isString(title) || !isString(instruction)) return null;
+  if (!isString(id) || !CONFIG_ID_RE.test(id) || !isString(title) || !isString(instruction)) return null;
   if (format !== 'paragraph' && format !== 'bullets') return null;
   return { id, title, instruction, format };
 }
@@ -100,10 +103,12 @@ function readSection(v: unknown): NoteSection | null {
 function readProfile(v: unknown): Profile | null {
   if (!isObject(v)) return null;
   const { id, name, databaseId, prompt, sections, vocabulary } = v;
-  if (!isString(id) || !id || !isString(name) || !isString(databaseId) || !isString(prompt)) return null;
+  if (!isString(id) || !CONFIG_ID_RE.test(id) || !isString(name) || !isString(databaseId) || !isString(prompt)) return null;
   if (!Array.isArray(sections) || !isStringList(vocabulary)) return null;
   const read = sections.map(readSection);
   if (read.some((s) => s === null)) return null;
+  const ids = read.map((s) => (s as NoteSection).id);
+  if (new Set(ids).size !== ids.length) return null;
   return { id, name, databaseId, prompt, sections: read as NoteSection[], vocabulary };
 }
 
@@ -142,6 +147,7 @@ export function parseConfigFile(text: string): ParseResult {
   }
   if (json.version !== CONFIG_VERSION) return { ok: false, error: NOT_CONFIG };
   if (!Array.isArray(json.profiles) || json.profiles.length === 0) return { ok: false, error: 'The file has no profiles.' };
+  if (json.profiles.length > MAX_CONFIG_PROFILES) return { ok: false, error: `The file has more than ${MAX_CONFIG_PROFILES} profiles.` };
   const profiles: Profile[] = [];
   for (const [i, raw] of json.profiles.entries()) {
     const profile = readProfile(raw);
@@ -281,13 +287,17 @@ export function mergeConfig(current: Settings, file: ConfigFile): Settings {
   const taken = new Set(fileNames);
   for (const p of localOnly) if (!fileNames.has(fold(p.name))) taken.add(fold(p.name));
 
+  // A renamed profile's name must still fit PROFILE_LIMITS.name: the base is truncated so
+  // the suffix always fits.
+  const withSuffix = (base: string, suffix: string) => `${base.slice(0, Math.max(0, PROFILE_LIMITS.name - suffix.length))}${suffix}`;
+
   // Rename only the local-only profiles whose name a file profile takes, each against the
   // names already settled (file names, kept local names and renames chosen so far).
   const renamed = new Map<string, string>();
   for (const p of localOnly) {
     if (!fileNames.has(fold(p.name))) continue;
-    let name = `${p.name} (local)`;
-    for (let n = 2; taken.has(fold(name)); n++) name = `${p.name} (local ${n})`;
+    let name = withSuffix(p.name, ' (local)');
+    for (let n = 2; taken.has(fold(name)); n++) name = withSuffix(p.name, ` (local ${n})`);
     taken.add(fold(name));
     renamed.set(p.id, name);
   }
