@@ -3,7 +3,7 @@
  */
 import type { MeetingPageInput } from '../types';
 import { richText } from './richText';
-import { MEETING_PROPS } from './schema';
+import { MEETING_PROPS, OPTIONAL_PROPS } from './schema';
 
 const MAX_OPTION_LENGTH = 100;
 const MAX_OPTIONS = 100;
@@ -70,6 +70,12 @@ export function buildMeetingProperties(
     [MEETING_PROPS.recordedBy]: { rich_text: richText(input.recordedBy) },
     [MEETING_PROPS.source]: { select: { name: input.source } },
   };
+}
+
+/** The optional Profile select. Nothing for a blank name. */
+export function profileProperty(name: string): Record<string, unknown> {
+  const [option] = sanitizeMultiSelect([name]);
+  return option ? { [OPTIONAL_PROPS.profile]: { select: { name: option } } } : {};
 }
 
 /**

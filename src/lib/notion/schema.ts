@@ -35,6 +35,9 @@ export const MEETING_DB_SCHEMA = {
   [MEETING_PROPS.key]: 'rich_text',
 } as const satisfies Record<string, NotionPropertyType>;
 
+/** Filled when the database has them, never required: a Select named Profile tells profiles sharing a database apart. */
+export const OPTIONAL_PROPS = { profile: 'Profile' } as const;
+
 export const SOURCE_OPTIONS: readonly TranscriptSource[] = ['audio+captions', 'audio-only', 'captions-only'];
 
 const SOURCE_COLORS: Record<TranscriptSource, string> = {
@@ -57,5 +60,6 @@ export function databaseSchemaPayload(): Record<string, Record<string, unknown>>
       select: { options: SOURCE_OPTIONS.map((name) => ({ name, color: SOURCE_COLORS[name] })) },
     },
     [MEETING_PROPS.key]: { type: 'rich_text', rich_text: {} },
+    [OPTIONAL_PROPS.profile]: { type: 'select', select: { options: [] } },
   };
 }

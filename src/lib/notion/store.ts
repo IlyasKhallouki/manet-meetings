@@ -10,9 +10,9 @@ import type { ExistingMeeting, MeetingPageInput, MeetingStore } from '../types';
 import { batchBlocks, buildMeetingBody, buildTranscriptBlocks } from './blocks';
 import { NotionClient, NotionError, type NotionDatabase, type NotionDataSource, type NotionPage } from './client';
 import { compareByCreation, parseNotionId } from './ids';
-import { buildMeetingProperties, keyProperty } from './properties';
+import { buildMeetingProperties, keyProperty, profileProperty } from './properties';
 import { plainText, richText } from './richText';
-import { MEETING_PROPS } from './schema';
+import { MEETING_PROPS, OPTIONAL_PROPS } from './schema';
 
 export interface ResolvedDatabase {
   databaseId: string;
@@ -73,6 +73,18 @@ function isLive(page: NotionPage): boolean {
 /** Notion answered and refused, so the write did not happen (unlike a timeout or a 5xx). */
 function refused(err: unknown): boolean {
   return err instanceof NotionError && err.status >= 400 && err.status < 500;
+}
+
+/** The row's properties but the Key; the Profile select only where the database has one. */
+export function pageProperties(
+  input: MeetingPageInput,
+  db: Pick<ResolvedDatabase, 'titleProperty' | 'properties'>,
+): Record<string, unknown> {
+  const hasProfile = db.properties[OPTIONAL_PROPS.profile] === 'select';
+  return {
+    ...buildMeetingProperties(input, db.titleProperty),
+    ...(input.profileName && hasProfile ? profileProperty(input.profileName) : {}),
+  };
 }
 
 const cache = new Map<string, Promise<ResolvedDatabase>>();
@@ -155,7 +167,7 @@ export function createNotionMeetingStore(token: string): MeetingStore {
         page = await client.createPage({
           parent: { type: 'data_source_id', data_source_id: db.dataSourceId },
           icon: { type: 'emoji', emoji: '🎧' },
-          properties: buildMeetingProperties(input, db.titleProperty),
+          properties: pageProperties(input, db),
           children: body,
         });
       } catch (err) {

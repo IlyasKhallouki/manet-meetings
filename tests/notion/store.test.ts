@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NotionError } from '@lib/notion/client';
-import { createNotionMeetingStore } from '@lib/notion/store';
+import { createNotionMeetingStore, pageProperties } from '@lib/notion/store';
 import { schemaProblems, verifyDatabase } from '@lib/notion/verify';
 
 const DB = 'https://www.notion.so/lumind/Meetings-0f1e2d3c4b5a69788796a5b4c3d2e1f0?v=aaaaaaaabbbbccccddddeeeeeeeeeeee';
@@ -75,5 +75,23 @@ describe('schemaProblems', () => {
       'Change “Duration” to a Number property. It’s Text now.',
       'Add a Text property named “Key”.',
     ]);
+  });
+});
+
+describe('pageProperties', () => {
+  const input = {
+    key: 'abc-defg-hij-2026-09-19', title: 'Sync', startedAt: 0, durationMs: 60_000, attendees: [], meetCode: 'abc-defg-hij',
+    recordedBy: 'Ilyas', source: 'audio-only' as const, summary: null, transcript: { turns: [], source: 'audio-only' as const, notes: [] },
+    profileName: 'Client meeting',
+  };
+
+  it('fills Profile when the database has that select', () => {
+    const props = pageProperties(input, { titleProperty: 'Name', properties: { Profile: 'select' } });
+    expect(props.Profile).toEqual({ select: { name: 'Client meeting' } });
+  });
+
+  it('leaves Profile out when the database has none, or it isn’t a select', () => {
+    expect(pageProperties(input, { titleProperty: 'Name', properties: {} })).not.toHaveProperty('Profile');
+    expect(pageProperties(input, { titleProperty: 'Name', properties: { Profile: 'rich_text' } })).not.toHaveProperty('Profile');
   });
 });

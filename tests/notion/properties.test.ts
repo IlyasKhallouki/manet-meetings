@@ -5,6 +5,7 @@ import {
   durationMinutes,
   isoWithOffset,
   keyProperty,
+  profileProperty,
   sanitizeMultiSelect,
 } from '@lib/notion/properties';
 import { databaseSchemaPayload, MEETING_DB_SCHEMA, MEETING_PROPS, SOURCE_OPTIONS } from '@lib/notion/schema';
@@ -43,7 +44,7 @@ describe('database schema', () => {
 
   it('builds a create-database payload with one config per property', () => {
     const payload = databaseSchemaPayload();
-    expect(Object.keys(payload).sort()).toEqual(Object.keys(MEETING_DB_SCHEMA).sort());
+    expect(Object.keys(payload).sort()).toEqual([...Object.keys(MEETING_DB_SCHEMA), 'Profile'].sort());
     expect(payload.Name).toEqual({ type: 'title', title: {} });
     expect(payload.Duration).toEqual({ type: 'number', number: { format: 'number' } });
     expect(payload.Source).toMatchObject({
@@ -51,6 +52,7 @@ describe('database schema', () => {
       select: { options: SOURCE_OPTIONS.map((name) => expect.objectContaining({ name })) },
     });
     expect(payload.Key).toEqual({ type: 'rich_text', rich_text: {} });
+    expect(payload.Profile).toEqual({ type: 'select', select: { options: [] } });
   });
 });
 
@@ -140,5 +142,15 @@ describe('buildMeetingProperties', () => {
       { title: Array<{ text: { content: string } }> }
     >;
     expect(long.Name?.title.map((t) => t.text.content.length)).toEqual([2000, 500]);
+  });
+});
+
+describe('profileProperty', () => {
+  it('fills the Profile select with the profile name, without commas', () => {
+    expect(profileProperty('Client, EMEA')).toEqual({ Profile: { select: { name: 'Client EMEA' } } });
+  });
+
+  it('writes nothing for a blank name', () => {
+    expect(profileProperty('  ')).toEqual({});
   });
 });

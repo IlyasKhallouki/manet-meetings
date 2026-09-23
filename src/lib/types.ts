@@ -171,6 +171,8 @@ export interface MeetingPageInput {
   attendees: string[];
   meetCode: string;
   recordedBy: string;
+  /** Fills the database's optional Profile select, when it has one. */
+  profileName?: string;
   source: TranscriptSource;
   summary: MeetingSummary | null;
   transcript: MeetingTranscript;
