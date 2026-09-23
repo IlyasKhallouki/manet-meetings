@@ -16,9 +16,6 @@ export function testSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     geminiApiKey: '',
     notionToken: '',
-    notionTeamDbId: '',
-    notionPersonalDbId: '',
-    defaultRoute: 'team',
     autoTranscribe: true,
     retentionDays: 7,
     displayName: SELF_NAME,
@@ -45,7 +42,6 @@ export function sessionMeta(overrides: Partial<SessionMeta> = {}): SessionMeta {
     endedAt: STARTED_AT + SPEECH_MIXED_MS,
     durationMs: SPEECH_MIXED_MS,
     status: 'processing',
-    route: 'team',
     profileId: 'team',
     idempotencyKey: `${MEET_CODE}-2026-09-19`,
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 0, bytes: 0, micIncluded: true },

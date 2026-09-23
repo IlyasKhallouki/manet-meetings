@@ -116,7 +116,6 @@ const PROBLEM_MEETINGS: SessionMeta[] = [
     startedAt: NOW - 23 * MIN,
     endedAt: undefined,
     durationMs: undefined,
-    route: undefined,
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 40, bytes: 0, micIncluded: true, error: problems.audioStopped() },
     captionsError: problems.captionsMissing,
   }),

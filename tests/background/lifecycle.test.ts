@@ -112,10 +112,8 @@ describe('recording lifecycle', () => {
     const [job] = h.offscreen.callsOf('offscreen/process');
     expect(job?.profile).toMatchObject({ id: 'personal', databaseId: 'personal-db' });
     expect(job?.meta).toMatchObject({ id: ID, status: 'processing', profileId: 'personal' });
-    expect(job?.meta.route).toBeUndefined();
     expect(job?.captions).toEqual(await loadCaptions(ID));
     expect(job?.captions.map((c) => c.text)).toEqual(['Bonjour à tous', 'Hi all']);
-    expect(job?.settings.notionPersonalDbId).toBe('personal-db');
 
     const result = await getResult(ID);
     expect(result?.title).toBe('Weekly sync');

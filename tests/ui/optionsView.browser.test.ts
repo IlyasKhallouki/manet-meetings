@@ -13,9 +13,6 @@ const DB = '1a2b3c4d5e6f40718293a4b5c6d7e8f9';
 const SETTINGS: Settings = {
   geminiApiKey: 'manet-test-invalid-key',
   notionToken: 'ntn_example',
-  notionTeamDbId: '1a2b3c4d5e6f40718293a4b5c6d7e8f9',
-  notionPersonalDbId: '',
-  defaultRoute: 'personal',
   autoTranscribe: false,
   retentionDays: 14,
   displayName: 'Ilya',
@@ -27,15 +24,13 @@ const SETTINGS: Settings = {
 };
 
 /** Everything needed to save meetings (Team is the default and has a database). */
-const COMPLETE: Settings = { ...SETTINGS, defaultRoute: 'team' };
+const COMPLETE: Settings = { ...SETTINGS, defaultProfileId: 'team' };
 
 const EMPTY: Settings = {
   ...SETTINGS,
   geminiApiKey: '',
   notionToken: '',
-  notionTeamDbId: '',
-  notionPersonalDbId: '',
-  defaultRoute: 'team',
+  profiles: starterProfiles('', ''),
   displayName: '',
 };
 

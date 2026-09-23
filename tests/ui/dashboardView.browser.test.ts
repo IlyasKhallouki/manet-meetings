@@ -12,7 +12,6 @@ function meta(id: string, patch: Partial<SessionMeta> = {}): SessionMeta {
     meetCode: 'abc-defg-hij',
     startedAt: T0,
     status: 'ready',
-    route: 'team',
     profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 10, bytes: 2 * MB, micIncluded: true },
@@ -38,7 +37,6 @@ const SAMPLE: SessionMeta[] = [
     status: 'recording',
     meetCode: 'xyz-abcd-efg',
     meetingTitle: 'Pricing call',
-    route: undefined,
     // Healthy: the last chunk 2 s before `now`, captions coming in.
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 10, bytes: 2 * MB, micIncluded: true, lastChunkAt: T0 + 3_663_000 },
   }),
@@ -46,7 +44,6 @@ const SAMPLE: SessionMeta[] = [
     startedAt: T0 + 60_000,
     status: 'processing',
     stage: 'summarizing',
-    route: 'personal',
     profileId: 'personal',
     meetingTitle: 'Design review',
     job: { id: 'j', kind: 'process', startedAt: T0 + 3_600_000 },
@@ -60,7 +57,6 @@ const SAMPLE: SessionMeta[] = [
     profileId: 'gone',
     durationMs: 600_000,
     recovered: true,
-    route: undefined,
   }),
   meta('dup', {
     startedAt: T0 - 172_800_000,

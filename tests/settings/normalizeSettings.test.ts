@@ -51,4 +51,11 @@ describe('normalizeSettings', () => {
       ['personal', 'Personal'],
     ]);
   });
+
+  it('drops the Team | Personal fields once they are profiles', () => {
+    const s = normalizeSettings({ notionTeamDbId: 'team-db', notionPersonalDbId: 'me-db', defaultRoute: 'personal' } as never);
+    expect(s).not.toHaveProperty('notionTeamDbId');
+    expect(s).not.toHaveProperty('notionPersonalDbId');
+    expect(s).not.toHaveProperty('defaultRoute');
+  });
 });

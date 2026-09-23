@@ -91,7 +91,6 @@ function meta(id: string, patch: Partial<SessionMeta>): SessionMeta {
     startedAt: T0 - 60 * 60_000,
     durationMs: 32 * 60_000,
     status: 'ready',
-    route: 'team',
     profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 10, bytes: 1000, micIncluded: true },

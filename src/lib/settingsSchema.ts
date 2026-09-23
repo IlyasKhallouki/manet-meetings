@@ -3,14 +3,11 @@
  * (which only has chrome.runtime) can import them. settings.ts re-exports these.
  */
 import { starterProfiles } from './profiles';
-import type { Profile, Route, Settings } from './types';
+import type { Profile, Settings } from './types';
 
 export const DEFAULT_SETTINGS: Settings = {
   geminiApiKey: '',
   notionToken: '',
-  notionTeamDbId: '',
-  notionPersonalDbId: '',
-  defaultRoute: 'team',
   autoTranscribe: true,
   retentionDays: 7,
   displayName: '',
@@ -36,7 +33,6 @@ interface LegacySettings {
  */
 export function normalizeSettings(stored: (Partial<Settings> & LegacySettings) | null | undefined): Settings {
   const s = stored ?? {};
-  const merged: Settings = { ...DEFAULT_SETTINGS, ...s };
   // @wxt-dev/storage returns its fallback (DEFAULT_SETTINGS) by reference, so a fresh
   // install's stored profiles can literally be DEFAULT_SETTINGS.profiles; hand out a
   // fresh copy instead, or an in-place edit later would corrupt the shared defaults.
@@ -47,11 +43,11 @@ export function normalizeSettings(stored: (Partial<Settings> & LegacySettings) |
   const ids = new Set(profiles.map((p) => p.id));
   const defaultProfileId =
     [s.defaultProfileId, s.defaultRoute].find((id): id is string => id !== undefined && ids.has(id)) ?? profiles[0]!.id;
-  return { ...merged, profiles, defaultProfileId };
-}
-
-export function databaseIdFor(settings: Settings, route: Route): string {
-  return route === 'team' ? settings.notionTeamDbId : settings.notionPersonalDbId;
+  const { notionTeamDbId: _team, notionPersonalDbId: _personal, defaultRoute: _route, ...rest } = {
+    ...DEFAULT_SETTINGS,
+    ...s,
+  } as Settings & LegacySettings;
+  return { ...rest, profiles, defaultProfileId };
 }
 
 /**

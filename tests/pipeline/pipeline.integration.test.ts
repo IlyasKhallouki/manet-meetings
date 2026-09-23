@@ -63,19 +63,17 @@ function invalidSettings(overrides: Partial<Settings> = {}): Settings {
   return testSettings({
     geminiApiKey: INVALID_GEMINI_KEY,
     notionToken: INVALID_NOTION_TOKEN,
-    notionTeamDbId: UNKNOWN_DB_ID,
-    notionPersonalDbId: UNKNOWN_DB_ID,
     ...overrides,
   });
 }
 
-/** The Team profile, on the database these settings name for Team. */
-function teamProfile(settings: Settings): Profile {
-  return testProfile({ databaseId: settings.notionTeamDbId });
+/** The Team profile, on the given database. */
+function teamProfile(dbId: string = UNKNOWN_DB_ID): Profile {
+  return testProfile({ databaseId: dbId });
 }
 
-function job(meta: SessionMeta, captions: CaptionSegment[], settings: Settings): ProcessJob {
-  return { meta, captions, settings, profile: teamProfile(settings) };
+function job(meta: SessionMeta, captions: CaptionSegment[], settings: Settings, dbId?: string): ProcessJob {
+  return { meta, captions, settings, profile: teamProfile(dbId) };
 }
 
 const tokensOf = (text: string) => splitWords(text).map(normalizeToken).filter(Boolean);
@@ -150,7 +148,7 @@ describe('pipeline against the real APIs with invalid credentials (network only)
         meta,
         result,
         settings,
-        profile: testProfile({ id: 'personal', name: 'Personal', databaseId: settings.notionPersonalDbId }),
+        profile: testProfile({ id: 'personal', name: 'Personal', databaseId: UNKNOWN_DB_ID }),
       },
       createPipelineDeps(settings, store, (s) => stages.push(s)),
     );
@@ -392,7 +390,7 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
     const meta = uniqueMeta();
     keys.push(meta.idempotencyKey);
     await seedAudio(store, meta.id, SPEECH_MIXED);
-    const settings = invalidSettings({ notionToken: NOTION_TOKEN, notionTeamDbId: NOTION_DB });
+    const settings = invalidSettings({ notionToken: NOTION_TOKEN });
     const deps = (counting = countingFetch(), stages: JobStage[] = []): PipelineDeps => ({
       ai: gemini(settings.geminiApiKey, counting.fetch),
       store: createNotionMeetingStore(settings.notionToken),
@@ -400,11 +398,11 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
       onStage: (s) => stages.push(s),
     });
 
-    const result = processed(await processSession(job(meta, mixedSpeechCaptions(), settings), deps()));
+    const result = processed(await processSession(job(meta, mixedSpeechCaptions(), settings, NOTION_DB), deps()));
     expect(result.transcript.source).toBe('captions-only');
     expect(result.transcript.notes.some((n) => n.startsWith('Notion was not checked'))).toBe(false);
 
-    const saved = await saveSession({ meta, result, settings, profile: teamProfile(settings) }, deps());
+    const saved = await saveSession({ meta, result, settings, profile: teamProfile(NOTION_DB) }, deps());
     expect(saved.status).toBe('created');
     if (saved.status !== 'created') return;
 
@@ -423,7 +421,7 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
 
     const counting = countingFetch();
     const stages: JobStage[] = [];
-    const again = await processSession(job(meta, mixedSpeechCaptions(), settings), deps(counting, stages));
+    const again = await processSession(job(meta, mixedSpeechCaptions(), settings, NOTION_DB), deps(counting, stages));
     expect(again.status).toBe('duplicate');
     if (again.status !== 'duplicate') return;
     expect(sameNotionId(again.existing.pageId, saved.pageId)).toBe(true);
@@ -431,15 +429,15 @@ describe.skipIf(!HAS_NOTION)(NOTION_SUITE, () => {
     expect(counting.counts.requests).toBe(0);
     expect(stages).toEqual(['checking-duplicate']);
 
-    const savedAgain = await saveSession({ meta, result, settings, profile: teamProfile(settings) }, deps());
+    const savedAgain = await saveSession({ meta, result, settings, profile: teamProfile(NOTION_DB) }, deps());
     expect(savedAgain.status).toBe('duplicate');
 
     // "Transcribe anyway", then "Save anyway": the user saw that page and wants theirs filed too.
     const forcedStages: JobStage[] = [];
-    const forcedJob = { ...job(meta, mixedSpeechCaptions(), settings), force: true };
+    const forcedJob = { ...job(meta, mixedSpeechCaptions(), settings, NOTION_DB), force: true };
     const forced = processed(await processSession(forcedJob, deps(countingFetch(), forcedStages)));
     expect(forcedStages[0]).toBe('loading-audio');
-    const savedAnyway = await saveSession({ meta, result: forced, settings, profile: teamProfile(settings), force: true }, deps());
+    const savedAnyway = await saveSession({ meta, result: forced, settings, profile: teamProfile(NOTION_DB), force: true }, deps());
     expect(savedAnyway.status).toBe('created');
     if (savedAnyway.status !== 'created') return;
     expect(sameNotionId(savedAnyway.pageId, saved.pageId)).toBe(false);
@@ -455,10 +453,10 @@ describe.skipIf(!GEMINI_KEY)(
   'pipeline with real Gemini (needs GOOGLE_API_KEY; the save also needs NOTION_TOKEN + NOTION_TEST_DB_ID)',
   () => {
     const meta = uniqueMeta();
+    const dbId = HAS_NOTION ? NOTION_DB : UNKNOWN_DB_ID;
     const settings = testSettings({
       geminiApiKey: GEMINI_KEY,
       notionToken: HAS_NOTION ? NOTION_TOKEN : INVALID_NOTION_TOKEN,
-      notionTeamDbId: HAS_NOTION ? NOTION_DB : UNKNOWN_DB_ID,
       customVocabulary: VOCABULARY,
     });
     let deps: PipelineDeps;
@@ -481,7 +479,7 @@ describe.skipIf(!GEMINI_KEY)(
     it('transcribes the recording, gives each word its caption speaker and summarizes', async () => {
       const stages: JobStage[] = [];
       result = processed(
-        await processSession(job(meta, mixedSpeechCaptions(), settings), { ...deps, onStage: (s) => stages.push(s) }),
+        await processSession(job(meta, mixedSpeechCaptions(), settings, dbId), { ...deps, onStage: (s) => stages.push(s) }),
       );
 
       expect(stages.slice(0, 3)).toEqual(['checking-duplicate', 'loading-audio', 'transcribing-timing']);
@@ -541,7 +539,7 @@ describe.skipIf(!GEMINI_KEY)(
         ...revisions('j1', 'Jean Dupont', 45_000, 58_000, ['Chapitre premier', jeanLine]),
       ];
 
-      const out = processed(await processSession(job(early, captions, settings), createPipelineDeps(settings, store)));
+      const out = processed(await processSession(job(early, captions, settings, dbId), createPipelineDeps(settings, store)));
 
       expect(out.transcript.source).toBe('audio+captions');
       const { turns, notes } = out.transcript;
@@ -560,7 +558,7 @@ describe.skipIf(!GEMINI_KEY)(
 
     it.skipIf(!HAS_NOTION)('saves the transcribed meeting to Notion', async () => {
       expect(result, 'needs the transcription test to have run').toBeDefined();
-      const saved = await saveSession({ meta, result: result!, settings, profile: teamProfile(settings) }, deps);
+      const saved = await saveSession({ meta, result: result!, settings, profile: teamProfile(dbId) }, deps);
       expect(saved.status).toBe('created');
       if (saved.status !== 'created') return;
       const page = await new NotionClient(NOTION_TOKEN).request<NotionPage>('GET', `/pages/${saved.pageId}`);

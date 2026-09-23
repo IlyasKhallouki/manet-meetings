@@ -66,8 +66,6 @@ export type Clock = ReturnType<typeof createClock>;
 export const FULL_SETTINGS: Partial<Settings> = {
   geminiApiKey: 'gemini-key',
   notionToken: 'notion-token',
-  notionTeamDbId: 'team-db',
-  notionPersonalDbId: 'personal-db',
   displayName: 'Ilyas',
   autoTranscribe: true,
   retentionDays: 7,

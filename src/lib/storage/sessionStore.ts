@@ -37,7 +37,17 @@ function serialized<T>(id: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** What versions before profiles stored on a meta. */
-type LegacyMeta = Omit<SessionMeta, 'status'> & { status: SessionStatus | 'awaiting-route'; routeDeadline?: number };
+export type LegacyMeta = Omit<SessionMeta, 'status'> & {
+  status: SessionStatus | 'awaiting-route';
+  routeDeadline?: number;
+  /** The Team | Personal destination meetings from before profiles stored. */
+  route?: 'team' | 'personal';
+};
+
+/** The route a pre-profiles meeting was heading to, if this meta is that old. */
+export function legacyRoute(meta: SessionMeta): 'team' | 'personal' | undefined {
+  return (meta as LegacyMeta).route;
+}
 
 /**
  * A meta as any version stored it: a meeting from before profiles takes its Team |

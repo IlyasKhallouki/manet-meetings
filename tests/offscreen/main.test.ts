@@ -22,11 +22,10 @@ const settings: Settings = {
   ...DEFAULT_SETTINGS,
   geminiApiKey: 'invalid-gemini-key',
   notionToken: 'ntn_invalid_token_for_tests',
-  notionTeamDbId: '0123456789abcdef0123456789abcdef',
   displayName: 'Ilyas',
 };
 
-const profile = testProfile({ databaseId: settings.notionTeamDbId });
+const profile = testProfile({ databaseId: '0123456789abcdef0123456789abcdef' });
 
 const meta: SessionMeta = {
   id: SESSION,
@@ -34,7 +33,6 @@ const meta: SessionMeta = {
   startedAt: Date.UTC(2026, 8, 19, 10, 15),
   durationMs: 60_000,
   status: 'processing',
-  route: 'team',
   profileId: 'team',
   idempotencyKey: 'abc-defg-hij-2026-09-19',
   audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 0, bytes: 0, micIncluded: false },

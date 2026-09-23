@@ -16,7 +16,7 @@ const CLIENT = { ...starterProfiles('client-db')[0]!, id: 'client', name: 'Clien
 const CREATED: SaveOutcome = { status: 'created', pageId: 'page-1', url: 'https://www.notion.so/page-1' };
 
 /** A meeting as an earlier worker left it in storage. */
-function stored(patch: Partial<SessionMeta> = {}): SessionMeta {
+function stored(patch: Partial<SessionMeta> & { route?: 'team' | 'personal' } = {}): SessionMeta {
   return {
     id: ID,
     meetCode: MEET_CODE,
@@ -28,7 +28,7 @@ function stored(patch: Partial<SessionMeta> = {}): SessionMeta {
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 12, bytes: 48_000, micIncluded: true },
     captionCount: 3,
     ...patch,
-  };
+  } as SessionMeta;
 }
 
 /** A transcript stored before profiles: nothing says which profile its notes follow. */

@@ -19,7 +19,6 @@ function meta(patch: Partial<SessionMeta> = {}): SessionMeta {
     startedAt: START,
     durationMs: 32 * MINUTE,
     status: 'saved',
-    route: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm', chunkCount: 0, bytes: 0, micIncluded: true },
     captionCount: 0,

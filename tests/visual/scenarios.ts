@@ -17,7 +17,6 @@ export function session(id: string, patch: Partial<SessionMeta> = {}): SessionMe
     endedAt: NOW - 58 * MIN,
     durationMs: 32 * MIN,
     status: 'ready',
-    route: 'team',
     profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 384, bytes: 7.4 * MB, micIncluded: true },
@@ -35,14 +34,12 @@ export const SESSIONS: SessionMeta[] = [
     startedAt: NOW - 23 * MIN,
     endedAt: undefined,
     durationMs: undefined,
-    route: undefined,
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 276, bytes: 5.3 * MB, micIncluded: true },
   }),
   session('route', {
     status: 'ready',
     meetingTitle: 'Point hebdo produit',
     startedAt: NOW - 70 * MIN,
-    route: undefined,
   }),
   session('proc', {
     status: 'processing',
@@ -50,7 +47,6 @@ export const SESSIONS: SessionMeta[] = [
     meetingTitle: 'Design review — onboarding',
     startedAt: NOW - 3 * 60 * MIN,
     durationMs: 47 * MIN,
-    route: 'personal',
     profileId: 'personal',
   }),
   session('saved', {
@@ -124,8 +120,6 @@ export const FULL_SETTINGS: Settings = {
   displayName: 'Ilyas',
   geminiApiKey: 'AIzaSyD-example-key-000000000000000000',
   notionToken: 'ntn_example_token_0000000000000000000000000000',
-  notionTeamDbId: 'https://www.notion.so/team/Meetings-0123456789abcdef0123456789abcdef',
-  notionPersonalDbId: '',
   customVocabulary: ['Lumind', 'Manet', 'OPFS', 'Halstead'],
   languageCodes: ['en-US', 'fr-FR'],
 };

@@ -16,7 +16,11 @@ import {
 } from '@lib/storage/sessionStore';
 import type { SessionMeta } from '@lib/types';
 
-function meta(id: string, startedAt: number, patch: Partial<SessionMeta> = {}): SessionMeta {
+function meta(
+  id: string,
+  startedAt: number,
+  patch: Partial<SessionMeta> & { route?: 'team' | 'personal' } = {},
+): SessionMeta {
   return {
     id,
     meetCode: 'abc-defg-hij',
@@ -26,7 +30,7 @@ function meta(id: string, startedAt: number, patch: Partial<SessionMeta> = {}): 
     audio: { mimeType: 'audio/webm', chunkCount: 0, bytes: 0, micIncluded: true },
     captionCount: 0,
     ...patch,
-  };
+  } as SessionMeta;
 }
 
 // storage.local.getKeys (Chrome 130+) is not implemented by fakeBrowser.

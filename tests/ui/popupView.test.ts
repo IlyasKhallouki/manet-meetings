@@ -368,7 +368,7 @@ describe('times', () => {
   it('writes dates, times and lengths exactly as Meetings does (sessionView)', () => {
     const now = Date.UTC(2026, 8, 19, 15, 0);
     const row = (startedAt: number, opts: { locale: string; timeZone: string } = FMT) =>
-      recentRow(session({ status: 'saved', startedAt, durationMs: 32 * 60_000, route: 'team' }), now, opts).details[0];
+      recentRow(session({ status: 'saved', startedAt, durationMs: 32 * 60_000 }), now, opts).details[0];
     const cases: [number, { locale: string; timeZone: string }][] = [
       [Date.UTC(2026, 8, 19, 0, 5), FMT],
       [Date.UTC(2026, 8, 18, 23, 55), FMT],
@@ -391,7 +391,7 @@ describe('times', () => {
     const failed = recentRow(session({ status: 'failed', startedAt: now - 3_600_000, retryAt: Date.UTC(2026, 8, 19, 16, 37) }), now, FMT);
     expect(failed.details[0]).toBe(`Trying again at ${formatTime(Date.UTC(2026, 8, 19, 16, 37), FMT)}`);
     for (const ms of [20_000, 59_600, 32 * 60_000, 72 * 60_000]) {
-      const r = recentRow(session({ status: 'ready', startedAt: now - 3_600_000, durationMs: ms, route: undefined }), now, FMT);
+      const r = recentRow(session({ status: 'ready', startedAt: now - 3_600_000, durationMs: ms }), now, FMT);
       expect(r.details[1]).toBe(formatLength(ms));
     }
   });
@@ -406,7 +406,7 @@ describe('recentRow', () => {
     ['personal', 'Personal'],
   ]);
   const done = (patch: Partial<SessionMeta>) =>
-    recentRow(session({ startedAt: at, durationMs: 32 * 60_000, route: 'team', profileId: 'team', ...patch }), NOW, FMT, names);
+    recentRow(session({ startedAt: at, durationMs: 32 * 60_000, profileId: 'team', ...patch }), NOW, FMT, names);
 
   it('answers "did it reach Notion?" with a way to open it', () => {
     expect(done({ status: 'saved', meetingTitle: 'Weekly product sync', notion: { pageId: 'p', url: 'https://n/p' } })).toEqual({
@@ -466,7 +466,7 @@ describe('recentRow', () => {
   });
 
   it('dates older meetings like the other surfaces, and leaves out what it doesn’t know', () => {
-    const old = recentRow(session({ status: 'ready', startedAt: Date.UTC(2026, 8, 16, 16, 42), route: undefined }), NOW, FMT);
+    const old = recentRow(session({ status: 'ready', startedAt: Date.UTC(2026, 8, 16, 16, 42) }), NOW, FMT);
     expect(old.details).toEqual(['Wed\u00a016\u00a0Sep\u00a016:42']);
   });
 });

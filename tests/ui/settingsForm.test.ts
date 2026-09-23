@@ -24,9 +24,6 @@ import {
 const FILLED: Settings = {
   geminiApiKey: 'AIzaSyExampleKey123',
   notionToken: 'ntn_exampletoken',
-  notionTeamDbId: 'https://www.notion.so/lumind/Team-meetings-1a2b3c4d5e6f40718293a4b5c6d7e8f9?v=0123456789abcdef0123456789abcdef',
-  notionPersonalDbId: '0f1e2d3c4b5a69788796a5b4c3d2e1f0',
-  defaultRoute: 'personal',
   autoTranscribe: false,
   retentionDays: 30,
   displayName: 'Ilya K',
@@ -49,14 +46,7 @@ describe('settingsToForm / parseSettingsForm', () => {
     // Profiles (and the legacy database fields they replaced) are edited in the profile
     // editor, not in these fields, so they don't round-trip here.
     for (const s of [DEFAULT_SETTINGS, FILLED]) {
-      const {
-        profiles: _profiles,
-        defaultProfileId: _defaultProfileId,
-        notionTeamDbId: _team,
-        notionPersonalDbId: _personal,
-        defaultRoute: _route,
-        ...expected
-      } = s;
+      const { profiles: _profiles, defaultProfileId: _defaultProfileId, ...expected } = s;
       expect(parseSettingsForm(settingsToForm(s))).toEqual({ ok: true, settings: expected });
     }
   });

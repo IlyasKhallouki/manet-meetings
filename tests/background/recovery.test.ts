@@ -17,7 +17,7 @@ beforeEach(async () => {
   await configure();
 });
 
-function stored(patch: Partial<SessionMeta> = {}): SessionMeta {
+function stored(patch: (Partial<SessionMeta> & { route?: 'team' | 'personal'; routeDeadline?: number }) = {}): SessionMeta {
   return {
     id: ID,
     meetCode: MEET_CODE,
@@ -27,7 +27,7 @@ function stored(patch: Partial<SessionMeta> = {}): SessionMeta {
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 12, bytes: 48_000, micIncluded: true },
     captionCount: 3,
     ...patch,
-  };
+  } as SessionMeta;
 }
 
 const RESULT: SessionResult = {
@@ -75,7 +75,6 @@ describe('recovering interrupted recordings', () => {
       durationMs: 60_000,
       audio: { chunkCount: 13, bytes: 52_000 },
     });
-    expect(meta?.route).toBeUndefined();
     expect(h.windowsCreated()).toEqual([]);
     const [job] = h.offscreen.callsOf('offscreen/process');
     // With the audio the scan found.

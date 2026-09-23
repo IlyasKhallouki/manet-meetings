@@ -53,7 +53,6 @@ function meta(patch: Partial<SessionMeta> = {}): SessionMeta {
     meetCode: 'abc-defg-hij',
     startedAt: STARTED,
     status: 'ready',
-    route: 'team',
     profileId: 'team',
     idempotencyKey: 'abc-defg-hij-2026-09-19',
     audio: { mimeType: 'audio/webm;codecs=opus', chunkCount: 12, bytes: 3 * MB, micIncluded: true },
@@ -591,7 +590,6 @@ describe('a recording’s problems (recordingHealth → recordingCautions)', () 
   const recording = (patch: Partial<SessionMeta> = {}) =>
     meta({
       status: 'recording',
-      route: undefined,
       captionCount: 40,
       speakers: [speaker('Marie Curie', 9 * MIN)],
       audio: { ...meta().audio, lastChunkAt: STARTED + 10 * MIN - 2000 },

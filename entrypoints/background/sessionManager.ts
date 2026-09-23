@@ -29,6 +29,7 @@ import {
   deleteSession,
   getActiveRecording,
   getSession,
+  legacyRoute,
   listSessions,
   needsYou,
   putSession,
@@ -1286,7 +1287,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           s.attempt === undefined &&
           !s.job &&
           !s.recovered &&
-          s.route === undefined &&
+          legacyRoute(s) === undefined &&
           s.endedAt !== undefined &&
           deps.now() - s.endedAt < DAY_MS &&
           !recovered.includes(s.id),

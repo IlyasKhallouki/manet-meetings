@@ -8,8 +8,6 @@
  *    the moment MediaRecorder started), named `tStart`/`tEnd` or `start`/`end`.
  */
 
-export type Route = 'team' | 'personal';
-
 // ---------------------------------------------------------------------------
 // Captions (content script → background → storage)
 // ---------------------------------------------------------------------------
@@ -250,8 +248,6 @@ export interface SessionMeta {
   durationMs?: number;
   status: SessionStatus;
   stage?: JobStage;
-  /** The Team | Personal destination meetings from before profiles stored. Only read, by sessionStore. */
-  route?: Route;
   /**
    * The meeting's profile (a Settings.profiles id), chosen before recording. Meetings from
    * before profiles read their Team | Personal route here (sessionStore normalizes them).
@@ -375,9 +371,6 @@ export interface Profile {
 export interface Settings {
   geminiApiKey: string;
   notionToken: string;
-  notionTeamDbId: string;
-  notionPersonalDbId: string;
-  defaultRoute: Route;
   autoTranscribe: boolean;
   /** Days to keep audio after the transcript is saved. */
   retentionDays: number;
