@@ -441,6 +441,40 @@ describe('interrupted jobs and alarms', () => {
     expect((await fakeBrowser.alarms.get(`retry:${ID}`))?.scheduledTime).toBe(T0 + HOUR);
   });
 
+  it('transcribes a meeting that ended ready but never got auto-transcribed, when auto-transcribe is on', async () => {
+    h.clock.set(T0 + HOUR);
+    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000 }));
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(1);
+    expect((await getSession(ID))?.status).toBe('saved');
+  });
+
+  it('leaves a meeting that ended ready alone when auto-transcribe is off', async () => {
+    await configure({ autoTranscribe: false });
+    h.clock.set(T0 + HOUR);
+    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 + HOUR - 5 * 60_000 }));
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+    expect((await getSession(ID))?.status).toBe('ready');
+  });
+
+  it('leaves a meeting that ended ready more than 24h ago alone', async () => {
+    h.clock.set(T0 + 2 * DAY);
+    await putSession(stored({ status: 'ready', profileId: 'team', endedAt: T0 }));
+
+    const m = h.createManager();
+    await m.boot();
+    await m.idle();
+    expect(h.offscreen.callsOf('offscreen/process')).toHaveLength(0);
+    expect((await getSession(ID))?.status).toBe('ready');
+  });
+
   it('creates the periodic retention alarm once', async () => {
     const create = vi.spyOn(fakeBrowser.alarms, 'create');
     const m = h.createManager();

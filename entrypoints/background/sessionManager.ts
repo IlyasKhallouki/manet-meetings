@@ -1271,6 +1271,27 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       for (const job of interrupted) {
         track(job.kind === 'process' ? transcribeNow(job.id, { attempt: job.attempt }) : saveNow(job.id));
       }
+      // A meeting can end (status written 'ready') and then lose the worker before
+      // endRecording's track(autoTranscribe(id)) gets to run, missing auto-transcribe for
+      // good. Catch those: never attempted, no job running, ended recently enough that it is
+      // still worth doing automatically. Excludes: `recovered` sessions, already tracked
+      // above, so a session is never started twice in one boot; any other session ever
+      // marked `recovered` (e.g. adopted orphan audio), which waits for an explicit
+      // Transcribe by design; and a meeting an older version left mid Team/Personal choice,
+      // which only reads as 'ready' through normalizeMeta's `route` fallback and should
+      // likewise wait to be asked.
+      const missed = (await listSessions()).filter(
+        (s) =>
+          s.status === 'ready' &&
+          s.attempt === undefined &&
+          !s.job &&
+          !s.recovered &&
+          s.route === undefined &&
+          s.endedAt !== undefined &&
+          deps.now() - s.endedAt < DAY_MS &&
+          !recovered.includes(s.id),
+      );
+      for (const s of missed) track(transcribeNow(s.id));
     }
     // The button's state lives in the browser, not the worker: after a browser restart it
     // is back to the manifest's, so show what storage says.
