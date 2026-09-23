@@ -27,9 +27,16 @@ function richTextOf(block: NotionBlock): NotionRichText[] {
 
 const summary: MeetingSummary = {
   title: 'Integration test meeting',
-  summary: 'We checked that meetings land in Notion.\n\nLe résumé est en deux paragraphes.',
-  keyPoints: ['Pages are created under the data source', 'Long text is chunked'],
-  decisions: ['Keep the oldest page on a race'],
+  sections: [
+    {
+      title: 'Summary',
+      format: 'paragraph',
+      text: 'We checked that meetings land in Notion.\n\nLe résumé est en deux paragraphes.',
+      items: [],
+    },
+    { title: 'Key points', format: 'bullets', text: '', items: ['Pages are created under the data source', 'Long text is chunked'] },
+    { title: 'Decisions', format: 'bullets', text: '', items: ['Keep the oldest page on a race'] },
+  ],
   actionItems: [{ task: 'Delete this test page', owner: 'CI', due: 'today' }],
 };
 

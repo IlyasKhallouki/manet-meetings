@@ -22,6 +22,7 @@ import {
   type SessionResult,
   type TranscriptionResult,
 } from '../types';
+import { defaultProfile, profileById } from '../profiles';
 import { localDate } from '../util/ids';
 import { stageReporter, type PipelineDeps } from './deps';
 import {
@@ -112,6 +113,7 @@ async function runPipeline(job: ProcessJob, deps: PipelineDeps): Promise<Process
       summary = await deps.ai.summarize(formatTranscript(merged), {
         attendees,
         meetingDate: localDate(meta.startedAt),
+        profile: profileById(settings, route) ?? defaultProfile(settings),
       });
     } catch (err) {
       summaryNotes.push(summaryFailedNote(err));

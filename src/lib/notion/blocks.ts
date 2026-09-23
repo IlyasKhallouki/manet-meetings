@@ -113,16 +113,21 @@ export function buildMeetingBody(input: MeetingPageInput): BlockRequest[] {
     }
   }
 
-  blocks.push(...simple('heading_2', richText('Summary')));
   const { summary } = input;
   if (!summary) {
+    blocks.push(...simple('heading_2', richText('Summary')));
     blocks.push(...muted('The summary is unavailable for this meeting. The full transcript is below.'));
     return blocks;
   }
-  const paragraphs = summary.summary.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-  blocks.push(...(paragraphs.length ? paragraphs.flatMap((p) => simple('paragraph', richText(p))) : muted('None.')));
-  blocks.push(...section('Key points', summary.keyPoints, (t) => simple('bulleted_list_item', richText(t))));
-  blocks.push(...section('Decisions', summary.decisions, (t) => simple('bulleted_list_item', richText(t))));
+  for (const s of summary.sections) {
+    if (s.format === 'paragraph') {
+      const paragraphs = s.text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+      blocks.push(...simple('heading_2', richText(s.title)));
+      blocks.push(...(paragraphs.length ? paragraphs.flatMap((p) => simple('paragraph', richText(p))) : muted('None.')));
+    } else {
+      blocks.push(...section(s.title, s.items, (t) => simple('bulleted_list_item', richText(t))));
+    }
+  }
   blocks.push(...section('Action items', summary.actionItems.filter((a) => a.task.trim()).map(formatActionItem), todos));
   return blocks;
 }

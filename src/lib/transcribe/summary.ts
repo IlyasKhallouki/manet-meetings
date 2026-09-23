@@ -5,61 +5,94 @@
 import { SUMMARY_MODEL } from '../gemini/models';
 import { createInteraction, type InteractionRequest, type RestOptions } from '../gemini/rest';
 import { outputText } from '../gemini/response';
-import type { ActionItem, MeetingSummary, SummarizeOptions } from '../types';
+import type { ActionItem, MeetingSummary, NoteSection, SummarizeOptions, SummarySection } from '../types';
 
 const MAX_TITLE = 80;
 const SUMMARY_TIMEOUT_MS = 5 * 60_000;
 
 /** Schema property order; the model writes fields in this order, language first. */
-export const SUMMARY_SCHEMA_FIELDS = ['language', 'title', 'summary', 'keyPoints', 'decisions', 'actionItems'] as const;
+export const SUMMARY_SCHEMA_FIELDS = ['language', 'title', 'sections', 'actionItems'] as const;
 
-const SYSTEM_INSTRUCTION = `You write meeting notes. Meetings may mix languages, sometimes within one sentence.
+const RULES = `You write meeting notes. Meetings may mix languages, sometimes within one sentence.
 
 Rules:
 - Write every field in the dominant language of the meeting: the language most of the transcript is spoken in. Keep names, product names and technical terms as spoken.
-- Use only what the transcript says. Never invent facts, decisions, owners or dates. Leave a list empty rather than guess.
+- Use only what the transcript says. Never invent facts, decisions, owners or dates. Leave a section or list empty rather than guess.
 - language: the dominant language as a BCP-47 code, e.g. "fr-FR" or "en-US".
 - title: short and specific, at most 80 characters, without the date.
-- summary: two to five sentences on what was discussed and concluded.
-- keyPoints: the main topics and facts, one short sentence each.
-- decisions: only explicit agreements or decisions.
+- sections: fill each section listed below under its key, following its instruction. A paragraph section is a string; a bullets section is a list of short strings.
 - actionItems: concrete follow-ups someone committed to or was asked to do. Set owner only when the transcript makes clear who owns the task, and only to one of the attendee names exactly as listed. Set due only when a deadline is stated, worded as it was said.`;
 
 function cleanNames(names: readonly string[]): string[] {
   return [...new Set(names.map((n) => n.trim()).filter(Boolean))];
 }
 
-function schema(attendees: string[]): Record<string, unknown> {
+/** The schema key of the section at `index`: s1, s2… */
+export function sectionKey(index: number): string {
+  return `s${index + 1}`;
+}
+
+function sectionInstruction(section: Pick<NoteSection, 'title' | 'instruction'>): string {
+  return section.instruction.trim() || `What belongs under “${section.title.trim()}”.`;
+}
+
+/** The fixed rules, then the profile's prompt and sections. */
+export function systemInstruction(profile: SummarizeOptions['profile']): string {
+  const parts = [RULES];
+  const prompt = profile.prompt.trim();
+  if (prompt) parts.push(`About these meetings:\n${prompt}`);
+  if (profile.sections.length > 0) {
+    const lines = profile.sections.map(
+      (s, i) => `- ${sectionKey(i)} “${s.title.trim()}” (${s.format}): ${sectionInstruction(s)}`,
+    );
+    parts.push(['Sections:', ...lines].join('\n'));
+  }
+  return parts.join('\n\n');
+}
+
+function schema(attendees: string[], sections: readonly NoteSection[]): Record<string, unknown> {
   const list = { type: 'array', items: { type: 'string' } };
   const properties: Record<string, unknown> = {
     language: { type: 'string', description: 'Dominant language of the meeting, BCP-47.' },
     title: { type: 'string', description: 'Short meeting title, at most 80 characters.' },
-    summary: { type: 'string', description: 'Two to five sentences.' },
-    keyPoints: { ...list, description: 'Main topics and facts.' },
-    decisions: { ...list, description: 'Explicit decisions only.' },
-    actionItems: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          task: { type: 'string' },
-          owner: {
-            type: 'string',
-            description: 'Attendee who owns the task, exactly as listed.',
-            ...(attendees.length > 0 ? { enum: attendees } : {}),
-          },
-          due: { type: 'string', description: 'Deadline as stated, if any.' },
+  };
+  // Gemini rejects an object schema without properties, so a profile without sections has no field for them.
+  if (sections.length > 0) {
+    properties.sections = {
+      type: 'object',
+      properties: Object.fromEntries(
+        sections.map((s, i) => [
+          sectionKey(i),
+          s.format === 'bullets'
+            ? { ...list, description: sectionInstruction(s) }
+            : { type: 'string', description: sectionInstruction(s) },
+        ]),
+      ),
+      required: sections.map((_, i) => sectionKey(i)),
+    };
+  }
+  properties.actionItems = {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        task: { type: 'string' },
+        owner: {
+          type: 'string',
+          description: 'Attendee who owns the task, exactly as listed.',
+          ...(attendees.length > 0 ? { enum: attendees } : {}),
         },
-        required: ['task'],
+        due: { type: 'string', description: 'Deadline as stated, if any.' },
       },
+      required: ['task'],
     },
   };
-  return { type: 'object', properties, required: [...SUMMARY_SCHEMA_FIELDS] };
+  return { type: 'object', properties, required: Object.keys(properties) };
 }
 
 export function summaryRequest(
   transcriptText: string,
-  opts: Pick<SummarizeOptions, 'attendees' | 'meetingDate'>,
+  opts: Pick<SummarizeOptions, 'attendees' | 'meetingDate' | 'profile'>,
 ): InteractionRequest {
   const attendees = cleanNames(opts.attendees);
   const input = [
@@ -73,9 +106,9 @@ export function summaryRequest(
   ].join('\n');
   return {
     model: SUMMARY_MODEL,
-    system_instruction: SYSTEM_INSTRUCTION,
+    system_instruction: systemInstruction(opts.profile),
     input,
-    response_format: { type: 'text', mime_type: 'application/json', schema: schema(attendees) },
+    response_format: { type: 'text', mime_type: 'application/json', schema: schema(attendees, opts.profile.sections) },
     store: false,
   };
 }
@@ -132,6 +165,18 @@ function capTitle(title: string): string {
   return `${(space > MAX_TITLE / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
+/** One section's value from the model, shaped by its format. Missing means empty. */
+function sectionValue(value: unknown, section: Pick<NoteSection, 'title' | 'format'>, field: string): SummarySection {
+  const base = { title: section.title.trim(), format: section.format };
+  if (value === undefined || value === null) return { ...base, text: '', items: [] };
+  if (section.format === 'bullets') {
+    const items = typeof value === 'string' ? [value.trim()].filter(Boolean) : textList(value, field);
+    return { ...base, text: '', items };
+  }
+  const paragraph = Array.isArray(value) ? textList(value, field).join('\n\n') : text(value, field);
+  return { ...base, text: paragraph, items: [] };
+}
+
 /**
  * Parses and checks the model's JSON. Throws on anything that is not a
  * MeetingSummary; trims strings, drops blank entries, caps the title and maps
@@ -139,7 +184,7 @@ function capTitle(title: string): string {
  */
 export function parseMeetingSummary(
   raw: string,
-  opts: { attendees: readonly string[]; transcript?: string },
+  opts: { attendees: readonly string[]; sections: readonly Pick<NoteSection, 'title' | 'format'>[]; transcript?: string },
 ): MeetingSummary {
   const unfenced = raw.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, '$1');
   let json: unknown;
@@ -168,14 +213,13 @@ export function parseMeetingSummary(
   });
   const language = optionalText(obj.language, 'language');
 
-  return {
-    title,
-    summary: text(obj.summary, 'summary'),
-    keyPoints: textList(obj.keyPoints, 'keyPoints'),
-    decisions: textList(obj.decisions, 'decisions'),
-    actionItems,
-    ...(language ? { language } : {}),
-  };
+  const rawSections = obj.sections ?? {};
+  if (typeof rawSections !== 'object' || Array.isArray(rawSections)) fail('sections is not an object');
+  const sections = opts.sections.map((section, i) =>
+    sectionValue((rawSections as Record<string, unknown>)[sectionKey(i)], section, `sections.${sectionKey(i)}`),
+  );
+
+  return { title, sections, actionItems, ...(language ? { language } : {}) };
 }
 
 /** Summarizes a speaker-labelled transcript. Throws when Gemini fails or answers badly. */
@@ -193,6 +237,7 @@ export async function summarize(
   });
   return parseMeetingSummary(outputText(interaction), {
     attendees: opts.attendees,
+    sections: opts.profile.sections,
     transcript: transcriptText,
   });
 }

@@ -13,9 +13,11 @@ import { MEET_CODE, mixedSpeechCaptions, revisions, sessionMeta, testSettings } 
 
 const summary: MeetingSummary = {
   title: 'Budget review',
-  summary: 'We reviewed the budget.',
-  keyPoints: ['Budget is on track'],
-  decisions: [],
+  sections: [
+    { title: 'Summary', format: 'paragraph', text: 'We reviewed the budget.', items: [] },
+    { title: 'Key points', format: 'bullets', text: '', items: ['Budget is on track'] },
+    { title: 'Decisions', format: 'bullets', text: '', items: [] },
+  ],
   actionItems: [{ task: 'Send the deck', owner: 'Camille Martin' }],
   language: 'en-US',
 };

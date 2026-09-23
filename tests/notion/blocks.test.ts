@@ -14,9 +14,11 @@ import { formatClock } from '@lib/util/time';
 
 const summary: MeetingSummary = {
   title: 'Point hebdo',
-  summary: 'We reviewed the launch.\n\nOn a aussi parlé du budget.',
-  keyPoints: ['Launch is on track', 'Budget validé'],
-  decisions: ['Ship on Monday'],
+  sections: [
+    { title: 'Summary', format: 'paragraph', text: 'We reviewed the launch.\n\nOn a aussi parlé du budget.', items: [] },
+    { title: 'Key points', format: 'bullets', text: '', items: ['Launch is on track', 'Budget validé'] },
+    { title: 'Decisions', format: 'bullets', text: '', items: ['Ship on Monday'] },
+  ],
   actionItems: [
     { task: 'Send the deck', owner: 'Camille', due: '2026-09-22' },
     { task: 'Book the room', owner: 'Ilyas' },
@@ -111,19 +113,58 @@ describe('buildMeetingBody', () => {
   });
 
   it('marks empty sections instead of leaving a bare heading', () => {
-    const blocks = buildMeetingBody(input({ summary: { ...summary, keyPoints: [], decisions: [], actionItems: [] } }));
+    const blocks = buildMeetingBody(
+      input({
+        summary: {
+          ...summary,
+          sections: [
+            { title: 'Summary', format: 'paragraph', text: 'We reviewed the launch.\n\nOn a aussi parlé du budget.', items: [] },
+            { title: 'Key points', format: 'bullets', text: '', items: [] },
+            { title: 'Decisions', format: 'bullets', text: '', items: [] },
+          ],
+          actionItems: [],
+        },
+      }),
+    );
     expect(texts(blocks).slice(3)).toEqual(['Key points', 'None.', 'Decisions', 'None.', 'Action items', 'None.']);
   });
 
   it('splits long summary text across rich text items of ≤ 2000 characters', () => {
     const long = 'palabre '.repeat(700).trim(); // ~5600 chars, one paragraph
-    const blocks = buildMeetingBody(input({ summary: { ...summary, summary: long } }));
+    const blocks = buildMeetingBody(
+      input({ summary: { ...summary, sections: [{ ...summary.sections[0]!, text: long }, ...summary.sections.slice(1)] } }),
+    );
     const para = blocks[1];
     expect(para?.type).toBe('paragraph');
     if (para?.type !== 'paragraph') return;
     expect(para.paragraph.rich_text.length).toBe(3);
     for (const item of para.paragraph.rich_text) expect(item.text.content.length).toBeLessThanOrEqual(2000);
     expect(blockText(para)).toBe(long);
+  });
+
+  it('writes each section in order, then the action items', () => {
+    const summary = {
+      title: 'Pricing call',
+      sections: [
+        { title: 'Client needs', format: 'bullets' as const, text: '', items: ['A PDF export', 'SSO'] },
+        { title: 'Pricing', format: 'paragraph' as const, text: 'About 40k a year.\n\nPilot is separate.', items: [] },
+        { title: 'Objections', format: 'bullets' as const, text: '', items: [] },
+      ],
+      actionItems: [{ task: 'Send the quote', owner: 'Marie', due: 'Friday' }],
+    };
+    const blocks = buildMeetingBody({ ...input(), transcript: { ...input().transcript, notes: [] }, summary });
+    expect(blocks.map((b) => [b.type, blockText(b)])).toEqual([
+      ['heading_2', 'Client needs'],
+      ['bulleted_list_item', 'A PDF export'],
+      ['bulleted_list_item', 'SSO'],
+      ['heading_2', 'Pricing'],
+      ['paragraph', 'About 40k a year.'],
+      ['paragraph', 'Pilot is separate.'],
+      ['heading_2', 'Objections'],
+      ['paragraph', 'None.'],
+      ['heading_2', 'Action items'],
+      ['to_do', 'Marie — Send the quote (Friday)'],
+    ]);
   });
 });
 

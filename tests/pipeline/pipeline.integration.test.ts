@@ -486,7 +486,7 @@ describe.skipIf(!GEMINI_KEY)(
 
       expect(result.summary).not.toBeNull();
       expect(result.summary!.title.length).toBeGreaterThan(0);
-      expect(result.summary!.summary.length).toBeGreaterThan(0);
+      expect(result.summary!.sections[0]!.text.length).toBeGreaterThan(0);
       expect(result.title).toBe(result.summary!.title);
 
       const { turns } = result.transcript;

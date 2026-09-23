@@ -86,13 +86,21 @@ export interface TranscribeOptions {
   onProgress?: (stage: JobStage) => void;
 }
 
+/** One section of the notes, as written for a meeting. */
+export interface SummarySection {
+  title: string;
+  format: SectionFormat;
+  /** Paragraph sections: the text, paragraphs separated by blank lines. '' for bullets. */
+  text: string;
+  /** Bullet sections: one entry per bullet. [] for paragraphs. */
+  items: string[];
+}
+
 export interface MeetingSummary {
   /** Short meeting title (≤ 80 chars), in the meeting's main language. */
   title: string;
-  /** A few sentences. */
-  summary: string;
-  keyPoints: string[];
-  decisions: string[];
+  /** The profile's sections, in its order, as written for this meeting. */
+  sections: SummarySection[];
   actionItems: ActionItem[];
   /** Main language of the meeting as BCP-47 (e.g. "fr-FR"), best effort. */
   language?: string;
@@ -108,6 +116,8 @@ export interface SummarizeOptions {
   /** Speaker names that appear in the transcript. */
   attendees: string[];
   meetingDate: string;
+  /** Whose prompt and sections the notes follow. */
+  profile: Pick<Profile, 'prompt' | 'sections'>;
   signal?: AbortSignal;
 }
 
