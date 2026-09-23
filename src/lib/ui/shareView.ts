@@ -65,7 +65,7 @@ function previewLines(current: Settings, file: ConfigFile, now: number, format: 
   lines.push(profileList);
 
   const settingsList = h('ul', { class: 'share-preview-list', role: 'list' });
-  if (preview.settings.length === 0) settingsList.append(h('li', null, 'Settings: no changes'));
+  if (preview.settings.length === 0 && !preview.defaultProfile) settingsList.append(h('li', null, 'Settings: no changes'));
   else for (const s of preview.settings) settingsList.append(h('li', null, `${s.label}: ${s.from} → ${s.to}`));
   if (preview.defaultProfile) {
     settingsList.append(h('li', null, `Default profile: ${preview.defaultProfile.from} → ${preview.defaultProfile.to}`));
@@ -90,13 +90,7 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
 
   // ---- Export ------------------------------------------------------------------------------
   const exportButton = button('Export config…', { attrs: { 'data-key': 'export' }, onClick: () => openExport() });
-  const exportHint = h('p', { class: 'hint' }, HINT);
-  const exportActionBar = h(
-    'div',
-    { class: 'settings-action' },
-    h('div', { class: 'settings-action-text' }, exportHint),
-    exportButton,
-  );
+  const exportActionBar = h('div', { class: 'settings-action' }, exportButton);
 
   const nameInput = textInput({ id: 'export-name', 'data-key': 'export-name', value: 'Manet config' });
   const nameField = field({ id: 'export-name', label: 'Name', control: nameInput });
@@ -120,7 +114,11 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
   });
 
   const exportCancelButton = button('Cancel', { attrs: { 'data-key': 'export-cancel' }, onClick: () => closeExport() });
-  const exportGoButton = button('Export', { attrs: { 'data-key': 'export-go' }, onClick: () => void doExport() });
+  const exportGoButton = button('Export', {
+    kind: 'prominent',
+    attrs: { 'data-key': 'export-go' },
+    onClick: () => void doExport(),
+  });
   const exportForm = h(
     'div',
     { class: 'share-form', 'data-role': 'export-form' },
@@ -177,13 +175,7 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
 
   // ---- Import ------------------------------------------------------------------------------
   const importButton = button('Import config…', { attrs: { 'data-key': 'import' }, onClick: () => fileInput.click() });
-  const importHint = h('p', { class: 'hint' }, HINT);
-  const importActionBar = h(
-    'div',
-    { class: 'settings-action' },
-    h('div', { class: 'settings-action-text' }, importHint),
-    importButton,
-  );
+  const importActionBar = h('div', { class: 'settings-action' }, importButton);
 
   const fileInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: () => void onFileChosen() });
 
@@ -265,6 +257,9 @@ export function createShareView(handlers: ShareHandlers, options: ShareViewOptio
 
   // ---- Group -------------------------------------------------------------------------------
   const group = section({ title: 'Share', id: 'settings-share', rows: [exportRow, importRow] });
+  // One hint for the whole group, like the page's own lede: right under the title, not
+  // repeated on each row.
+  group.querySelector('.section-header')?.after(h('p', { class: 'hint', 'data-role': 'share-hint' }, HINT));
 
   return { element: group };
 }

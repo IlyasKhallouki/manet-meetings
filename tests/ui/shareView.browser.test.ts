@@ -25,7 +25,11 @@ function setup(current: Settings = normalizeSettings({ displayName: 'Ilyas', gem
     const file = new File([text], 'manet-config.json', { type: 'application/json' });
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
     input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => {
+      const preview = element.querySelector<HTMLElement>('[data-role="import-preview"]');
+      const alert = element.querySelector<HTMLElement>('[role="alert"]');
+      if ((!preview || preview.hidden) && (!alert || alert.hidden)) throw new Error('not yet');
+    });
   }
   return { element, handlers, el, settle, choose, stored: () => stored };
 }
@@ -71,6 +75,18 @@ describe('Share', () => {
     expect(stored().displayName).toBe('Ilyas');
     expect(handlers.imported).toHaveBeenCalled();
     expect(element.textContent).toContain('Imported “Acme team”');
+  });
+
+  it('previews a default-profile change even when no shared setting changes', async () => {
+    const withClient = normalizeSettings({
+      profiles: [...starterProfiles(DB, ''), { ...starterProfiles(DB)[0]!, id: 'client', name: 'Client meeting' }],
+      defaultProfileId: 'client',
+    });
+    const { choose, element } = setup();
+    await choose(serializeConfig(buildConfigFile(withClient, { name: 'Acme team', includeKeys: false, now: NOW })));
+    const preview = element.querySelector('[data-role="import-preview"]')!;
+    expect(preview.textContent).toContain('Default profile: Team → Client meeting');
+    expect(preview.textContent).not.toContain('no changes');
   });
 
   it('says what is wrong with a file that isn’t a config, and changes nothing', async () => {

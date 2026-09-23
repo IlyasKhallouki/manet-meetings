@@ -250,6 +250,13 @@ body.page-settings .profile-delete-actions {
 }
 
 /* ---- Share: export/import config -------------------------------------------------------- */
+/* One hint for the group, inset like the section header above it, with room before the
+ * first row's card. */
+body.page-settings [data-role='share-hint'] {
+  margin: 0;
+  padding: 0 var(--s4) var(--s2);
+}
+
 /* Each row's action bar, inline form and confirmation share one spot: only one of the
  * three is visible at a time (the others carry `hidden`). */
 body.page-settings .share-row {
