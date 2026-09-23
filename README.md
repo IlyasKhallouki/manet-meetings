@@ -31,6 +31,11 @@ of overlap: about 28 minutes for the timing pass, 55 for the text pass.
 A second call, to `gemini-3.5-flash`, turns the finished transcript into a title, a
 summary, key points, decisions and action items, as structured JSON.
 
+Every meeting belongs to a profile, chosen in the popup before you record. A profile says
+which Notion database the meeting goes to and how its notes are written: a prompt
+describing these meetings, and the sections to fill (a paragraph or bullets each, with an
+instruction). Action items are always added. Settings starts with Team and Personal.
+
 Notion is what keeps two teammates from filing the same meeting twice. Every meeting has
 the key `<meet code>-<YYYY-MM-DD>`, and the extension looks that key up before it
 transcribes or creates anything. If a teammate got there first, it skips and tells you who
@@ -75,27 +80,32 @@ right-clicking the icon and choosing Options. Changes save as you make them.
    in the team's workspace. It acts with your own Notion permissions, so there is nothing
    to share, and the Free-plan block cap below doesn't apply to it. The other kind is an
    internal integration secret, created at <https://www.notion.so/profile/integrations>
-   with the *Read*, *Update* and *Insert content* capabilities. Share both meeting
-   databases with it afterwards (database ⋯ menu, then *Connections*). In a Free workspace
+   with the *Read*, *Update* and *Insert content* capabilities. Share each profile's
+   database with it afterwards (database ⋯ menu, then *Connections*). In a Free workspace
    with more than one member, Notion caps internal integrations at 1,000 blocks for the
    workspace's lifetime, and trashing pages gives none of them back. A meeting costs
    roughly 15 to 30 blocks, because transcript turns are packed into shared paragraphs.
-4. Team database and Personal database: paste each database's link or ID, then press Check
-   on *Check both databases*. It checks access and the schema below.
+4. Profiles: open each one and paste its database's link or ID, then press Check. Add
+   profiles for other kinds of meeting (client calls, the daily sync) with *Add profile*,
+   under *Profiles*.
 5. Microphone, under *Recording*. Choose *Allow microphone…*, then Continue on the page
    that opens, and allow it in Chrome's prompt. Chrome only allows this from a visible
    extension page, which is why it is a separate one-time step. Without it, only the other
    participants are recorded.
-6. Optional: default destination (Team or Personal), *Transcribe automatically*, how long
-   to keep audio (7 days by default), vocabulary and languages.
+6. Optional: *Transcribe automatically*, how long to keep audio (7 days by default),
+   vocabulary and languages. The default profile is set in that profile's editor, with *Use
+   as default*.
+7. If a teammate sent you a config file, use Settings › Share › Import config… first: it
+   sets up the profiles and shared settings, and the keys too when the file has them.
 
 Keys are stored in `chrome.storage.local` on your machine. They are sent only to Gemini
 and Notion respectively.
 
 ## Notion database schema
 
-Create one database for Team meetings and one for your Personal meetings, both with
-exactly these properties. Names are case-sensitive.
+Each profile's database needs exactly these properties. Names are case-sensitive. A fresh
+install starts with Team and Personal profiles, each pointing at its own database, but a
+profile can point at any database, including one shared with other profiles.
 
 | Property      | Type         | Filled with |
 |---------------|--------------|-------------|
@@ -108,8 +118,12 @@ exactly these properties. Names are case-sensitive.
 | `Source`      | Select       | `audio+captions`, `audio-only` or `captions-only` |
 | `Key`         | Text         | Dedupe key `<meet code>-<YYYY-MM-DD>` |
 
-The page body holds the summary, key points, decisions and action items (as to-dos). The
+The page body holds each of the profile's sections, then action items (as to-dos). The
 full transcript lives in a child page called Transcript.
+
+An optional `Profile` Select property, when present, is filled with the profile's name.
+It's useful when several profiles share a database. `scripts/notion-setup.ts` adds it to
+new databases.
 
 To create a database with this schema under an existing page:
 
@@ -123,19 +137,20 @@ databases contain data sources.
 
 ## Using it
 
-1. Join a Meet call, click Manet Meetings in the toolbar and choose Record this call (or
-   press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>). Chrome only lets an extension
-   capture a tab after you invoke it on that tab, so recording never starts by itself.
-   While it records, the popup shows how long it has been going, the speakers Meet's
-   captions have named so far, and whether your microphone is in the recording. Stop
-   recording ends it, and so does leaving the call.
+1. Join a Meet call, click Manet Meetings in the toolbar and, above *Record this call*, a
+   Profile row shows which profile the meeting will use (it's hidden when you only have
+   one). Pick a different one if you need to, then choose Record this call (or press
+   <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>, which always uses the default profile).
+   Chrome only lets an extension capture a tab after you invoke it on that tab, so
+   recording never starts by itself. While it records, the popup shows how long it has
+   been going, the speakers Meet's captions have named so far, whether your microphone is
+   in the recording, and the same Profile row, which you can still change mid-call.
+   Stop recording ends it, and so does leaving the call.
 2. Captions get turned on for you, since they are how speakers are identified. Leave them
    on.
-3. When the recording stops, a small window asks where the meeting goes: Team or Personal
-   (or press <kbd>T</kbd> or <kbd>P</kbd>). If you don't choose, your default applies when
-   the countdown ends. Pause, or <kbd>Esc</kbd>, stops the countdown while you think; if
-   you close a paused window, the default applies 2 minutes later. A recording cut short by
-   a crash or restart asks the same question the next time Chrome starts.
+3. When the call ends, the meeting is transcribed and saved to its profile's database
+   (with auto-transcribe on). A recording cut short by a crash or restart picks up again
+   the next time Chrome starts.
 4. With *Transcribe automatically* on (a switch at the top of Meetings and in Settings),
    the meeting is transcribed and saved to Notion, and Meetings shows the step it is on
    (*Step 4 of 8*). Otherwise choose Transcribe on Meetings. If Gemini is unavailable, the
@@ -143,12 +158,16 @@ databases contain data sources.
    transcript. With no Gemini key set, meetings are saved from captions only.
 5. Meetings, from the popup's footer, lists every meeting by day, newest first. Each row
    has one next step (Transcribe, Save to Notion, Try again, Open in Notion) and a ⋯ menu
-   with the rest: *Transcribe again*, *Save to Personal instead* (or Team), *Delete…*.
-   Meetings that wait on you are pinned in a Needs you group at the top: one waiting for
-   Team or Personal, one transcribed but not saved yet, or one that failed with no retry
-   scheduled. The popup's footer counts them (*Meetings · 1 needs you*).
+   with the rest: *Transcribe again*, *Change profile…*, *Delete…*. A meeting not yet
+   transcribed shows its profile as a button, which opens the same picker. Meetings that
+   wait on you are pinned in a Needs you group at the top: one transcribed but not saved
+   yet, one whose profile was deleted, or one that failed with no retry scheduled. The
+   popup's footer counts them (*Meetings · 1 needs you*).
 6. A meeting a teammate already saved reads *Saved by Marie*, and yours isn't added. If you
    want your own page too, choose ⋯ then *Save a second copy…*.
+
+Changing the profile of an already-transcribed meeting rewrites only its summary, from the
+transcript already on hand; Gemini never transcribes the audio again.
 
 ### The toolbar icon
 
@@ -166,6 +185,29 @@ The tooltip reads *Recording since 14:02* or shows the record shortcut, and noti
 name a meeting by its start time and length. Neither ever shows a meeting title, so
 nothing confidential pops up while you share your screen on the next call.
 
+## Sharing a config
+
+Settings › Share holds *Export config…* and *Import config…*, so a team can run one setup
+instead of everyone typing in their own profiles and token.
+
+A config file holds a name, the default profile, all profiles (name, database, prompt,
+sections, vocabulary) and the shared settings (vocabulary, languages, auto-transcribe,
+audio retention, whether to include the mic). *Export config…* asks for a name and has an
+*Include API keys* switch, off by default; turning it on shows a warning, since anyone
+with the file can then use those keys. It never includes your name or your meetings.
+
+*Import config…* checks the file first and, if it's valid, shows a preview before changing
+anything: each profile as new, changed, unchanged or kept because it's only local; each
+changed setting as old → new; the default profile; and whether keys are replaced or kept as
+they are. Importing merges profiles by id, and the file's version wins for any id it
+names. A profile that only exists locally is kept, and if the file has a different profile
+with the same name, the local one is renamed "Name (local)" so both survive. The shared
+settings listed above come from the file. Your own name is never exported or changed by an
+import.
+
+Re-importing an updated file is how changes spread to the team; nothing stays in sync on
+its own.
+
 ## Data and privacy
 
 Audio stays on your machine, in the extension's private file system (OPFS). It is deleted
@@ -174,6 +216,9 @@ Meetings. The 7 days are configurable.
 
 Gemini requests are sent with `store: false`, and uploaded audio files are deleted once
 transcription finishes. Gemini expires them after 48 h anyway.
+
+A config file exported with *Include API keys* on carries your Gemini and Notion keys in
+plain text. Treat it like a password and send it somewhere private.
 
 ## Development
 
@@ -214,13 +259,15 @@ Layout:
 entrypoints/content/     caption observer (Meet tab)
 entrypoints/background/  session lifecycle, tabCapture, offscreen coordination, recovery, retention
 entrypoints/offscreen/   tab + mic mixing, MediaRecorder → OPFS, runs the pipeline
-entrypoints/{popup,options,dashboard,permission,routing}/   (dashboard = the Meetings page, options = Settings)
+entrypoints/{popup,options,dashboard,permission}/   (dashboard = the Meetings page, options = Settings)
 src/lib/meet/captionAdapter.ts   every Meet DOM selector (and only here)
 src/lib/transcribe/      Gemini client, two passes, splitting, summary
 src/lib/align/           word-sequence alignment
 src/lib/merge/           words + captions → speaker-labelled transcript
 src/lib/notion/          client, idempotency, page builder
 src/lib/pipeline/        orchestration and degradation
+src/lib/profiles.ts      profile model, migration, validation
+src/lib/config.ts        config export, import parsing and merging
 src/lib/ui/              design system (styles.css), shared controls, one view per page
 tests/fixtures/captions/ saved Meet caption DOM
 ```
@@ -257,8 +304,9 @@ The places most likely to break quietly, and what to check first.
    that matched the timing pass is dropped, and the timing pass covers that stretch
    instead.
 7. Notion. API version `2026-03-11` (data sources), the property names above, and the
-   Free-plan block cap for internal integrations. Check both databases in Settings checks
-   access and schema, but it cannot check write capability.
+   Free-plan block cap for internal integrations. *Check databases*, in the Profiles group
+   in Settings, checks access and schema for every profile's database, but it cannot check
+   write capability.
 8. The dedupe key. `<meet code>-<YYYY-MM-DD>` uses each recorder's local date, so two
    teammates in different time zones around midnight get different keys. Two separate
    meetings in the same Meet room on the same day count as one: the second shows as *Saved
@@ -290,8 +338,8 @@ The pages follow the iOS 26 visual language: inset grouped lists on a grouped ba
 capsule controls, Inter, and Manet's navy for the single filled button on a screen. Liquid
 Glass appears on exactly three floating surfaces, each over content that really scrolls:
 the page bar on Meetings and Settings, the popup's bottom toolbar, and the ⋯ menu. Rows,
-cards, the routing window and the microphone page stay opaque, and a test enforces that
-budget. Reduced transparency, increased contrast, forced colours and reduced motion each
-fall back to an opaque bar that keeps its hairline.
+cards and the microphone page stay opaque, and a test enforces that budget. Reduced
+transparency, increased contrast, forced colours and reduced motion each fall back to an
+opaque bar that keeps its hairline.
 
 `pnpm shots` renders every page in every state, light and dark, at the widths people use.
