@@ -1689,6 +1689,27 @@
     color: var(--label-2);
   }
 
+  .menu-item-choice {
+    display: grid;
+    grid-template-columns: 1.25em 1fr;
+    column-gap: 6px;
+  }
+
+  .menu-item-choice .menu-item-note {
+    grid-column: 2;
+  }
+
+  .menu-item-check {
+    display: inline-flex;
+    align-items: center;
+    color: var(--tint);
+  }
+
+  .menu-item:hover .menu-item-check,
+  .menu-item:focus .menu-item-check {
+    color: var(--on-tint);
+  }
+
   .menu-sep {
     block-size: 1px;
     margin: 5px 10px;

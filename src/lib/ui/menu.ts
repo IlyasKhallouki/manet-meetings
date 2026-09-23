@@ -15,6 +15,7 @@
  * selected until the pointer or an arrow key picks one.
  */
 import { h, type Attrs } from './dom';
+import { svg } from './icons';
 
 export interface MenuItem {
   label: string;
@@ -26,6 +27,8 @@ export interface MenuItem {
   note?: string;
   /** A separator above this item. */
   separatorBefore?: boolean;
+  /** A choice among the items: true shows ✓ and aria-checked. Undefined for a plain action. */
+  checked?: boolean;
   attrs?: Attrs;
 }
 
@@ -103,16 +106,19 @@ export function createMenu(host: HTMLElement): Menu {
     const children: HTMLElement[] = [];
     for (const item of list) {
       if (item.separatorBefore && children.length > 0) children.push(h('div', { class: 'menu-sep', role: 'separator' }));
+      const choice = item.checked !== undefined;
       const el = h(
         'button',
         {
           type: 'button',
           ...item.attrs,
-          class: 'menu-item',
-          role: 'menuitem',
+          class: choice ? 'menu-item menu-item-choice' : 'menu-item',
+          role: choice ? 'menuitemradio' : 'menuitem',
+          'aria-checked': choice ? String(item.checked) : undefined,
           tabindex: '-1',
           'aria-disabled': item.disabled ? 'true' : undefined,
         },
+        choice ? h('span', { class: 'menu-item-check' }, item.checked ? svg('check') : null) : null,
         h('span', { class: 'menu-item-label' }, item.label),
         item.note ? h('span', { class: 'menu-item-note' }, item.note) : null,
       );
