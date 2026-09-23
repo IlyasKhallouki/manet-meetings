@@ -103,8 +103,8 @@ write. A fresh install gets the same two profiles with empty databases.
 
 Keeping the ids `team` and `personal` means an old session's `route` maps straight onto a
 `profileId`. `getSession` and `listSessions` normalize old metas on read: `route` becomes
-`profileId`. Boot moves any session still in `awaiting-route` to `ready` with the default
-profile, clears its route alarm, and transcribes it when auto-transcribe is on.
+`profileId`, and a session still in `awaiting-route` reads as `ready` (Not transcribed). Its
+leftover route alarm fires once and is ignored.
 
 Stored results written before profiles hold `summary`, `keyPoints` and `decisions`.
 `getResult` turns them into the three sections above.
@@ -114,7 +114,8 @@ Stored results written before profiles hold `summary`, `keyPoints` and `decision
 The profile is chosen before recording, and nothing opens after the call.
 
 - Popup, on a call: a Profile row above *Record this call*, set to the default profile.
-  It opens the existing ⋯ menu component listing profiles. *Record this call* sends
+  It opens the existing ⋯ menu component listing profiles, each checked or not. With a
+  single profile the row is hidden. *Record this call* sends
   `session/start { tabId, profileId }`.
 - Popup, recording: the same row stays and can change the profile
   (`session/set-profile`).
@@ -132,9 +133,10 @@ tests and shots), `session/route`, `session/route-hold`, route alarms, `routeDea
 
 `session/set-profile { sessionId, profileId }` replaces `session/route`. The background
 accepts it while a session is `recording`, `ready`, `failed`, `processed`, `empty` or
-`duplicate`. Meetings offers it as ⋯ *Change profile…*, which shows the profiles inline
-in the row, the way *Delete…* asks inline now. A `ready` row shows its profile as a
-button that opens the same list. The popup offers the Profile row.
+`duplicate`. Meetings offers it as ⋯ *Change profile…*, which re-opens the menu with the
+profiles, the current one checked. A `ready` row shows its profile as a button that opens
+the same list. The popup offers the Profile row. Picking a profile for a transcribed or
+failed meeting carries it on (save, or transcribe) as the old *Save to … instead* did.
 
 Every stored result records the profile it was summarized for:
 `SessionResult.profile = { id, name }`. A save job gets the session's current profile. When
@@ -274,7 +276,7 @@ through a Blob URL and an `<a download>` link.
 - valid JSON, under 1 MB, `format` equal to `manet-config`;
 - `version` 1 (a newer version reads "This file needs a newer version of Manet Meetings.");
 - every profile and setting passing the rules in section 2;
-- `defaultProfileId` naming a profile that exists after the merge.
+- `defaultProfileId` naming one of the file's profiles.
 
 A rejected file shows one sentence under the button saying what to fix. Nothing changes.
 
