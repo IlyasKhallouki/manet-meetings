@@ -731,6 +731,11 @@ export function createDashboardView(
     for (const el of lines) el.classList.toggle('is-under-button', primary !== null && el === firstLine);
     if (hasButton && entry.primary.textContent !== primary.label) entry.primary.textContent = primary.label;
     setDisabled(entry.primary, hasButton && !primary.enabled);
+
+    // An open menu whose items went stale closes (focus goes back to its button). First,
+    // so closing can't leave aria-expanded on a next step that is no longer a menu button.
+    const anchor = menu.anchor;
+    if (anchor && entry.main.contains(anchor) && menu.signature !== currentSignature(entry, anchor)) menu.close();
     // Choose profile is a menu button.
     const opensMenu = primary?.kind === 'choose-profile';
     patch(entry, 'primary-menu', opensMenu, () => {
@@ -739,10 +744,6 @@ export function createDashboardView(
         else entry.primary.removeAttribute(name);
       }
     });
-
-    // An open menu whose items went stale closes (focus goes back to its button).
-    const anchor = menu.anchor;
-    if (anchor && entry.main.contains(anchor) && menu.signature !== currentSignature(entry, anchor)) menu.close();
 
     // Inline confirm: replaces the row's content.
     const c = confirming.get(id);

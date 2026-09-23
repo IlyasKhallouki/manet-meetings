@@ -601,6 +601,59 @@ describe('Meetings: profiles', () => {
     expect(menuOpen()).toBe(false);
     expect(document.activeElement).toBe(more('f'));
   });
+
+  it('leaves no menu state on a next step that stopped being Choose profile', () => {
+    mountView();
+    const button = primary('route');
+    button.click();
+    expect(menuOpen()).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    // Routed in the window meanwhile: the menu closes, and Transcribe is a plain button.
+    view!.update(data({ sessions: withSession('route', { status: 'ready', route: 'team' }) }));
+    expect(menuOpen()).toBe(false);
+    expect(primary('route')).toBe(button);
+    expect(text(button)).toBe('Transcribe');
+    expect(button.hasAttribute('aria-expanded')).toBe(false);
+    expect(button.hasAttribute('aria-haspopup')).toBe(false);
+    expect(button.hasAttribute('aria-controls')).toBe(false);
+  });
+
+  it('shows a rejected profile change in its row, and goes no further', async () => {
+    const sessions = [meta('p', { status: 'processed', profileId: 'team' })];
+    const r = mountView(recorder(), data({ sessions, resultIds: new Set(['p']), profiles }));
+    more('p').click();
+    menuItem('change-profile').click();
+    menuEl().querySelector<HTMLElement>('[data-key="p:profile-client"]')!.click();
+    r.settle[0]!.reject(new Error('That profile no longer exists. Reload the page and choose another.'));
+    await flush();
+    const alert = row('p').querySelector('[role="alert"]');
+    expect(text(alert)).toBe('That profile no longer exists. Reload the page and choose another.');
+    expect(alert?.querySelector('svg.glyph-caution')).not.toBeNull();
+    // No save after a profile change that didn't happen.
+    expect(r.calls).toEqual([{ action: 'set-profile', id: 'p', profileId: 'client' }]);
+    expect(primary('p').getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('shows the save’s error when the profile changed but saving failed, and is ready again', async () => {
+    const sessions = [meta('p', { status: 'processed', profileId: 'team' })];
+    const r = mountView(recorder(), data({ sessions, resultIds: new Set(['p']), profiles }));
+    more('p').click();
+    menuItem('change-profile').click();
+    menuEl().querySelector<HTMLElement>('[data-key="p:profile-client"]')!.click();
+    r.settle[0]!.resolve();
+    await flush();
+    expect(r.calls[1]).toEqual({ action: 'save', id: 'p' });
+    // Still pending while the save runs.
+    expect(primary('p').getAttribute('aria-disabled')).toBe('true');
+    r.settle[1]!.reject(new Error('Cannot save a session that is saving.'));
+    await flush();
+    expect(text(row('p').querySelector('[role="alert"]'))).toBe('Cannot save a session that is saving.');
+    expect(r.calls.length).toBe(2);
+    // No longer pending: the next step and the menu work again.
+    expect(primary('p').getAttribute('aria-disabled')).toBeNull();
+    more('p').click();
+    expect(menuItem('change-profile').getAttribute('aria-disabled')).toBeNull();
+  });
 });
 
 describe('Meetings: ⋯ menu', () => {
